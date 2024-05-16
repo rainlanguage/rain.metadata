@@ -65,7 +65,7 @@ version = "0.2.0"
 source = "git+https://github.com/rainlanguage/alloy-ethers-typecast?rev=a6bcb86b9b61a56d2440d33313f024297ce737bb#a6bcb86b9b61a56d2440d33313f024297ce737bb"
 dependencies = [
  "alloy-primitives 0.6.4",
- "alloy-sol-types",
+ "alloy-sol-types 0.6.4",
  "async-trait",
  "derive_builder",
  "ethers",
@@ -155,6 +155,24 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-macro"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "970e5cf1ca089e964d4f7f7afc7c9ad642bfb1bdc695a20b0cba3b3c28954774"
+dependencies = [
+ "const-hex",
+ "dunce",
+ "heck 0.4.1",
+ "indexmap",
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.60",
+ "syn-solidity 0.5.4",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "alloy-sol-macro"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e86ec0a47740b20bc5613b8712d0d321d031c4efc58e9645af96085d5cccfc27"
@@ -169,7 +187,7 @@ dependencies = [
  "quote",
  "serde_json",
  "syn 2.0.60",
- "syn-solidity",
+ "syn-solidity 0.6.4",
  "tiny-keccak",
 ]
 
@@ -193,13 +211,25 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-types"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a059d4d2c78f8f21e470772c75f9abd9ac6d48c2aaf6b278d1ead06ed9ac664"
+dependencies = [
+ "alloy-primitives 0.5.4",
+ "alloy-sol-macro 0.5.4",
+ "const-hex",
+ "serde",
+]
+
+[[package]]
+name = "alloy-sol-types"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad09ec5853fa700d12d778ad224dcdec636af424d29fad84fb9a2f16a5b0ef09"
 dependencies = [
  "alloy-json-abi 0.6.4",
  "alloy-primitives 0.6.4",
- "alloy-sol-macro",
+ "alloy-sol-macro 0.6.4",
  "const-hex",
  "serde",
 ]
@@ -2986,6 +3016,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "metadata_wasm"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "js-sys",
+ "rain-metadata 0.0.2-alpha.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_bytes",
+ "serde_cbor",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3719,7 +3764,7 @@ dependencies = [
  "alloy-ethers-typecast",
  "alloy-json-abi 0.5.4",
  "alloy-primitives 0.5.4",
- "alloy-sol-types",
+ "alloy-sol-types 0.6.4",
  "anyhow",
  "clap",
  "deflate",
@@ -3748,11 +3793,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "rain-metadata"
+version = "0.0.2-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98a4cc20d0b88a82e1ade286f7f3999c7a6faac02df49c393a44eca914330d80"
+dependencies = [
+ "alloy-json-abi 0.5.4",
+ "alloy-primitives 0.5.4",
+ "alloy-sol-types 0.5.4",
+ "anyhow",
+ "clap",
+ "deflate",
+ "futures",
+ "graphql_client",
+ "inflate",
+ "itertools 0.10.5",
+ "once_cell",
+ "regex",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_bytes",
+ "serde_cbor",
+ "serde_json",
+ "strum 0.24.1",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "validator",
+]
+
+[[package]]
 name = "rain-metadata-bindings"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives 0.5.4",
- "alloy-sol-types",
+ "alloy-sol-types 0.6.4",
 ]
 
 [[package]]
@@ -4345,6 +4421,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3b4c031cd0d9014307d82b8abf653c0290fbdaeb4c02d00c63cf52f728628bf"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4713,6 +4800,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "syn-solidity"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91ede2e5b2c6bfac4bc0ff4499957a11725dc12a7ddb86270e827ef575892553"
+dependencies = [
+ "paste",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.60",
 ]
 
 [[package]]
