@@ -16,5 +16,17 @@
       "address": "0x8F61d274aaB5D8CFD82dc266529EAe33020386a9",
       "startBlock": 21041769
     }
+  },
+  "berachain-mainnet": {
+    "metaboard0": {
+      "address": "0x8F61d274aaB5D8CFD82dc266529EAe33020386a9",
+      "startBlock": 3092258
+    }
+  },
+  "sonic": {
+    "metaboard0": {
+      "address": "0x8F61d274aaB5D8CFD82dc266529EAe33020386a9",
+      "startBlock": 17707513
+    }
   }
 }
