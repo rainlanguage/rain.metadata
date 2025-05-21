@@ -1,8 +1,8 @@
 out
 cache
 .DS_Store
-
 .vscode
+.direnv/
 
 # Rust
 target
