@@ -2,7 +2,8 @@
   description = "Flake for development workflows.";
 
   inputs = {
-    rainix.url = "github:rainprotocol/rainix";
+    rainix.url =
+      "github:rainprotocol/rainix?rev=4e87c16f3abcb4e9e309609f452669f5a85bb558";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -11,9 +12,9 @@
       let
         pkgs = rainix.pkgs.${system};
         rust-toolchain = rainix.rust-toolchain.${system};
-      in rec {
-        packages = rec {
-          mkBin = (pkgs.makeRustPlatform{
+      in {
+        packages = {
+          mkBin = (pkgs.makeRustPlatform {
             rustc = rust-toolchain;
             cargo = rust-toolchain;
           }).buildRustPackage {
@@ -30,23 +31,19 @@
               mkdir -p $out/bin
               cp target/release/rain-metadata $out/bin/
             '';
-            buildInputs = with pkgs; [
-              openssl
-            ];
-            nativeBuildInputs = with pkgs; [
-              pkg-config
-            ] ++ lib.optionals stdenv.isDarwin [
-              darwin.apple_sdk.frameworks.SystemConfiguration
-            ];
+            buildInputs = with pkgs; [ openssl ];
+            nativeBuildInputs = with pkgs;
+              [ pkg-config ] ++ lib.optionals stdenv.isDarwin
+              [ darwin.apple_sdk.frameworks.SystemConfiguration ];
           };
         } // rainix.packages.${system};
 
         devShells.default = pkgs.mkShell {
           shellHook = rainix.devShells.${system}.default.shellHook;
           buildInputs = rainix.devShells.${system}.default.buildInputs;
-          nativeBuildInputs = rainix.devShells.${system}.default.nativeBuildInputs;
+          nativeBuildInputs =
+            rainix.devShells.${system}.default.nativeBuildInputs;
         };
-      }
-    );
+      });
 
 }
