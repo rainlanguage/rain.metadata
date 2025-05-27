@@ -336,7 +336,7 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                             2 => content_type = Some(map.next_value()?),
                             3 => content_encoding = Some(map.next_value()?),
                             4 => content_language = Some(map.next_value()?),
-                            other => Err(serde::de::Error::custom(&format!(
+                            other => Err(serde::de::Error::custom(format!(
                                 "found unexpected key in the map: {other}"
                             )))?,
                         };
@@ -805,7 +805,7 @@ impl Store {
         if let Ok(meta) = search(&hex::encode_prefixed(hash), &self.subgraphs).await {
             self.store_content(&meta.bytes);
             self.cache.insert(hash.to_vec(), meta.bytes);
-            return self.get_meta(hash);
+            self.get_meta(hash)
         } else {
             None
         }
@@ -816,7 +816,7 @@ impl Store {
         if !self.cache.contains_key(hash) {
             self.update(hash).await
         } else {
-            return self.get_meta(hash);
+            self.get_meta(hash)
         }
     }
 
@@ -827,12 +827,12 @@ impl Store {
             if keccak256(bytes).0 == hash {
                 self.store_content(bytes);
                 self.cache.insert(hash.to_vec(), bytes.to_vec());
-                return self.cache.get(hash);
+                self.cache.get(hash)
             } else {
                 None
             }
         } else {
-            return self.get_meta(hash);
+            self.get_meta(hash)
         }
     }
 

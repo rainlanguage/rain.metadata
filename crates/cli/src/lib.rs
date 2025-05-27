@@ -17,15 +17,15 @@
 //! building the binary.
 //!
 //! - `cli`: A [mod@clap] based CLI app module for functionalities of this library, this feature
-//! has [mod@tokio] dependency with features enabled that are compatible for `wasm` family target builds,
-//! Enabling this feature will also enable `json-schema` feature.
-//! This feature is required for building the binary crate.
+//!   has [mod@tokio] dependency with features enabled that are compatible for `wasm` family target builds,
+//!   Enabling this feature will also enable `json-schema` feature.
+//!   This feature is required for building the binary crate.
 //! - `json-schema`: Enables implementation of [Json Schema](schemars::JsonSchema) for different [types] of Rain meta.
 //! - `tokio-full`: Installs [mod@tokio] with full features which is a dependency of `cli` feature, this
-//! allows for multi-threading of the CLI app (binary), however it results in erroneous builds for `wasm` target family
-//! as explained in [tokio docs](https://docs.rs/tokio/latest/tokio/#wasm-support).this feature is only effective for
-//! binary crate and using it for lib crate just installs a [mod@tokio] with full feature as a dependency as the entire
-//! lib crate doesn't depend on [mod@tokio]. This is because [mod@tokio] is only used as a runtime for binray crate.
+//!   allows for multi-threading of the CLI app (binary), however it results in erroneous builds for `wasm` target family
+//!   as explained in [tokio docs](https://docs.rs/tokio/latest/tokio/#wasm-support).this feature is only effective for
+//!   binary crate and using it for lib crate just installs a [mod@tokio] with full feature as a dependency as the entire
+//!   lib crate doesn't depend on [mod@tokio]. This is because [mod@tokio] is only used as a runtime for binray crate.
 //!
 //! ## Example
 //! ```ignore
