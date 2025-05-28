@@ -11,9 +11,9 @@
       let
         pkgs = rainix.pkgs.${system};
         rust-toolchain = rainix.rust-toolchain.${system};
-      in rec {
-        packages = rec {
-          mkBin = (pkgs.makeRustPlatform{
+      in {
+        packages = {
+          mkBin = (pkgs.makeRustPlatform {
             rustc = rust-toolchain;
             cargo = rust-toolchain;
           }).buildRustPackage {
@@ -30,23 +30,19 @@
               mkdir -p $out/bin
               cp target/release/rain-metadata $out/bin/
             '';
-            buildInputs = with pkgs; [
-              openssl
-            ];
-            nativeBuildInputs = with pkgs; [
-              pkg-config
-            ] ++ lib.optionals stdenv.isDarwin [
-              darwin.apple_sdk.frameworks.SystemConfiguration
-            ];
+            buildInputs = with pkgs; [ openssl ];
+            nativeBuildInputs = with pkgs;
+              [ pkg-config ] ++ lib.optionals stdenv.isDarwin
+              [ darwin.apple_sdk.frameworks.SystemConfiguration ];
           };
         } // rainix.packages.${system};
 
         devShells.default = pkgs.mkShell {
           shellHook = rainix.devShells.${system}.default.shellHook;
           buildInputs = rainix.devShells.${system}.default.buildInputs;
-          nativeBuildInputs = rainix.devShells.${system}.default.nativeBuildInputs;
+          nativeBuildInputs =
+            rainix.devShells.${system}.default.nativeBuildInputs;
         };
-      }
-    );
+      });
 
 }
