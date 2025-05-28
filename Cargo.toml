@@ -1,13 +1,8 @@
 [workspace]
 resolver = "2"
-members = [
-    "crates/bindings",
-    "crates/cli",
-    "crates/metaboard",
-]
+members = ["crates/bindings", "crates/cli", "crates/metaboard"]
 
 [workspace.package]
-author = "Rain Open Source Software Ltd"
 license = "LicenseRef-DCL-1.0"
 
 [workspace.dependencies]
