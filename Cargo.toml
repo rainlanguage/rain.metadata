@@ -18,11 +18,11 @@ cynic = "3.4.0"
 thiserror = "1.0.56"
 insta = { version = "1.34.0" }
 alloy = { version = "0.1.4", features = ["rand", "json", "json-abi"] }
-alloy-ethers-typecast = { git = "https://github.com/rainlanguage/alloy-ethers-typecast", rev = "65a68f207287d024cba934bf1e3c8b3f63d2834a" }
+alloy-ethers-typecast = { git = "https://github.com/rainlanguage/alloy-ethers-typecast", rev = "adda117b1f43e1a4dfa012299e71f2b0e73f46f4" }
 url = "2.5.0"
 serde_json = "1.0.108"
 async-trait = "0.1.77"
-rain-erc = { git = "https://github.com/rainlanguage/rain.erc", rev = "0106e645ebd49334addc698c5aad9a85370eb54d" }
+rain-erc = { git = "https://github.com/rainlanguage/rain.erc", rev = "a826bb9c52dd659beb229fbd810a72492188b574" }
 
 [workspace.dependencies.rain-metadata-bindings]
 path = "crates/bindings"
