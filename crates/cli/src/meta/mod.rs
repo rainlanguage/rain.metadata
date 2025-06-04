@@ -11,7 +11,7 @@ use std::{collections::HashMap, convert::TryFrom, fmt::Debug, sync::Arc};
 use strum::{EnumIter, EnumString};
 use types::authoring::v1::AuthoringMeta;
 use alloy::sol_types::private::Address;
-use alloy_ethers_typecast::transaction::{ReadContractParameters, ReadableClientHttp};
+use alloy_ethers_typecast::transaction::{ReadContractParameters, ReadableClient};
 use rain_erc::erc165::{IERC165, XorSelectors, supports_erc165};
 
 pub mod magic;
@@ -413,7 +413,7 @@ pub async fn search_deployer(
 
 /// checks if the given contract implements IDescribeByMetaV1 interface
 pub async fn implements_i_described_by_meta_v1(
-    client: &ReadableClientHttp,
+    client: &ReadableClient,
     contract_address: Address,
 ) -> bool {
     if !supports_erc165(client, contract_address).await {
@@ -433,7 +433,7 @@ pub async fn implements_i_described_by_meta_v1(
         block_number: None,
         gas: None,
     };
-    client.read(parameters).await.map(|v| v._0).unwrap_or(false)
+    client.read(parameters).await.unwrap_or(false)
 }
 
 /// All required NPE2 ExpressionDeployer data for reproducing it on a local evm
@@ -1297,7 +1297,9 @@ mod tests {
         // makes new server/client with success response for erc165 check
         async fn new_server_client(address: Address) -> (MockServer, ReadableClientHttp) {
             let rpc_server = MockServer::start_async().await;
-            let client = ReadableClient::new_from_urls(vec![rpc_server.url("/")]).unwrap();
+            let client = ReadableClient::new_from_url(rpc_server.url("/"))
+                .await
+                .unwrap();
 
             // Mock a successful response for supports erc165 check
             rpc_server.mock(|when, then| {

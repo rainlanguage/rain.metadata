@@ -59,7 +59,7 @@ impl AuthoringMetaItem {
     }
 
     pub fn abi_decode(data: &[u8]) -> Result<AuthoringMetaItem, Error> {
-        let result = AuthoringMetaStruct::abi_decode(data, false)?;
+        let result = AuthoringMetaStruct::abi_decode(data)?;
         Ok(AuthoringMetaItem {
             word: bytes32_to_str(&result.0)?.to_string(),
             operand_parser_offset: result.1,
@@ -69,12 +69,7 @@ impl AuthoringMetaItem {
 
     // abi decodes and validates
     pub fn abi_decode_validate(data: &[u8]) -> Result<AuthoringMetaItem, Error> {
-        let result = AuthoringMetaStruct::abi_decode(data, true)?;
-        let am = AuthoringMetaItem {
-            word: bytes32_to_str(&result.0)?.to_string(),
-            operand_parser_offset: result.1,
-            description: result.2.to_string(),
-        };
+        let am = AuthoringMetaItem::abi_decode(data)?;
         am.validate()?;
         Ok(am)
     }
@@ -102,32 +97,26 @@ impl AuthoringMeta {
 
     /// abi decodes some data into array of AuthoringMeta
     pub fn abi_decode(data: &[u8]) -> Result<AuthoringMeta, Error> {
-        let result = AuthoringMetaStructArray::abi_decode(data, false)?;
-        let mut am = vec![];
-        for item in result {
-            am.push(AuthoringMetaItem {
-                word: bytes32_to_str(&item.0)?.to_string(),
-                operand_parser_offset: item.1,
-                description: item.2.to_string(),
-            });
-        }
-        Ok(AuthoringMeta(am))
+        let decoded_items = AuthoringMetaStructArray::abi_decode(data)?;
+        let authoring_meta_items = decoded_items
+            .into_iter()
+            .map(|item| {
+                Ok::<_, Error>(AuthoringMetaItem {
+                    word: bytes32_to_str(&item.0)?.to_string(),
+                    operand_parser_offset: item.1,
+                    description: item.2.to_string(),
+                })
+            })
+            .collect::<Result<_, _>>()?;
+
+        Ok(AuthoringMeta(authoring_meta_items))
     }
 
     /// abi decodes some data into array of AuthoringMeta and validates each decoded item
     pub fn abi_decode_validate(data: &[u8]) -> Result<AuthoringMeta, Error> {
-        let result = AuthoringMetaStructArray::abi_decode(data, true)?;
-        let mut ams = vec![];
-        for item in result {
-            ams.push(AuthoringMetaItem {
-                word: bytes32_to_str(&item.0)?.to_string(),
-                operand_parser_offset: item.1,
-                description: item.2.to_string(),
-            });
-        }
-        let am = AuthoringMeta(ams);
-        am.validate()?;
-        Ok(am)
+        let authoring_meta = AuthoringMeta::abi_decode(data)?;
+        authoring_meta.validate()?;
+        Ok(authoring_meta)
     }
 }
 
