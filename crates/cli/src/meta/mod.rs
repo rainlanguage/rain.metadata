@@ -1297,7 +1297,7 @@ mod tests {
         // makes new server/client with success response for erc165 check
         async fn new_server_client(address: Address) -> (MockServer, ReadableClientHttp) {
             let rpc_server = MockServer::start_async().await;
-            let client = ReadableClient::new_from_url(rpc_server.url("/")).unwrap();
+            let client = ReadableClient::new_from_urls(vec![rpc_server.url("/")]).unwrap();
 
             // Mock a successful response for supports erc165 check
             rpc_server.mock(|when, then| {

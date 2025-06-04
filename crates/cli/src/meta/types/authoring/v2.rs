@@ -70,10 +70,10 @@ pub enum AuthoringMetaV2Error {
 }
 
 #[derive(Error, Debug)]
-#[error("Error fetching authoring meta for contract {contract_address}, RPC URL {rpc_url}, Metaboard URL {metaboard_url}: {error}")]
+#[error("Error fetching authoring meta for contract {contract_address}, RPCs {rpcs:?}, Metaboard URL {metaboard_url}: {error}")]
 pub struct FetchAuthoringMetaV2WordError {
     contract_address: Address,
-    rpc_url: String,
+    rpcs: Vec<String>,
     metaboard_url: String,
     #[source]
     error: AuthoringMetaV2Error,
@@ -123,14 +123,14 @@ impl AuthoringMetaV2 {
     /// An empty result if successful, or a AuthoringMetaV2Error if an error occurs.
     pub async fn fetch_for_contract(
         contract_address: Address,
-        rpc_url: String,
+        rpcs: Vec<String>,
         metaboard_url: String,
     ) -> Result<Self, FetchAuthoringMetaV2WordError> {
         // get the metahash
-        let client = ReadableClient::new_from_url(rpc_url.clone()).map_err(|error| {
+        let client = ReadableClient::new_from_urls(rpcs.clone()).map_err(|error| {
             FetchAuthoringMetaV2WordError {
                 contract_address,
-                rpc_url: rpc_url.clone(),
+                rpcs: rpcs.clone(),
                 metaboard_url: metaboard_url.clone(),
                 error: error.into(),
             }
@@ -140,7 +140,7 @@ impl AuthoringMetaV2 {
         if !implements_i_described_by_meta_v1(&client, contract_address).await {
             return Err(FetchAuthoringMetaV2WordError {
                 contract_address,
-                rpc_url: rpc_url.clone(),
+                rpcs: rpcs.clone(),
                 metaboard_url: metaboard_url.clone(),
                 error: AuthoringMetaV2Error::HasNoWords,
             });
@@ -152,7 +152,7 @@ impl AuthoringMetaV2 {
             .build()
             .map_err(|error| FetchAuthoringMetaV2WordError {
                 contract_address,
-                rpc_url: rpc_url.clone(),
+                rpcs: rpcs.clone(),
                 metaboard_url: metaboard_url.clone(),
                 error: error.into(),
             })?;
@@ -161,7 +161,7 @@ impl AuthoringMetaV2 {
             .await
             .map_err(|error| FetchAuthoringMetaV2WordError {
                 contract_address,
-                rpc_url: rpc_url.clone(),
+                rpcs: rpcs.clone(),
                 metaboard_url: metaboard_url.clone(),
                 error: error.into(),
             })?
@@ -171,7 +171,7 @@ impl AuthoringMetaV2 {
         let subgraph_client = MetaboardSubgraphClient::new(metaboard_url.parse().map_err(
             |error: url::ParseError| FetchAuthoringMetaV2WordError {
                 contract_address,
-                rpc_url: rpc_url.clone(),
+                rpcs: rpcs.clone(),
                 metaboard_url: metaboard_url.clone(),
                 error: error.into(),
             },
@@ -182,7 +182,7 @@ impl AuthoringMetaV2 {
             .await
             .map_err(|error| FetchAuthoringMetaV2WordError {
                 contract_address,
-                rpc_url: rpc_url.clone(),
+                rpcs: rpcs.clone(),
                 metaboard_url: metaboard_url.clone(),
                 error: error.into(),
             })?;
@@ -190,7 +190,7 @@ impl AuthoringMetaV2 {
         let meta = RainMetaDocumentV1Item::cbor_decode(metas[0].as_slice()).map_err(|error| {
             FetchAuthoringMetaV2WordError {
                 contract_address,
-                rpc_url: rpc_url.clone(),
+                rpcs: rpcs.clone(),
                 metaboard_url: metaboard_url.clone(),
                 error: error.into(),
             }
@@ -200,7 +200,7 @@ impl AuthoringMetaV2 {
             .map_err(
                 |error: AuthoringMetaV2Error| FetchAuthoringMetaV2WordError {
                     contract_address,
-                    rpc_url,
+                    rpcs,
                     metaboard_url,
                     error,
                 },
@@ -380,7 +380,7 @@ mod tests {
 
         let authoring_meta = AuthoringMetaV2::fetch_for_contract(
             Address::from([0u8; 20]),
-            rpc_url.to_string(),
+            vec![rpc_url.to_string()],
             metaboard_url.to_string(),
         )
         .await;
@@ -390,12 +390,12 @@ mod tests {
             Err(error) => {
                 let FetchAuthoringMetaV2WordError {
                     contract_address,
-                    rpc_url,
+                    rpcs,
                     metaboard_url,
                     error,
                 } = error;
                 assert_eq!(contract_address, Address::from([0u8; 20]));
-                assert_eq!(rpc_url, rpc_url.to_string());
+                assert_eq!(rpcs, vec![rpc_url.to_string()]);
                 assert_eq!(metaboard_url, metaboard_url.to_string());
                 match error {
                     AuthoringMetaV2Error::HasNoWords => {}
