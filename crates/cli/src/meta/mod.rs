@@ -921,15 +921,13 @@ mod tests {
         types::{authoring::v1::AuthoringMeta, dotrain::v1::DotrainMeta},
         ContentEncoding, ContentLanguage, ContentType, Error, RainMetaDocumentV1Item,
     };
-    use alloy_ethers_typecast::{
-        request_shim::{AlloyTransactionRequest, TransactionRequestShim},
-        rpc::{eip2718::TypedTransaction, BlockNumber, Request, Response},
-        transaction::ReadableClient,
+    use alloy_ethers_typecast::transaction::ReadableClient;
+    use alloy::{
+        providers::mock::Asserter,
+        rpc::{json_rpc::ErrorPayload},
+        sol_types::{SolType},
     };
-    use alloy::sol_types::{SolType, SolCall};
-    use hex::decode;
-    use httpmock::{Method::POST, MockServer};
-    use serde_json::{from_str, Value};
+    use serde_json::{json};
 
     /// Roundtrip test for an authoring meta
     /// original content -> pack -> MetaMap -> cbor encode -> cbor decode -> MetaMap -> unpack -> original content,
@@ -1295,153 +1293,43 @@ mod tests {
     #[tokio::test]
     async fn test_implements_i_describe_by_meta_v1() {
         // makes new server/client with success response for erc165 check
-        async fn new_server_client(address: Address) -> (MockServer, ReadableClientHttp) {
-            let rpc_server = MockServer::start_async().await;
-            let client = ReadableClient::new_from_url(rpc_server.url("/"))
-                .await
-                .unwrap();
+        async fn new_server_client() -> (Asserter, ReadableClient) {
+            let asserter = Asserter::new();
+            let client = ReadableClient::new_mocked(asserter.clone());
 
-            // Mock a successful response for supports erc165 check
-            rpc_server.mock(|when, then| {
-                when.method(POST)
-                    .path("/")
-                    .json_body_partial(
-                        Request::<(TypedTransaction, BlockNumber)>::eth_call_request(
-                            1,
-                            TypedTransaction::Eip1559(
-                                AlloyTransactionRequest::new()
-                                    .with_to(Some(address))
-                                    .with_data(Some(
-                                        decode(
-                                            "0x01ffc9a701ffc9a700000000000000000000000000000000000000000000000000000000"
-                                        ).unwrap()
-                                    ))
-                                    .to_eip1559()
-                            ),
-                            None
-                        )
-                        .to_json_string()
-                        .unwrap(),
-                    );
-                then.json_body_obj(
-                    &from_str::<Value>(&Response::new_success(
-                        1,
-                        "0x0000000000000000000000000000000000000000000000000000000000000001"
-                    ).to_json_string().unwrap())
-                    .unwrap(),
-                );
-            });
-            rpc_server.mock(|when, then| {
-                when.method(POST)
-                    .path("/")
-                    .json_body_partial(
-                        Request::<(TypedTransaction, BlockNumber)>::eth_call_request(
-                            2,
-                            TypedTransaction::Eip1559(
-                                AlloyTransactionRequest::new()
-                                    .with_to(Some(address))
-                                    .with_data(Some(
-                                        decode(
-                                            "0x01ffc9a7ffffffff00000000000000000000000000000000000000000000000000000000"
-                                        ).unwrap()
-                                    ))
-                                    .to_eip1559()
-                            ),
-                            None
-                        )
-                        .to_json_string()
-                        .unwrap(),
-                    );
-                then.json_body_obj(
-                    &from_str::<Value>(&Response::new_success(
-                        2,
-                        "0x0000000000000000000000000000000000000000000000000000000000000000"
-                    ).to_json_string().unwrap())
-                    .unwrap(),
-                );
-            });
-            (rpc_server, client)
+            // Mock a responses for successful supports erc165 check
+            asserter.push_success(
+                &"0x0000000000000000000000000000000000000000000000000000000000000001",
+            );
+            asserter.push_success(
+                &"0x0000000000000000000000000000000000000000000000000000000000000000",
+            );
+
+            (asserter, client)
         }
 
         let address = Address::random();
-        let i_described_by_meta_v1_req =
-            Request::<(TypedTransaction, BlockNumber)>::eth_call_request(
-                3,
-                TypedTransaction::Eip1559(
-                    AlloyTransactionRequest::new()
-                        .with_to(Some(address))
-                        .with_data(Some(
-                            (IERC165::supportsInterfaceCall {
-                                interfaceID:
-                                    IDescribedByMetaV1::IDescribedByMetaV1Calls::xor_selectors()
-                                        .unwrap()
-                                        .into(),
-                            })
-                            .abi_encode(),
-                        ))
-                        .to_eip1559(),
-                ),
-                None,
-            )
-            .to_json_string()
-            .unwrap();
 
         // mock a true response for implements IDescribedByMetaV1
-        let (rpc_server, client) = new_server_client(address).await;
-        rpc_server.mock(|when, then| {
-            when.method(POST)
-                .path("/")
-                .json_body_partial(i_described_by_meta_v1_req.clone());
-            then.json_body_obj(
-                &from_str::<Value>(
-                    &Response::new_success(
-                        3,
-                        "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    )
-                    .to_json_string()
-                    .unwrap(),
-                )
-                .unwrap(),
-            );
-        });
+        let (asserter, client) = new_server_client().await;
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
         let result = implements_i_described_by_meta_v1(&client, address).await;
         assert!(result);
 
         // mock a false response for implements IDescribedByMetaV1
-        let (rpc_server, client) = new_server_client(address).await;
-        rpc_server.mock(|when, then| {
-            when.method(POST)
-                .path("/")
-                .json_body_partial(i_described_by_meta_v1_req.clone());
-            then.json_body_obj(
-                &from_str::<Value>(
-                    &Response::new_success(
-                        3,
-                        "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    )
-                    .to_json_string()
-                    .unwrap(),
-                )
-                .unwrap(),
-            );
-        });
+        let (asserter, client) = new_server_client().await;
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
         let result = implements_i_described_by_meta_v1(&client, address).await;
         assert!(!result);
 
         // mock a revert response for implements IDescribedByMetaV1
-        let (rpc_server, client) = new_server_client(address).await;
-        rpc_server.mock(|when, then| {
-            when.method(POST)
-                .path("/")
-                .json_body_partial(i_described_by_meta_v1_req);
-            then.json_body_obj(
-                &from_str::<Value>(
-                    &Response::new_error(3, -32003, "execution reverted", Some("0x00"))
-                        .to_json_string()
-                        .unwrap(),
-                )
-                .unwrap(),
-            );
+        let (asserter, client) = new_server_client().await;
+        asserter.push_failure(ErrorPayload {
+            code: -32003,
+            message: "execution reverted".into(),
+            data: Some(serde_json::value::to_raw_value(&json!("0x00")).unwrap()),
         });
         let result = implements_i_described_by_meta_v1(&client, address).await;
         assert!(!result);
