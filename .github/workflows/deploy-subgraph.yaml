@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       network:
-        description: 'Network to deploy to'
+        description: "Network to deploy to"
         required: true
         type: choice
         options:
