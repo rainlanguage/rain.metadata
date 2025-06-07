@@ -12,12 +12,12 @@ cynic-codegen = { version = "3.4.0", features = ["rkyv"] }
 cynic = "3.4.0"
 thiserror = "1.0.56"
 insta = { version = "1.34.0" }
-alloy = { version = "0.1.4", features = ["rand", "json", "json-abi"] }
-alloy-ethers-typecast = { git = "https://github.com/rainlanguage/alloy-ethers-typecast", rev = "adda117b1f43e1a4dfa012299e71f2b0e73f46f4" }
+alloy = { version = "1.0.9", features = ["rand", "json", "json-abi"] }
+alloy-ethers-typecast = { git = "https://github.com/rainlanguage/alloy-ethers-typecast", rev = "f7b5bfd0687f16c77dbfdd4905b2434793fa7885" }
 url = "2.5.0"
 serde_json = "1.0.108"
 async-trait = "0.1.77"
-rain-erc = { git = "https://github.com/rainlanguage/rain.erc", rev = "490f7d851565002ad0f7fe89ed683a89d38b5c02" }
+rain-erc = { git = "https://github.com/rainlanguage/rain.erc", rev = "7b0f382f5e0788b0173c2391e09f4411f1c38300" }
 
 [workspace.dependencies.rain-metadata-bindings]
 path = "crates/bindings"

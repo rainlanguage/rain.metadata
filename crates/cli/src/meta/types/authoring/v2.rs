@@ -1,4 +1,4 @@
-use alloy::sol_types::SolType;
+use alloy::{primitives::FixedBytes, sol_types::SolType};
 use alloy_ethers_typecast::transaction::{
     ReadContractParametersBuilder, ReadContractParametersBuilderError, ReadableClient,
     ReadableClientError,
@@ -91,7 +91,7 @@ impl AuthoringMetaV2 {
     ///
     /// An AuthoringMetaV2 struct if successful, or an AuthoringMetaV2Error if an error occurs.
     pub fn abi_decode(bytes: &[u8]) -> Result<Self, AuthoringMetaV2Error> {
-        let decoded = AuthoringMetasV2Sol::abi_decode(bytes, true)?;
+        let decoded = AuthoringMetasV2Sol::abi_decode(bytes)?;
 
         let mut words = Vec::new();
 
@@ -127,7 +127,7 @@ impl AuthoringMetaV2 {
         metaboard_url: String,
     ) -> Result<Self, FetchAuthoringMetaV2WordError> {
         // get the metahash
-        let client = ReadableClient::new_from_urls(rpcs.clone()).map_err(|error| {
+        let client = ReadableClient::new_from_http_urls(rpcs.clone()).map_err(|error| {
             FetchAuthoringMetaV2WordError {
                 contract_address,
                 rpcs: rpcs.clone(),
@@ -156,16 +156,17 @@ impl AuthoringMetaV2 {
                 metaboard_url: metaboard_url.clone(),
                 error: error.into(),
             })?;
-        let metahash = client
-            .read(parameters)
-            .await
-            .map_err(|error| FetchAuthoringMetaV2WordError {
-                contract_address,
-                rpcs: rpcs.clone(),
-                metaboard_url: metaboard_url.clone(),
-                error: error.into(),
-            })?
-            ._0;
+
+        let FixedBytes(metahash) =
+            client
+                .read(parameters)
+                .await
+                .map_err(|error| FetchAuthoringMetaV2WordError {
+                    contract_address,
+                    rpcs: rpcs.clone(),
+                    metaboard_url: metaboard_url.clone(),
+                    error: error.into(),
+                })?;
 
         // query the metaboard for the metas
         let subgraph_client = MetaboardSubgraphClient::new(metaboard_url.parse().map_err(
