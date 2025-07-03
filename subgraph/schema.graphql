@@ -23,13 +23,5 @@ type Transaction @entity(immutable: true) {
   timestamp: BigInt!
   blockNumber: BigInt!
   from: Bytes!
-  events: [Event!] @derivedFrom(field: "transaction")
-}
-
-interface Event {
-  "Transaction this event was emitted in"
-  transaction: Transaction!
-  "msg.sender for the event"
-  sender: Bytes!
 }
 

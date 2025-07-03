@@ -3,12 +3,8 @@ import { ethereum, Address, BigInt, Bytes } from "@graphprotocol/graph-ts";
 import { newMockEvent } from "matchstick-as";
 import { handleMetaV1_2 } from "../src/metaBoard";
 
-export const transactionHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-export const transactionBlockNumber = 32377304;
-export const transactionTimestamp = 1751543962;
 
-
-export function createNewMetaV1Event(sender: string, subject: Bytes, meta: Bytes): MetaV1_2 {
+export function createNewMetaV1Event(sender: string, subject: Bytes, meta: Bytes, transactionHash: string, transactionBlockNumber: number, transactionTimestamp: number): MetaV1_2 {
   // Create a mock ethereum.Event instance
   const metaV1Event = changetype<MetaV1_2>(newMockEvent());
   metaV1Event.parameters = new Array();
