@@ -24,6 +24,8 @@ const subject = Bytes.fromHexString("0x3299321d9db6e1dc95c371c5aea791e7c45c4b1b1
 const metaString = "0xff0a89c674ee7874010203";
 const metaHashString = "0x6bdf81f785b54fd65ca6fc5d02b40fa361bc7d5f4f1067fc534b9433ecbc784d";
 const transactionHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+const transactionBlockNumber = 1;
+const transactionTimestamp = 1000;
 
 describe("Test meta event", () => {
   afterEach(() => {
@@ -135,8 +137,8 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
     let retrievedTransaction = Transaction.load(Bytes.fromHexString(transactionHash)) as Transaction;
     assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
     assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
-    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(1));
-    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(1000));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(transactionBlockNumber));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(transactionTimestamp));
     assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
   });
 });
