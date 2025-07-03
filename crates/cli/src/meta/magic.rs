@@ -37,6 +37,10 @@ pub enum KnownMagic {
     RainlangSourceV1 = 0xff13109e41336ff2,
     //Address list meta
     AddressList = 0xffb2637608c09e38,
+    /// Dotrain source code meta v1
+    DotrainSourceV1 = 0xffa15ef0fc437099,
+    /// Dotrain instance meta v1
+    DotrainInstanceV1 = 0xffda7b2fb167c286,
 }
 
 impl KnownMagic {
@@ -65,6 +69,8 @@ impl TryFrom<u64> for KnownMagic {
                 Ok(KnownMagic::ExpressionDeployerV2BytecodeV1)
             }
             v if v == KnownMagic::RainlangSourceV1 as u64 => Ok(KnownMagic::RainlangSourceV1),
+            v if v == KnownMagic::DotrainSourceV1 as u64 => Ok(KnownMagic::DotrainSourceV1),
+            v if v == KnownMagic::DotrainInstanceV1 as u64 => Ok(KnownMagic::DotrainInstanceV1),
             _ => Err(crate::error::Error::UnknownMagic),
         }
     }
@@ -153,5 +159,21 @@ mod tests {
         let magic_number_after_prefix = magic_number.to_prefix_bytes();
 
         assert_eq!(hex::encode(magic_number_after_prefix), "ff13109e41336ff2");
+    }
+
+    #[test]
+    fn test_dotrain_source_meta_v1() {
+        let magic_number = KnownMagic::DotrainSourceV1;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ffa15ef0fc437099");
+    }
+
+    #[test]
+    fn test_dotrain_instance_meta_v1() {
+        let magic_number = KnownMagic::DotrainInstanceV1;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ffda7b2fb167c286");
     }
 }
