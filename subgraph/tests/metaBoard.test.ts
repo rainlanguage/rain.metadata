@@ -137,6 +137,6 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
     assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
     assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(1));
     assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(1000));
-    assert.addressEquals(retrievedTransaction.from, Address.fromString(sender));
+    assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
   });
 });
