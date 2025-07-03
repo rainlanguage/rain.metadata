@@ -6,7 +6,7 @@ import { handleMetaV1_2 } from "../src/metaBoard";
 
 export function createNewMetaV1Event(sender: string, subject: Bytes, meta: Bytes, transactionHash: string, transactionBlockNumber: number, transactionTimestamp: number): MetaV1_2 {
   // Create a mock ethereum.Event instance
-  const metaV1Event = newMockEvent() as MetaV1_2;
+  const metaV1Event = changetype<MetaV1_2>(newMockEvent());
   metaV1Event.parameters = new Array();
   metaV1Event.address = CONTRACT_ADDRESS;
 
