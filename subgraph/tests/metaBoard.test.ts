@@ -15,6 +15,7 @@ import { Bytes, BigInt, ethereum, Address } from "@graphprotocol/graph-ts";
 import { MetaBoard as MetaBoardContract, MetaV1_2 } from "../generated/metaboard0/MetaBoard";
 import { MetaBoard, MetaV1 as MetaV1Entity, Transaction } from "../generated/schema";
 import { handleMetaV1_2 } from "../src/metaBoard";
+import { createTransactionEntity } from "../src/transaction";
 
 const ENTITY_TYPE_META_V1 = "MetaV1";
 const ENTITY_TYPE_META_BOARD = "MetaBoard";
@@ -82,6 +83,58 @@ describe("Test meta event", () => {
   test("Returns null when calling entity.load() if an entity doesn't exist", () => {
     let retrievedMetaV1 = MetaV1Entity.load("1");
     assert.assertNull(retrievedMetaV1);
+  });
+
+  test("Can create transaction entity directly", () => {
+    const metaV1Event = changetype<MetaV1_2>(newMockEvent());
+    metaV1Event.parameters = new Array();
+    metaV1Event.address = CONTRACT_ADDRESS;
+
+    // Set up transaction data
+    metaV1Event.transaction.hash = Bytes.fromHexString(transactionHash);
+    metaV1Event.transaction.from = Address.fromString(sender);
+    metaV1Event.block.number = BigInt.fromI32(transactionBlockNumber);
+    metaV1Event.block.timestamp = BigInt.fromI32(transactionTimestamp);
+
+    // Call createTransactionEntity directly
+    const transactionId = createTransactionEntity(metaV1Event);
+
+    // Verify transaction was created
+    let retrievedTransaction = Transaction.load(transactionId) as Transaction;
+    assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
+    assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(transactionBlockNumber));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(transactionTimestamp));
+    assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
+  });
+
+  test("Create transaction entity returns existing transaction if already exists", () => {
+    const metaV1Event = changetype<MetaV1_2>(newMockEvent());
+    metaV1Event.parameters = new Array();
+    metaV1Event.address = CONTRACT_ADDRESS;
+
+    // Set up transaction data
+    metaV1Event.transaction.hash = Bytes.fromHexString(transactionHash);
+    metaV1Event.transaction.from = Address.fromString(sender);
+    metaV1Event.block.number = BigInt.fromI32(transactionBlockNumber);
+    metaV1Event.block.timestamp = BigInt.fromI32(transactionTimestamp);
+
+    // Call createTransactionEntity twice
+    const transactionId1 = createTransactionEntity(metaV1Event);
+    const transactionId2 = createTransactionEntity(metaV1Event);
+
+    // Verify both calls return the same transaction ID
+    assert.bytesEquals(transactionId1, transactionId2);
+    
+    // Verify only one transaction entity exists
+    assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
+    
+    // Verify the transaction has the correct data
+    let retrievedTransaction = Transaction.load(transactionId1) as Transaction;
+    assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(transactionBlockNumber));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(transactionTimestamp));
+    assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
   });
 
 });
