@@ -6,15 +6,15 @@ import { handleMetaV1_2 } from "../src/metaBoard";
 
 export function createNewMetaV1Event(sender: string, subject: Bytes, meta: Bytes, transactionHash: string, transactionBlockNumber: number, transactionTimestamp: number): MetaV1_2 {
   // Create a mock ethereum.Event instance
-  const metaV1Event = changetype<MetaV1_2>(newMockEvent());
+  const metaV1Event = newMockEvent() as MetaV1_2;
   metaV1Event.parameters = new Array();
   metaV1Event.address = CONTRACT_ADDRESS;
 
   // Set up transaction data
   metaV1Event.transaction.hash = Bytes.fromHexString(transactionHash);
   metaV1Event.transaction.from = Address.fromString(sender);
-  metaV1Event.block.number = BigInt.fromI32(transactionBlockNumber);
-  metaV1Event.block.timestamp = BigInt.fromI32(transactionTimestamp);
+  metaV1Event.block.number = BigInt.fromI32(Math.floor(transactionBlockNumber));
+  metaV1Event.block.timestamp = BigInt.fromI32(Math.floor(transactionTimestamp));
 
   let senderParam = new ethereum.EventParam("sender", ethereum.Value.fromAddress(Address.fromString(sender)));
   let subjectParam = new ethereum.EventParam("subject", ethereum.Value.fromBytes(subject));
