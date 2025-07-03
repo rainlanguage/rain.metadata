@@ -3,6 +3,10 @@ import { ethereum, Address, BigInt, Bytes } from "@graphprotocol/graph-ts";
 import { newMockEvent } from "matchstick-as";
 import { handleMetaV1_2 } from "../src/metaBoard";
 
+export const transactionHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+export const transactionBlockNumber = 32377304;
+export const transactionTimestamp = 1751543962;
+
 
 export function createNewMetaV1Event(sender: string, subject: Bytes, meta: Bytes): MetaV1_2 {
   // Create a mock ethereum.Event instance
@@ -11,10 +15,10 @@ export function createNewMetaV1Event(sender: string, subject: Bytes, meta: Bytes
   metaV1Event.address = CONTRACT_ADDRESS;
 
   // Set up transaction data
-  metaV1Event.transaction.hash = Bytes.fromHexString("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+  metaV1Event.transaction.hash = Bytes.fromHexString(transactionHash);
   metaV1Event.transaction.from = Address.fromString(sender);
-  metaV1Event.block.number = BigInt.fromI32(1);
-  metaV1Event.block.timestamp = BigInt.fromI32(1000);
+  metaV1Event.block.number = BigInt.fromI32(transactionBlockNumber);
+  metaV1Event.block.timestamp = BigInt.fromI32(transactionTimestamp);
 
   let senderParam = new ethereum.EventParam("sender", ethereum.Value.fromAddress(Address.fromString(sender)));
   let subjectParam = new ethereum.EventParam("subject", ethereum.Value.fromBytes(subject));

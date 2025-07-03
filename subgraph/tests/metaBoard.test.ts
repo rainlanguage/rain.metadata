@@ -10,7 +10,7 @@ import {
   newMockEvent,
   clearInBlockStore
 } from "matchstick-as";
-import { createNewMetaV1Event, CONTRACT_ADDRESS } from "./utils";
+import { createNewMetaV1Event, CONTRACT_ADDRESS, transactionHash, transactionBlockNumber, transactionTimestamp } from "./utils";
 import { Bytes, BigInt, ethereum, Address } from "@graphprotocol/graph-ts";
 import { MetaBoard as MetaBoardContract, MetaV1_2 } from "../generated/metaboard0/MetaBoard";
 import { MetaBoard, MetaV1 as MetaV1Entity, Transaction } from "../generated/schema";
@@ -23,9 +23,6 @@ const sender = "0xc0D477556c25C9d67E1f57245C7453DA776B51cf";
 const subject = Bytes.fromHexString("0x3299321d9db6e1dc95c371c5aea791e7c45c4b1b1d4ff713664e6d2187ab7aa5");
 const metaString = "0xff0a89c674ee7874010203";
 const metaHashString = "0x6bdf81f785b54fd65ca6fc5d02b40fa361bc7d5f4f1067fc534b9433ecbc784d";
-const transactionHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-const transactionBlockNumber = 1;
-const transactionTimestamp = 1000;
 
 describe("Test meta event", () => {
   afterEach(() => {
