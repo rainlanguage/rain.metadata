@@ -10,6 +10,12 @@ export function createNewMetaV1Event(sender: string, subject: Bytes, meta: Bytes
   metaV1Event.parameters = new Array();
   metaV1Event.address = CONTRACT_ADDRESS;
 
+  // Set up transaction data
+  metaV1Event.transaction.hash = Bytes.fromHexString("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+  metaV1Event.transaction.from = Address.fromString(sender);
+  metaV1Event.block.number = BigInt.fromI32(1);
+  metaV1Event.block.timestamp = BigInt.fromI32(1000);
+
   let senderParam = new ethereum.EventParam("sender", ethereum.Value.fromAddress(Address.fromString(sender)));
   let subjectParam = new ethereum.EventParam("subject", ethereum.Value.fromBytes(subject));
   let metaParam = new ethereum.EventParam("meta", ethereum.Value.fromBytes(meta));
@@ -22,7 +28,7 @@ export function createNewMetaV1Event(sender: string, subject: Bytes, meta: Bytes
 
 export function handleNewMetaV1Events(events: MetaV1_2[]): void {
   events.forEach(event => {
-    handleMetaV1(event);
+    handleMetaV1_2(event);
   });
 }
 

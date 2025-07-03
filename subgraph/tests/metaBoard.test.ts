@@ -13,15 +13,17 @@ import {
 import { createNewMetaV1Event, CONTRACT_ADDRESS } from "./utils";
 import { Bytes, BigInt, ethereum, Address } from "@graphprotocol/graph-ts";
 import { MetaBoard as MetaBoardContract, MetaV1_2 } from "../generated/metaboard0/MetaBoard";
-import { MetaBoard, MetaV1 as MetaV1Entity } from "../generated/schema";
+import { MetaBoard, MetaV1 as MetaV1Entity, Transaction } from "../generated/schema";
 import { handleMetaV1_2 } from "../src/metaBoard";
 
 const ENTITY_TYPE_META_V1 = "MetaV1";
 const ENTITY_TYPE_META_BOARD = "MetaBoard";
+const ENTITY_TYPE_TRANSACTION = "Transaction";
 const sender = "0xc0D477556c25C9d67E1f57245C7453DA776B51cf";
 const subject = Bytes.fromHexString("0x3299321d9db6e1dc95c371c5aea791e7c45c4b1b1d4ff713664e6d2187ab7aa5");
 const metaString = "0xff0a89c674ee7874010203";
 const metaHashString = "0x6bdf81f785b54fd65ca6fc5d02b40fa361bc7d5f4f1067fc534b9433ecbc784d";
+const transactionHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
 describe("Test meta event", () => {
   afterEach(() => {
@@ -126,5 +128,15 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
     assert.bytesEquals(retrievedMetaV1.metaBoard, CONTRACT_ADDRESS);//metaBoard
     assert.bytesEquals(retrievedMetaV1.meta, Bytes.fromHexString(metaString));//meta
     assert.bytesEquals(retrievedMetaV1.metaHash, Bytes.fromHexString(metaHashString));//metaHash
+    assert.bytesEquals(retrievedMetaV1.transaction, Bytes.fromHexString(transactionHash));//transaction
+  });
+
+  test("Checks Transaction entity is created", () => {
+    let retrievedTransaction = Transaction.load(Bytes.fromHexString(transactionHash)) as Transaction;
+    assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
+    assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(1));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(1000));
+    assert.addressEquals(retrievedTransaction.from, Address.fromString(sender));
   });
 });
