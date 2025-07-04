@@ -1,4 +1,3 @@
-use alloy::primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -18,8 +17,8 @@ pub struct ValueCfg {
 pub struct TokenCfg {
     /// Network name where the token exists
     pub network: String,
-    /// Token contract address
-    pub address: Address,
+    /// Token contract address as hex string
+    pub address: String,
 }
 
 /// Dotrain Instance V1 metadata - contains user's specific configuration
@@ -27,7 +26,7 @@ pub struct TokenCfg {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DotrainInstanceV1 {
     /// Hash of the original dotrain template in Metaboard
-    pub dotrain_hash: B256,
+    pub dotrain_hash: String,
     /// User-configured field values
     pub field_values: BTreeMap<String, ValueCfg>,
     /// Deposit configurations
@@ -42,23 +41,23 @@ pub struct DotrainInstanceV1 {
 
 impl DotrainInstanceV1 {
     /// Get the template hash
-    pub fn dotrain_hash(&self) -> B256 {
-        self.dotrain_hash
+    pub fn dotrain_hash(&self) -> &str {
+        &self.dotrain_hash
     }
 
-    pub fn get_token_addresses(&self) -> Vec<Address> {
+    pub fn get_token_addresses(&self) -> Vec<&str> {
         self.select_tokens
             .values()
-            .map(|token| token.address)
+            .map(|token| token.address.as_str())
             .collect()
     }
 
     /// Get all non-empty vault IDs
-    pub fn get_vault_ids(&self) -> Vec<String> {
+    pub fn get_vault_ids(&self) -> Vec<&str> {
         self.vault_ids
             .values()
             .filter_map(|id| id.as_ref())
-            .cloned()
+            .map(|s| s.as_str())
             .collect()
     }
 }
@@ -72,13 +71,15 @@ impl std::fmt::Display for DotrainInstanceV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{B256};
+    use sha2::{Digest, Sha256};
+    use base64::{engine::general_purpose::URL_SAFE, Engine};
 
     #[test]
     fn test_dotrain_hash() {
-        let dotrain_hash = B256::from_slice(&[42u8; 32]);
+        let hash = Sha256::digest(b"test content");
+        let dotrain_hash = URL_SAFE.encode(hash);
         let instance = DotrainInstanceV1 {
-            dotrain_hash,
+            dotrain_hash: dotrain_hash.clone(),
             field_values: BTreeMap::new(),
             deposits: BTreeMap::new(),
             select_tokens: BTreeMap::new(),
