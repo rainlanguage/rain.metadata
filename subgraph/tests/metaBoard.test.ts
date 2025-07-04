@@ -132,8 +132,8 @@ describe("Test meta event", () => {
     // Verify the transaction has the correct data
     const retrievedTransaction = Transaction.load(transactionId1) as Transaction;
     assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
-    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(transactionBlockNumber));
-    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(transactionTimestamp));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromString(transactionBlockNumber.toString()));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromString(transactionTimestamp.toString()));
     assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
   });
 
@@ -190,8 +190,8 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
     const retrievedTransaction = Transaction.load(Bytes.fromHexString(transactionHash)) as Transaction;
     assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
     assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
-    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(transactionBlockNumber));
-    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(transactionTimestamp));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromString(transactionBlockNumber.toString()));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromString(transactionTimestamp.toString()));
     assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
   });
 });
