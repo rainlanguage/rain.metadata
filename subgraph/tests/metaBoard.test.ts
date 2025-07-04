@@ -48,7 +48,7 @@ describe("Test meta event", () => {
     // Call mappings
     const meta = Bytes.fromHexString(metaString);
 
-    let newMetaV1Event = createNewMetaV1Event(sender, subject, meta, transactionHash, transactionBlockNumber, transactionTimestamp);
+    const newMetaV1Event = createNewMetaV1Event(sender, subject, meta, transactionHash, transactionBlockNumber, transactionTimestamp);
 
     createMockedFunction(CONTRACT_ADDRESS, "hash", "hash(bytes):(bytes32)")
       .withArgs([ethereum.Value.fromBytes(meta)])
@@ -100,11 +100,11 @@ describe("Test meta event", () => {
     const transactionId = createTransactionEntity(metaV1Event);
 
     // Verify transaction was created
-    let retrievedTransaction = Transaction.load(transactionId) as Transaction;
+    const retrievedTransaction = Transaction.load(transactionId) as Transaction;
     assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
     assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
-    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(transactionBlockNumber));
-    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(transactionTimestamp));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromString(transactionBlockNumber.toString()));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromString(transactionTimestamp.toString()));
     assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
   });
 
@@ -130,7 +130,7 @@ describe("Test meta event", () => {
     assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
     
     // Verify the transaction has the correct data
-    let retrievedTransaction = Transaction.load(transactionId1) as Transaction;
+    const retrievedTransaction = Transaction.load(transactionId1) as Transaction;
     assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
     assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(transactionBlockNumber));
     assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromI32(transactionTimestamp));
@@ -142,7 +142,7 @@ describe("Test meta event", () => {
 describe("Test MetaBoard and MetaV1 Entities", () => {
   beforeAll(() => {
     const meta = Bytes.fromHexString(metaString);
-    let newMetaV1Event = createNewMetaV1Event(sender, subject, meta, transactionHash, transactionBlockNumber, transactionTimestamp);
+    const newMetaV1Event = createNewMetaV1Event(sender, subject, meta, transactionHash, transactionBlockNumber, transactionTimestamp);
 
     createMockedFunction(CONTRACT_ADDRESS, "hash", "hash(bytes):(bytes32)")
       .withArgs([ethereum.Value.fromBytes(meta)])
@@ -187,7 +187,7 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
   });
 
   test("Checks Transaction entity is created", () => {
-    let retrievedTransaction = Transaction.load(Bytes.fromHexString(transactionHash)) as Transaction;
+    const retrievedTransaction = Transaction.load(Bytes.fromHexString(transactionHash)) as Transaction;
     assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
     assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
     assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromI32(transactionBlockNumber));
