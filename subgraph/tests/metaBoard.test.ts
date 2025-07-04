@@ -62,7 +62,7 @@ describe("Test meta event", () => {
     assert.equals(ethereum.Value.fromBytes(newMetaV1Event.params.meta), ethereum.Value.fromBytes(meta));
   });
   test("Can update event metadata", () => {
-    const metaV1Event = changetype<MetaV1_2>(newMockEvent());;
+    const metaV1Event = changetype<MetaV1_2>(newMockEvent());
     metaV1Event.parameters = new Array();
 
     const subject = Bytes.fromHexString("0xe61c27d16fa0dfbb69b2e8c1a1beb64051668e348f4bb52e843548759b8fabe1");
