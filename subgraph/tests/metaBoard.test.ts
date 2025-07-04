@@ -13,15 +13,20 @@ import {
 import { createNewMetaV1Event, CONTRACT_ADDRESS } from "./utils";
 import { Bytes, BigInt, ethereum, Address } from "@graphprotocol/graph-ts";
 import { MetaBoard as MetaBoardContract, MetaV1_2 } from "../generated/metaboard0/MetaBoard";
-import { MetaBoard, MetaV1 as MetaV1Entity } from "../generated/schema";
+import { MetaBoard, MetaV1 as MetaV1Entity, Transaction } from "../generated/schema";
 import { handleMetaV1_2 } from "../src/metaBoard";
+import { createTransactionEntity } from "../src/transaction";
 
 const ENTITY_TYPE_META_V1 = "MetaV1";
 const ENTITY_TYPE_META_BOARD = "MetaBoard";
+const ENTITY_TYPE_TRANSACTION = "Transaction";
 const sender = "0xc0D477556c25C9d67E1f57245C7453DA776B51cf";
 const subject = Bytes.fromHexString("0x3299321d9db6e1dc95c371c5aea791e7c45c4b1b1d4ff713664e6d2187ab7aa5");
 const metaString = "0xff0a89c674ee7874010203";
 const metaHashString = "0x6bdf81f785b54fd65ca6fc5d02b40fa361bc7d5f4f1067fc534b9433ecbc784d";
+const transactionHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+const transactionBlockNumber = 32377304;
+const transactionTimestamp = 1751543962;
 
 describe("Test meta event", () => {
   afterEach(() => {
@@ -43,7 +48,7 @@ describe("Test meta event", () => {
     // Call mappings
     const meta = Bytes.fromHexString(metaString);
 
-    let newMetaV1Event = createNewMetaV1Event(sender, subject, meta);
+    const newMetaV1Event = createNewMetaV1Event(sender, subject, meta, transactionHash, transactionBlockNumber, transactionTimestamp);
 
     createMockedFunction(CONTRACT_ADDRESS, "hash", "hash(bytes):(bytes32)")
       .withArgs([ethereum.Value.fromBytes(meta)])
@@ -80,12 +85,64 @@ describe("Test meta event", () => {
     assert.assertNull(retrievedMetaV1);
   });
 
+  test("Can create transaction entity directly", () => {
+    const metaV1Event = changetype<MetaV1_2>(newMockEvent());
+    metaV1Event.parameters = new Array();
+    metaV1Event.address = CONTRACT_ADDRESS;
+
+    // Set up transaction data
+    metaV1Event.transaction.hash = Bytes.fromHexString(transactionHash);
+    metaV1Event.transaction.from = Address.fromString(sender);
+    metaV1Event.block.number = BigInt.fromI32(transactionBlockNumber);
+    metaV1Event.block.timestamp = BigInt.fromI32(transactionTimestamp);
+
+    // Call createTransactionEntity directly
+    const transactionId = createTransactionEntity(metaV1Event);
+
+    // Verify transaction was created
+    const retrievedTransaction = Transaction.load(transactionId) as Transaction;
+    assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
+    assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromString(transactionBlockNumber.toString()));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromString(transactionTimestamp.toString()));
+    assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
+  });
+
+  test("Create transaction entity returns existing transaction if already exists", () => {
+    const metaV1Event = changetype<MetaV1_2>(newMockEvent());
+    metaV1Event.parameters = new Array();
+    metaV1Event.address = CONTRACT_ADDRESS;
+
+    // Set up transaction data
+    metaV1Event.transaction.hash = Bytes.fromHexString(transactionHash);
+    metaV1Event.transaction.from = Address.fromString(sender);
+    metaV1Event.block.number = BigInt.fromI32(transactionBlockNumber);
+    metaV1Event.block.timestamp = BigInt.fromI32(transactionTimestamp);
+
+    // Call createTransactionEntity twice
+    const transactionId1 = createTransactionEntity(metaV1Event);
+    const transactionId2 = createTransactionEntity(metaV1Event);
+
+    // Verify both calls return the same transaction ID
+    assert.bytesEquals(transactionId1, transactionId2);
+    
+    // Verify only one transaction entity exists
+    assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
+    
+    // Verify the transaction has the correct data
+    const retrievedTransaction = Transaction.load(transactionId1) as Transaction;
+    assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromString(transactionBlockNumber.toString()));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromString(transactionTimestamp.toString()));
+    assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
+  });
+
 });
 
 describe("Test MetaBoard and MetaV1 Entities", () => {
   beforeAll(() => {
     const meta = Bytes.fromHexString(metaString);
-    let newMetaV1Event = createNewMetaV1Event(sender, subject, meta);
+    const newMetaV1Event = createNewMetaV1Event(sender, subject, meta, transactionHash, transactionBlockNumber, transactionTimestamp);
 
     createMockedFunction(CONTRACT_ADDRESS, "hash", "hash(bytes):(bytes32)")
       .withArgs([ethereum.Value.fromBytes(meta)])
@@ -126,5 +183,15 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
     assert.bytesEquals(retrievedMetaV1.metaBoard, CONTRACT_ADDRESS);//metaBoard
     assert.bytesEquals(retrievedMetaV1.meta, Bytes.fromHexString(metaString));//meta
     assert.bytesEquals(retrievedMetaV1.metaHash, Bytes.fromHexString(metaHashString));//metaHash
+    assert.bytesEquals(retrievedMetaV1.transaction, Bytes.fromHexString(transactionHash));//transaction
+  });
+
+  test("Checks Transaction entity is created", () => {
+    const retrievedTransaction = Transaction.load(Bytes.fromHexString(transactionHash)) as Transaction;
+    assert.entityCount(ENTITY_TYPE_TRANSACTION, 1);
+    assert.bytesEquals(retrievedTransaction.id, Bytes.fromHexString(transactionHash));
+    assert.bigIntEquals(retrievedTransaction.blockNumber, BigInt.fromString(transactionBlockNumber.toString()));
+    assert.bigIntEquals(retrievedTransaction.timestamp, BigInt.fromString(transactionTimestamp.toString()));
+    assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
   });
 });

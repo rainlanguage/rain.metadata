@@ -7,6 +7,7 @@ type MetaBoard @entity {
 
 type MetaV1 @entity {
     id: ID!
+    transaction: Transaction!
 
     metaBoard: MetaBoard!
 
@@ -15,5 +16,12 @@ type MetaV1 @entity {
 
     metaHash: Bytes!
     meta: Bytes!
+}
+
+type Transaction @entity(immutable: true) {
+  id: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  from: Bytes!
 }
 
