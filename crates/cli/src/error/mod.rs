@@ -1,5 +1,7 @@
 use std::{string::FromUtf8Error, str::Utf8Error};
 
+use crate::meta::KnownMagic;
+
 /// Covers all errors variants of Rain Metadat lib functionalities
 #[derive(Debug)]
 pub enum Error {
@@ -20,6 +22,7 @@ pub enum Error {
     AbiCoderError(alloy::sol_types::Error),
     ValidationErrors(validator::ValidationErrors),
     DecodeHexStringError(alloy::primitives::hex::FromHexError),
+    InvalidMetaMagic(KnownMagic, KnownMagic),
 }
 
 impl std::fmt::Display for Error {
@@ -46,6 +49,13 @@ impl std::fmt::Display for Error {
             Error::FromUtf8Error(v) => write!(f, "{}", v),
             Error::DecodeHexStringError(v) => write!(f, "{}", v),
             Error::ValidationErrors(v) => write!(f, "{}", v),
+            Error::InvalidMetaMagic(expected, actual) => {
+                write!(
+                    f,
+                    "invalid meta magic: expected {:?}, got {:?}",
+                    expected, actual
+                )
+            }
         }
     }
 }
