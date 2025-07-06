@@ -11,6 +11,12 @@
       "startBlock": 266485075
     }
   },
+  "base": {
+    "metaboard0": {
+      "address": "0x59401C9302E79Eb8AC6aea659B8B3ae475715e86",
+      "startBlock": 18309350
+    }
+  },
   "mainnet": {
     "metaboard0": {
       "address": "0x8F61d274aaB5D8CFD82dc266529EAe33020386a9",
