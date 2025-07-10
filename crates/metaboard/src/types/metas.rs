@@ -11,6 +11,18 @@ pub struct MetasByHash {
     pub meta_v1_s: Vec<MetaV1>,
 }
 
+#[derive(cynic::QueryVariables, Debug)]
+pub struct MetasBySubjectVariables {
+    pub subject: Option<BigInt>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Query", variables = "MetasBySubjectVariables")]
+pub struct MetasBySubject {
+    #[arguments(where: { subject: $subject })]
+    pub meta_v1_s: Vec<MetaV1>,
+}
+
 #[derive(cynic::QueryFragment, Debug)]
 pub struct MetaV1 {
     pub meta_hash: Bytes,
