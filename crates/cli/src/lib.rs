@@ -69,6 +69,7 @@
 
 pub(crate) mod solc;
 pub mod meta;
+pub mod metaboard;
 pub mod error;
 pub(crate) mod subgraph;
 
@@ -78,5 +79,6 @@ pub mod cli;
 // re-export main types and functionalities
 pub use solc::*;
 pub use meta::*;
+pub use metaboard::*;
 pub use error::*;
 pub use subgraph::*;

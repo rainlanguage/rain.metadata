@@ -36,6 +36,8 @@ pub enum KnownMeta {
     ExpressionDeployerV2BytecodeV1,
     RainlangSourceV1,
     AddressList,
+    DotrainSourceV1,
+    DotrainInstanceV1,
 }
 
 impl TryFrom<KnownMagic> for KnownMeta {
@@ -50,6 +52,8 @@ impl TryFrom<KnownMagic> for KnownMeta {
             KnownMagic::AuthoringMetaV2 => Ok(KnownMeta::AuthoringMetaV2),
             KnownMagic::AddressList => Ok(KnownMeta::AddressList),
             KnownMagic::InterpreterCallerMetaV1 => Ok(KnownMeta::InterpreterCallerMetaV1),
+            KnownMagic::DotrainSourceV1 => Ok(KnownMeta::DotrainSourceV1),
+            KnownMagic::DotrainInstanceV1 => Ok(KnownMeta::DotrainInstanceV1),
             KnownMagic::ExpressionDeployerV2BytecodeV1 => {
                 Ok(KnownMeta::ExpressionDeployerV2BytecodeV1)
             }
