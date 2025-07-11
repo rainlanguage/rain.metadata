@@ -66,6 +66,40 @@ impl DotrainInstanceV1 {
             .cloned()
             .collect()
     }
+
+    /// Extract DotrainInstanceV1 from raw meta bytes
+    ///
+    /// This function attempts to decode CBOR data and find a DotrainInstanceV1 document
+    /// among potentially multiple metadata items.
+    ///
+    /// Returns:
+    /// - Ok(Some(DotrainInstanceV1)) if found and successfully parsed
+    /// - Ok(None) if no DotrainInstanceV1 document found in the meta bytes
+    /// - Err(Error) if there are parsing/decoding errors
+    pub fn extract_from_meta(meta_bytes: &[u8]) -> Result<Option<Self>, Error> {
+        // Try to decode CBOR data
+        let decoded_items = RainMetaDocumentV1Item::cbor_decode(meta_bytes)?;
+
+        // Look for DotrainInstanceV1 among the decoded items
+        for item in decoded_items {
+            if item.magic == KnownMagic::RainMetaDocumentV1 {
+                if let Some(instance) = DotrainInstanceV1::extract_from_meta(item.payload.as_ref())?
+                {
+                    return Ok(Some(instance));
+                }
+            }
+            if item.magic == KnownMagic::DotrainInstanceV1 {
+                // Found a DotrainInstanceV1 document, try to convert it
+                match DotrainInstanceV1::try_from(item) {
+                    Ok(instance) => return Ok(Some(instance)),
+                    Err(e) => return Err(e), // Propagate conversion error
+                }
+            }
+        }
+
+        // No DotrainInstanceV1 found
+        Ok(None)
+    }
 }
 
 impl From<DotrainInstanceV1> for RainMetaDocumentV1Item {
@@ -265,5 +299,90 @@ mod tests {
 
         // Verify roundtrip
         assert_eq!(decoded_instance, original_instance);
+    }
+
+    #[test]
+    fn test_extract_from_meta_found() {
+        let original_instance = create_test_instance();
+        let document_item: RainMetaDocumentV1Item = original_instance.clone().into();
+        let cbor_bytes = document_item.cbor_encode().unwrap();
+
+        let result = DotrainInstanceV1::extract_from_meta(&cbor_bytes).unwrap();
+        assert!(result.is_some());
+        let extracted_instance = result.unwrap();
+        assert_eq!(extracted_instance, original_instance);
+    }
+
+    #[test]
+    fn test_extract_from_meta_not_found() {
+        // Create a different type of document
+        use crate::meta::types::dotrain::source_v1::DotrainSourceV1;
+        let source = DotrainSourceV1("test code".to_string());
+        let document_item: RainMetaDocumentV1Item = source.into();
+        let cbor_bytes = document_item.cbor_encode().unwrap();
+
+        let result = DotrainInstanceV1::extract_from_meta(&cbor_bytes).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_from_meta_multiple_documents() {
+        // Create multiple documents, only one is DotrainInstanceV1
+        let instance = create_test_instance();
+        let instance_doc: RainMetaDocumentV1Item = instance.clone().into();
+
+        use crate::meta::types::dotrain::source_v1::DotrainSourceV1;
+        let source = DotrainSourceV1("test code".to_string());
+        let source_doc: RainMetaDocumentV1Item = source.into();
+
+        // Encode them as a sequence
+        let documents = vec![source_doc, instance_doc];
+        let cbor_bytes =
+            RainMetaDocumentV1Item::cbor_encode_seq(&documents, KnownMagic::RainMetaDocumentV1)
+                .unwrap();
+
+        let result = DotrainInstanceV1::extract_from_meta(&cbor_bytes).unwrap();
+        assert!(result.is_some());
+        let extracted_instance = result.unwrap();
+        assert_eq!(extracted_instance, instance);
+    }
+
+    #[test]
+    fn test_extract_from_meta_invalid_cbor() {
+        let invalid_cbor = vec![0xFF, 0xFE, 0xFD, 0xFC];
+
+        let result = DotrainInstanceV1::extract_from_meta(&invalid_cbor);
+        assert!(result.is_err());
+        // Should be a CBOR decode error
+    }
+
+    #[test]
+    fn test_extract_from_meta_empty_data() {
+        let empty_data = vec![];
+
+        let result = DotrainInstanceV1::extract_from_meta(&empty_data);
+        assert!(result.is_err());
+        // Should be a CBOR decode error for empty data
+    }
+
+    #[test]
+    fn test_extract_from_meta_corrupted_instance_data() {
+        // Create a document with DotrainInstanceV1 magic but invalid JSON payload
+        let corrupted_doc = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from("{ corrupted json }"),
+            magic: KnownMagic::DotrainInstanceV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+        };
+        let cbor_bytes = corrupted_doc.cbor_encode().unwrap();
+
+        let result = DotrainInstanceV1::extract_from_meta(&cbor_bytes);
+        assert!(result.is_err());
+        // Should be a JSON deserialization error
+        match result.unwrap_err() {
+            Error::SerdeJsonError(_) => {} // Expected
+            _ => panic!("Expected SerdeJsonError"),
+        }
     }
 }
