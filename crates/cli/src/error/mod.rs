@@ -1,5 +1,7 @@
 use std::{string::FromUtf8Error, str::Utf8Error};
 
+use rain_metaboard_subgraph::metaboard_client::MetaboardSubgraphClientError;
+
 use crate::meta::KnownMagic;
 
 /// Covers all errors variants of Rain Metadat lib functionalities
@@ -23,6 +25,7 @@ pub enum Error {
     ValidationErrors(validator::ValidationErrors),
     DecodeHexStringError(alloy::primitives::hex::FromHexError),
     InvalidMetaMagic(KnownMagic, KnownMagic),
+    MetaboardSubgraphClientError(MetaboardSubgraphClientError),
 }
 
 impl std::fmt::Display for Error {
@@ -56,6 +59,7 @@ impl std::fmt::Display for Error {
                     expected, actual
                 )
             }
+            Error::MetaboardSubgraphClientError(v) => write!(f, "{}", v),
         }
     }
 }
