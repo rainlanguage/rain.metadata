@@ -286,6 +286,8 @@ impl RainMetaDocumentV1Item {
             | KnownMagic::AddressList
             | KnownMagic::InterpreterCallerMetaV1
             | KnownMagic::ExpressionDeployerV2BytecodeV1
+            | KnownMagic::DotrainSourceV1
+            | KnownMagic::DotrainInstanceV1
             | KnownMagic::RainlangSourceV1 => T::try_from(self),
             _ => Err(Error::UnsupportedMeta)?,
         }
