@@ -102,17 +102,20 @@ impl DotrainGuiStateV1 {
     }
 }
 
-impl From<DotrainGuiStateV1> for RainMetaDocumentV1Item {
-    fn from(value: DotrainGuiStateV1) -> Self {
+impl TryFrom<DotrainGuiStateV1> for RainMetaDocumentV1Item {
+    type Error = Error;
+
+    fn try_from(value: DotrainGuiStateV1) -> Result<Self, Self::Error> {
         // Serialize the struct to CBOR bytes
-        let cbor_bytes = serde_cbor::to_vec(&value).expect("Failed to serialize DotrainGuiStateV1");
-        RainMetaDocumentV1Item {
+        let cbor_bytes = serde_cbor::to_vec(&value).map_err(Error::SerdeCborError)?;
+
+        Ok(RainMetaDocumentV1Item {
             payload: serde_bytes::ByteBuf::from(cbor_bytes),
             magic: KnownMagic::DotrainGuiStateV1,
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
-        }
+        })
     }
 }
 
@@ -195,7 +198,7 @@ mod tests {
     #[test]
     fn test_into_document() {
         let instance = create_test_instance();
-        let document_item: RainMetaDocumentV1Item = instance.clone().into();
+        let document_item: RainMetaDocumentV1Item = instance.clone().try_into().unwrap();
 
         assert_eq!(document_item.magic, KnownMagic::DotrainGuiStateV1);
         assert_eq!(document_item.content_type, ContentType::OctetStream);
@@ -273,7 +276,7 @@ mod tests {
         let original_instance = create_test_instance();
 
         // DotrainGuiStateV1 -> RainMetaDocumentV1Item -> DotrainGuiStateV1
-        let document_item: RainMetaDocumentV1Item = original_instance.clone().into();
+        let document_item: RainMetaDocumentV1Item = original_instance.clone().try_into().unwrap();
         let recovered_instance = DotrainGuiStateV1::try_from(document_item).unwrap();
 
         assert_eq!(recovered_instance, original_instance);
@@ -284,7 +287,7 @@ mod tests {
         let original_instance = create_test_instance();
 
         // Convert to document item
-        let document_item: RainMetaDocumentV1Item = original_instance.clone().into();
+        let document_item: RainMetaDocumentV1Item = original_instance.clone().try_into().unwrap();
 
         // Encode to CBOR
         let cbor_bytes = document_item.cbor_encode().unwrap();
@@ -304,7 +307,7 @@ mod tests {
     #[test]
     fn test_extract_from_meta_found() {
         let original_instance = create_test_instance();
-        let document_item: RainMetaDocumentV1Item = original_instance.clone().into();
+        let document_item: RainMetaDocumentV1Item = original_instance.clone().try_into().unwrap();
         let cbor_bytes = document_item.cbor_encode().unwrap();
 
         let result = DotrainGuiStateV1::extract_from_meta(&cbor_bytes).unwrap();
@@ -329,7 +332,7 @@ mod tests {
     fn test_extract_from_meta_multiple_documents() {
         // Create multiple documents, only one is DotrainGuiStateV1
         let instance = create_test_instance();
-        let instance_doc: RainMetaDocumentV1Item = instance.clone().into();
+        let instance_doc: RainMetaDocumentV1Item = instance.clone().try_into().unwrap();
 
         use crate::meta::types::dotrain::source_v1::DotrainSourceV1;
         let source = DotrainSourceV1("test code".to_string());
