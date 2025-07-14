@@ -39,7 +39,7 @@ pub enum KnownMeta {
     RainlangSourceV1,
     AddressList,
     DotrainSourceV1,
-    DotrainInstanceV1,
+    DotrainGuiStateV1,
 }
 
 impl TryFrom<KnownMagic> for KnownMeta {
@@ -55,7 +55,7 @@ impl TryFrom<KnownMagic> for KnownMeta {
             KnownMagic::AddressList => Ok(KnownMeta::AddressList),
             KnownMagic::InterpreterCallerMetaV1 => Ok(KnownMeta::InterpreterCallerMetaV1),
             KnownMagic::DotrainSourceV1 => Ok(KnownMeta::DotrainSourceV1),
-            KnownMagic::DotrainInstanceV1 => Ok(KnownMeta::DotrainInstanceV1),
+            KnownMagic::DotrainGuiStateV1 => Ok(KnownMeta::DotrainGuiStateV1),
             KnownMagic::ExpressionDeployerV2BytecodeV1 => {
                 Ok(KnownMeta::ExpressionDeployerV2BytecodeV1)
             }
@@ -289,7 +289,7 @@ impl RainMetaDocumentV1Item {
             | KnownMagic::InterpreterCallerMetaV1
             | KnownMagic::ExpressionDeployerV2BytecodeV1
             | KnownMagic::DotrainSourceV1
-            | KnownMagic::DotrainInstanceV1
+            | KnownMagic::DotrainGuiStateV1
             | KnownMagic::RainlangSourceV1 => T::try_from(self),
             _ => Err(Error::UnsupportedMeta)?,
         }

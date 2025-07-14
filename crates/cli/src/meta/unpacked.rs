@@ -6,7 +6,7 @@
 use super::{Error, KnownMagic, RainMetaDocumentV1Item};
 use crate::meta::types::{
     authoring::v1::AuthoringMeta, authoring::v2::AuthoringMetaV2, dotrain::v1::DotrainMeta,
-    dotrain::source_v1::DotrainSourceV1, dotrain::instance_v1::DotrainInstanceV1,
+    dotrain::source_v1::DotrainSourceV1, dotrain::gui_state_v1::DotrainGuiStateV1,
     expression_deployer_v2_bytecode::v1::ExpressionDeployerV2BytecodeMeta,
     interpreter_caller::v1::InterpreterCallerMeta, op::v1::OpMeta, rainlang::v1::RainlangMeta,
     rainlangsource::v1::RainlangSourceMeta, solidity_abi::v2::SolidityAbiMeta,
@@ -75,7 +75,7 @@ pub enum UnpackedMetadata {
     /// Dotrain source metadata V1
     DotrainSourceV1(DotrainSourceV1),
     /// Dotrain instance metadata V1
-    DotrainInstanceV1(DotrainInstanceV1),
+    DotrainGuiStateV1(DotrainGuiStateV1),
     /// Expression deployer V2 bytecode metadata (raw bytes)
     ExpressionDeployerV2BytecodeV1(ExpressionDeployerV2BytecodeMeta),
     /// Interpreter caller metadata V1
@@ -103,7 +103,7 @@ impl UnpackedMetadata {
             UnpackedMetadata::AuthoringV2(_) => KnownMagic::AuthoringMetaV2,
             UnpackedMetadata::DotrainV1(_) => KnownMagic::DotrainV1,
             UnpackedMetadata::DotrainSourceV1(_) => KnownMagic::DotrainSourceV1,
-            UnpackedMetadata::DotrainInstanceV1(_) => KnownMagic::DotrainInstanceV1,
+            UnpackedMetadata::DotrainGuiStateV1(_) => KnownMagic::DotrainGuiStateV1,
             UnpackedMetadata::ExpressionDeployerV2BytecodeV1(_) => {
                 KnownMagic::ExpressionDeployerV2BytecodeV1
             }
@@ -122,7 +122,7 @@ impl UnpackedMetadata {
         AuthoringV2 => is_authoring_v2,
         DotrainV1 => is_dotrain_v1,
         DotrainSourceV1 => is_dotrain_source_v1,
-        DotrainInstanceV1 => is_dotrain_instance_v1,
+        DotrainGuiStateV1 => is_dotrain_gui_state_v1,
         ExpressionDeployerV2BytecodeV1 => is_expression_deployer_v2_bytecode_v1,
         InterpreterCallerV1 => is_interpreter_caller_v1,
         OpV1 => is_op_v1,
@@ -143,8 +143,8 @@ impl TryFrom<RainMetaDocumentV1Item> for UnpackedMetadata {
             KnownMagic::DotrainSourceV1 => {
                 Ok(UnpackedMetadata::DotrainSourceV1(item.unpack_into()?))
             }
-            KnownMagic::DotrainInstanceV1 => {
-                Ok(UnpackedMetadata::DotrainInstanceV1(item.unpack_into()?))
+            KnownMagic::DotrainGuiStateV1 => {
+                Ok(UnpackedMetadata::DotrainGuiStateV1(item.unpack_into()?))
             }
             KnownMagic::ExpressionDeployerV2BytecodeV1 => Ok(
                 UnpackedMetadata::ExpressionDeployerV2BytecodeV1(item.unpack_into()?),
@@ -335,8 +335,8 @@ mod tests {
 
         let item = &metadata_items[0];
         assert!(
-            item.is_dotrain_instance_v1(),
-            "Expected DotrainInstanceV1 document"
+            item.is_dotrain_gui_state_v1(),
+            "Expected DotrainGuiStateV1 document"
         );
     }
 
@@ -355,7 +355,7 @@ mod tests {
         let metadata_items = result.unwrap();
         assert_eq!(metadata_items.len(), 2, "Expected 2 metadata documents");
 
-        // Check that we have one RainlangSource and one DotrainInstanceV1
+        // Check that we have one RainlangSource and one DotrainGuiStateV1
         let mut has_rainlang_source = false;
         let mut has_dotrain_instance = false;
 
@@ -364,7 +364,7 @@ mod tests {
                 UnpackedMetadata::RainlangSourceV1(_) => {
                     has_rainlang_source = true;
                 }
-                UnpackedMetadata::DotrainInstanceV1(_) => {
+                UnpackedMetadata::DotrainGuiStateV1(_) => {
                     has_dotrain_instance = true;
                 }
                 _ => {
@@ -374,7 +374,7 @@ mod tests {
         }
 
         assert!(has_rainlang_source, "Expected RainlangSourceV1 document");
-        assert!(has_dotrain_instance, "Expected DotrainInstanceV1 document");
+        assert!(has_dotrain_instance, "Expected DotrainGuiStateV1 document");
     }
 
     #[test]
