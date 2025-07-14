@@ -79,7 +79,7 @@ impl MetaboardSubgraphClient {
         Ok(meta_bytes)
     }
 
-    /// Find all metas with a given hash
+    /// Find all metas with a given subject
     pub async fn get_metabytes_by_subject(
         &self,
         subject: &BigInt,
