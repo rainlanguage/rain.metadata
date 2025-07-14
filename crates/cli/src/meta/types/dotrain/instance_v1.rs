@@ -104,10 +104,10 @@ impl DotrainInstanceV1 {
 
 impl From<DotrainInstanceV1> for RainMetaDocumentV1Item {
     fn from(value: DotrainInstanceV1) -> Self {
-        // Serialize the struct to JSON bytes
-        let json_bytes = serde_json::to_vec(&value).expect("Failed to serialize DotrainInstanceV1");
+        // Serialize the struct to CBOR bytes
+        let cbor_bytes = serde_cbor::to_vec(&value).expect("Failed to serialize DotrainInstanceV1");
         RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from(json_bytes),
+            payload: serde_bytes::ByteBuf::from(cbor_bytes),
             magic: KnownMagic::DotrainInstanceV1,
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
@@ -128,9 +128,9 @@ impl TryFrom<RainMetaDocumentV1Item> for DotrainInstanceV1 {
             ));
         }
 
-        // Deserialize JSON from payload
-        let instance = serde_json::from_slice::<DotrainInstanceV1>(&value.payload)
-            .map_err(Error::SerdeJsonError)?;
+        // Deserialize CBOR from payload
+        let instance = serde_cbor::from_slice::<DotrainInstanceV1>(&value.payload)
+            .map_err(Error::SerdeCborError)?;
 
         Ok(instance)
     }
@@ -202,19 +202,19 @@ mod tests {
         assert_eq!(document_item.content_encoding, ContentEncoding::None);
         assert_eq!(document_item.content_language, ContentLanguage::None);
 
-        // Verify payload contains valid JSON
-        let json_str = std::str::from_utf8(&document_item.payload).unwrap();
-        assert!(json_str.contains("dotrain_hash"));
-        assert!(json_str.contains("field_values"));
+        // Verify payload contains valid CBOR that can be deserialized back
+        let deserialized_instance =
+            serde_cbor::from_slice::<DotrainInstanceV1>(&document_item.payload).unwrap();
+        assert_eq!(deserialized_instance, instance);
     }
 
     #[test]
     fn test_try_from_document_success() {
         let instance = create_test_instance();
-        let json_bytes = serde_json::to_vec(&instance).unwrap();
+        let cbor_bytes = serde_cbor::to_vec(&instance).unwrap();
 
         let document_item = RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from(json_bytes),
+            payload: serde_bytes::ByteBuf::from(cbor_bytes),
             magic: KnownMagic::DotrainInstanceV1,
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
@@ -228,10 +228,10 @@ mod tests {
     #[test]
     fn test_try_from_document_invalid_magic() {
         let instance = create_test_instance();
-        let json_bytes = serde_json::to_vec(&instance).unwrap();
+        let cbor_bytes = serde_cbor::to_vec(&instance).unwrap();
 
         let document_item = RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from(json_bytes),
+            payload: serde_bytes::ByteBuf::from(cbor_bytes),
             magic: KnownMagic::DotrainSourceV1, // Wrong magic
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
@@ -250,10 +250,10 @@ mod tests {
     }
 
     #[test]
-    fn test_try_from_document_invalid_json() {
-        let invalid_json = b"{ invalid json }";
+    fn test_try_from_document_invalid_cbor() {
+        let invalid_cbor = b"{ invalid cbor }";
         let document_item = RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from(invalid_json.to_vec()),
+            payload: serde_bytes::ByteBuf::from(invalid_cbor.to_vec()),
             magic: KnownMagic::DotrainInstanceV1,
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
@@ -263,8 +263,8 @@ mod tests {
         let result = DotrainInstanceV1::try_from(document_item);
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::SerdeJsonError(_) => {} // Expected
-            _ => panic!("Expected SerdeJsonError"),
+            Error::SerdeCborError(_) => {} // Expected
+            _ => panic!("Expected SerdeCborError"),
         }
     }
 
@@ -367,9 +367,9 @@ mod tests {
 
     #[test]
     fn test_extract_from_meta_corrupted_instance_data() {
-        // Create a document with DotrainInstanceV1 magic but invalid JSON payload
+        // Create a document with DotrainInstanceV1 magic but invalid CBOR payload
         let corrupted_doc = RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from("{ corrupted json }"),
+            payload: serde_bytes::ByteBuf::from("{ corrupted cbor }"),
             magic: KnownMagic::DotrainInstanceV1,
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
@@ -379,10 +379,10 @@ mod tests {
 
         let result = DotrainInstanceV1::extract_from_meta(&cbor_bytes);
         assert!(result.is_err());
-        // Should be a JSON deserialization error
+        // Should be a CBOR deserialization error
         match result.unwrap_err() {
-            Error::SerdeJsonError(_) => {} // Expected
-            _ => panic!("Expected SerdeJsonError"),
+            Error::SerdeCborError(_) => {} // Expected
+            _ => panic!("Expected SerdeCborError"),
         }
     }
 }

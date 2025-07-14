@@ -956,12 +956,8 @@ mod tests {
         ContentEncoding, ContentLanguage, ContentType, Error, RainMetaDocumentV1Item,
     };
     use alloy_ethers_typecast::transaction::ReadableClient;
-    use alloy::{
-        providers::mock::Asserter,
-        rpc::{json_rpc::ErrorPayload},
-        sol_types::{SolType},
-    };
-    use serde_json::{json};
+    use alloy::{providers::mock::Asserter, rpc::json_rpc::ErrorPayload, sol_types::SolType};
+    use serde_json::json;
 
     /// Roundtrip test for an authoring meta
     /// original content -> pack -> MetaMap -> cbor encode -> cbor decode -> MetaMap -> unpack -> original content,
