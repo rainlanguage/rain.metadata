@@ -11,6 +11,7 @@ use crate::meta::types::{
     interpreter_caller::v1::InterpreterCallerMeta, op::v1::OpMeta, rainlang::v1::RainlangMeta,
     rainlangsource::v1::RainlangSourceMeta, solidity_abi::v2::SolidityAbiMeta,
 };
+use serde::{Serialize, Deserialize};
 
 #[cfg(target_family = "wasm")]
 use wasm_bindgen_utils::{prelude::*, impl_wasm_traits};
@@ -32,6 +33,9 @@ macro_rules! impl_type_checks {
 /// This enum provides a unified interface for working with all supported metadata types,
 /// allowing ergonomic parsing and type-safe handling of Rain metadata.
 ///
+/// The enum supports serialization and deserialization via serde, making it easy to
+/// convert metadata to and from JSON or other formats.
+///
 /// # Examples
 ///
 /// ```rust
@@ -45,8 +49,16 @@ macro_rules! impl_type_checks {
 /// // Use type guards to check the variant
 /// assert!(unpacked.is_authoring_v1());
 /// assert!(!unpacked.is_dotrain_v1());
+///
+/// // Serialize to JSON
+/// let json = serde_json::to_string(&unpacked).unwrap();
+/// // JSON will look like: {"AuthoringV1": []}
+///
+/// // Deserialize back
+/// let deserialized: UnpackedMetadata = serde_json::from_str(&json).unwrap();
+/// assert!(deserialized.is_authoring_v1());
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(target_family = "wasm", derive(Tsify))]
 pub enum UnpackedMetadata {
     /// Authoring metadata V1
@@ -179,5 +191,150 @@ mod tests {
         let dotrain_v1 = UnpackedMetadata::DotrainV1("test".to_string());
         assert!(dotrain_v1.is_dotrain_v1());
         assert!(!dotrain_v1.is_authoring_v1());
+    }
+
+    #[test]
+    fn test_serialization_deserialization() {
+        // Test with DotrainV1 (String content)
+        let original_dotrain = UnpackedMetadata::DotrainV1("test dotrain content".to_string());
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&original_dotrain).unwrap();
+
+        // Deserialize back
+        let deserialized: UnpackedMetadata = serde_json::from_str(&serialized).unwrap();
+
+        // Check that it's the same
+        if let UnpackedMetadata::DotrainV1(content) = deserialized {
+            assert_eq!(content, "test dotrain content");
+        } else {
+            panic!("Expected DotrainV1 variant");
+        }
+
+        // Test with AuthoringV1 (struct)
+        let original_authoring = UnpackedMetadata::AuthoringV1(AuthoringMeta(vec![]));
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&original_authoring).unwrap();
+
+        // Deserialize back
+        let deserialized: UnpackedMetadata = serde_json::from_str(&serialized).unwrap();
+
+        // Check that it's the same
+        if let UnpackedMetadata::AuthoringV1(authoring) = deserialized {
+            assert_eq!(authoring.0, vec![]);
+        } else {
+            panic!("Expected AuthoringV1 variant");
+        }
+
+        // Test with AddressList (Vec<u8>)
+        let original_address_list = UnpackedMetadata::AddressList(vec![1, 2, 3, 4]);
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&original_address_list).unwrap();
+
+        // Deserialize back
+        let deserialized: UnpackedMetadata = serde_json::from_str(&serialized).unwrap();
+
+        // Check that it's the same
+        if let UnpackedMetadata::AddressList(bytes) = deserialized {
+            assert_eq!(bytes, vec![1, 2, 3, 4]);
+        } else {
+            panic!("Expected AddressList variant");
+        }
+    }
+
+    #[test]
+    fn test_serialization_roundtrip_with_meta_item() {
+        use crate::meta::{ContentType, ContentEncoding, ContentLanguage};
+        
+        // Create a RainMetaDocumentV1Item
+        let meta_item = RainMetaDocumentV1Item {
+            payload: b"test dotrain content".to_vec().into(),
+            magic: KnownMagic::DotrainV1,
+            content_type: ContentType::Cbor,
+            content_encoding: ContentEncoding::Identity,
+            content_language: ContentLanguage::En,
+        };
+        
+        // Unpack it to UnpackedMetadata
+        let unpacked: UnpackedMetadata = meta_item.try_into().unwrap();
+        
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&unpacked).unwrap();
+        
+        // Deserialize back
+        let deserialized: UnpackedMetadata = serde_json::from_str(&serialized).unwrap();
+        
+        // Check that it's the same
+        assert!(deserialized.is_dotrain_v1());
+        if let UnpackedMetadata::DotrainV1(content) = deserialized {
+            assert_eq!(content, "test dotrain content");
+        } else {
+            panic!("Expected DotrainV1 variant");
+        }
+    }
+
+    #[test]
+    fn test_parse_from_hex() {
+        // Real Rain metadata hex string with multiple documents
+        let hex_str = "ff0a89c674ee7874a300585d0a2363616c63756c6174652d696f0a6d61782d616d6f756e743a203130306531382c0a70726963653a20326531383b0a0a2368616e646c652d696f0a6d61782d616d6f756e743a203130306531382c0a70726963653a20326531383b0a011bff13109e41336ff20278186170706c69636174696f6e2f6f637465742d73747265616da3005901ba7b22646f747261696e5f68617368223a22307832613261326132613261326132613261326132613261326132613261326132613261326132613261326132613261326132613261326132613261326132613261222c226669656c645f76616c756573223a7b22616d6f756e74223a7b226964223a22616d6f756e745f6669656c64222c226e616d65223a22416d6f756e74222c2276616c7565223a22313030227d7d2c226465706f73697473223a7b226465706f73697431223a7b226964223a226465706f736974315f6669656c64222c226e616d65223a224465706f7369742031222c2276616c7565223a2231303030227d7d2c2273656c6563745f746f6b656e73223a7b22746f6b656e31223a7b226e6574776f726b223a22657468657265756d222c2261646472657373223a22307830303030303030303030303030303030303030303030303030303030303030303030303030303030227d7d2c227661756c745f696473223a7b22696e7075745f30223a227661756c745f313233222c226f75747075745f30223a6e756c6c7d2c2273656c65637465645f6465706c6f796d656e74223a22746573745f6465706c6f796d656e74227d011bffda7b2fb167c2860278186170706c69636174696f6e2f6f637465742d73747265616d";
+
+        // Test parsing multiple documents
+        let result = UnpackedMetadata::parse_from_hex(hex_str);
+        assert!(
+            result.is_ok(),
+            "Failed to parse hex string: {:?}",
+            result.err()
+        );
+
+        let metadata_items = result.unwrap();
+        assert_eq!(metadata_items.len(), 2, "Expected 2 metadata documents");
+
+        // Check that we have one RainlangSource and one DotrainInstanceV1
+        let mut has_rainlang_source = false;
+        let mut has_dotrain_instance = false;
+
+        for item in &metadata_items {
+            match item {
+                UnpackedMetadata::RainlangSourceV1(_) => {
+                    has_rainlang_source = true;
+                }
+                UnpackedMetadata::DotrainInstanceV1(_) => {
+                    has_dotrain_instance = true;
+                }
+                _ => {
+                    println!("Unexpected metadata type: {:?}", item.magic());
+                }
+            }
+        }
+
+        assert!(
+            has_rainlang_source,
+            "Expected to find RainlangSourceV1 metadata"
+        );
+        assert!(
+            has_dotrain_instance,
+            "Expected to find DotrainInstanceV1 metadata"
+        );
+    }
+
+    #[test]
+    fn test_parse_from_hex_error_cases() {
+        // Test empty string
+        let result = UnpackedMetadata::parse_from_hex("");
+        assert!(result.is_err());
+
+        // Test invalid hex
+        let result = UnpackedMetadata::parse_from_hex("invalid_hex");
+        assert!(result.is_err());
+
+        // Test hex without proper prefix
+        let result = UnpackedMetadata::parse_from_hex("deadbeef");
+        assert!(result.is_err());
+
+        // Test with 0x prefix but invalid hex
+        let result = UnpackedMetadata::parse_from_hex("0xinvalid_hex");
+        assert!(result.is_err());
     }
 }
