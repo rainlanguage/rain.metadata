@@ -12,6 +12,7 @@ use crate::meta::types::{
     rainlangsource::v1::RainlangSourceMeta, solidity_abi::v2::SolidityAbiMeta,
 };
 use serde::{Serialize, Deserialize};
+use alloy::primitives::hex;
 
 #[cfg(target_family = "wasm")]
 use wasm_bindgen_utils::{prelude::*, impl_wasm_traits};
@@ -34,7 +35,8 @@ macro_rules! impl_type_checks {
 /// allowing ergonomic parsing and type-safe handling of Rain metadata.
 ///
 /// The enum supports serialization and deserialization via serde, making it easy to
-/// convert metadata to and from JSON or other formats.
+/// convert metadata to and from JSON or other formats. It also supports parsing from
+/// hex-encoded metadata strings.
 ///
 /// # Examples
 ///
@@ -57,6 +59,9 @@ macro_rules! impl_type_checks {
 /// // Deserialize back
 /// let deserialized: UnpackedMetadata = serde_json::from_str(&json).unwrap();
 /// assert!(deserialized.is_authoring_v1());
+///
+/// // Parse from hex string (supports single or multiple documents)
+/// let _metadata_items = UnpackedMetadata::parse_from_hex("ff0a89c674ee7874").unwrap_err(); // This will fail for demo
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(target_family = "wasm", derive(Tsify))]
@@ -167,6 +172,44 @@ impl TryFrom<RainMetaDocumentV1Item> for UnpackedMetadata {
     }
 }
 
+impl UnpackedMetadata {
+    /// Parse metadata documents from a hex string
+    ///
+    /// This function can handle hex strings containing one or multiple Rain metadata documents
+    /// and returns a vector of parsed UnpackedMetadata items.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use rain_metadata::UnpackedMetadata;
+    ///
+    /// let hex_str = "ff0a89c674ee7874"; // Valid hex (but incomplete Rain metadata for demo)
+    /// let result = UnpackedMetadata::parse_from_hex(hex_str);
+    /// assert!(result.is_err()); // Will fail due to invalid format, which is expected for demo
+    /// ```
+    pub fn parse_from_hex(hex_str: &str) -> Result<Vec<Self>, Error> {
+        // Remove 0x prefix if present
+        let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+
+        // Decode hex string to bytes
+        let meta_bytes = hex::decode(hex_str).map_err(Error::DecodeHexStringError)?;
+
+        // Check if it starts with RainMetaDocumentV1 prefix
+        if !meta_bytes.starts_with(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes()) {
+            return Err(Error::CorruptMeta);
+        }
+
+        // Decode CBOR to get RainMetaDocumentV1Items
+        let rain_meta_documents = RainMetaDocumentV1Item::cbor_decode(&meta_bytes)?;
+
+        // Convert all documents to UnpackedMetadata
+        rain_meta_documents
+            .into_iter()
+            .map(|doc| doc.try_into())
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,7 +290,7 @@ mod tests {
     #[test]
     fn test_serialization_roundtrip_with_meta_item() {
         use crate::meta::{ContentType, ContentEncoding, ContentLanguage};
-        
+
         // Create a RainMetaDocumentV1Item
         let meta_item = RainMetaDocumentV1Item {
             payload: b"test dotrain content".to_vec().into(),
@@ -256,16 +299,16 @@ mod tests {
             content_encoding: ContentEncoding::Identity,
             content_language: ContentLanguage::En,
         };
-        
+
         // Unpack it to UnpackedMetadata
         let unpacked: UnpackedMetadata = meta_item.try_into().unwrap();
-        
+
         // Serialize to JSON
         let serialized = serde_json::to_string(&unpacked).unwrap();
-        
+
         // Deserialize back
         let deserialized: UnpackedMetadata = serde_json::from_str(&serialized).unwrap();
-        
+
         // Check that it's the same
         assert!(deserialized.is_dotrain_v1());
         if let UnpackedMetadata::DotrainV1(content) = deserialized {
