@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 pub type Computation = RainString;
 
 /// Operands in the standard interpreter are `u16` values.
-#[derive(Validate, Debug, Serialize, Deserialize, PartialEq, PartialOrd)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 #[serde(transparent)]
 #[repr(transparent)]
@@ -26,7 +26,7 @@ pub const MAX_BIT_INTEGER: usize = (std::mem::size_of::<Operand>() * 8) - 1;
 
 /// # BitInteger
 /// Counts or ranges bits in an operand. Ranges are 0 indexed.
-#[derive(Validate, Debug, Serialize, Deserialize, PartialOrd, PartialEq)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize, PartialOrd, PartialEq)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 #[serde(transparent)]
 pub struct BitInteger {
@@ -35,7 +35,7 @@ pub struct BitInteger {
 }
 
 /// # BitIntegerRange
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub struct BitIntegerRange(BitInteger, BitInteger);
 
@@ -55,7 +55,7 @@ impl Validate for BitIntegerRange {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub enum OperandArgRange {
     Exact(Operand),
@@ -88,7 +88,7 @@ impl Validate for OperandArgRange {
 
 /// # OpMeta.
 /// Opcodes metadata used by Rainlang.
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub struct OpMeta {
     /// # Name
@@ -150,7 +150,7 @@ impl TryFrom<RainMetaDocumentV1Item> for OpMeta {
 /// # Input
 /// Data type of opcode's inputs that determines the number of inputs an opcode
 /// has and provide information about them.
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub struct Input {
     /// # Parameters
@@ -178,7 +178,7 @@ pub struct Input {
 /// # Input Parameter
 /// Data type for opcode's inputs parameters, the length determines the number of
 /// inputs for constant (non-computed) inputs.
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub struct InputParameter {
     /// # Input Parameter Name
@@ -200,7 +200,7 @@ pub struct InputParameter {
 /// # Output
 /// Data type of opcode's outputs that determines the number of outputs an opcode
 /// has and provide information about them.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub enum Output {
     Exact(Operand),
@@ -222,7 +222,7 @@ impl Validate for Output {
     }
 }
 
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub struct OperandArg {
     /// # Allocated Operand Bits

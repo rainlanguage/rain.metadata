@@ -18,9 +18,11 @@ pub mod magic;
 pub(crate) mod normalize;
 pub(crate) mod query;
 pub mod types;
+pub mod unpacked;
 
 pub use magic::*;
 pub use query::*;
+pub use unpacked::*;
 
 /// All known meta identifiers
 #[derive(Copy, Clone, EnumString, EnumIter, strum::Display, Debug, PartialEq)]
@@ -291,6 +293,32 @@ impl RainMetaDocumentV1Item {
             | KnownMagic::RainlangSourceV1 => T::try_from(self),
             _ => Err(Error::UnsupportedMeta)?,
         }
+    }
+
+    /// Unpacks the metadata into the centralized `UnpackedMetadata` enum
+    ///
+    /// This convenience method automatically determines the correct metadata type
+    /// based on the magic number and returns the parsed metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use rain_metadata::{RainMetaDocumentV1Item, UnpackedMetadata, KnownMagic};
+    /// use rain_metadata::{ContentType, ContentEncoding, ContentLanguage};
+    ///
+    /// let meta_item = RainMetaDocumentV1Item {
+    ///     payload: b"test dotrain content".to_vec().into(),
+    ///     magic: KnownMagic::DotrainV1,
+    ///     content_type: ContentType::Cbor,
+    ///     content_encoding: ContentEncoding::Identity,
+    ///     content_language: ContentLanguage::En,
+    /// };
+    /// let unpacked = meta_item.unpack_typed().unwrap();
+    ///
+    /// assert!(unpacked.is_dotrain_v1());
+    /// ```
+    pub fn unpack_typed(self) -> Result<UnpackedMetadata, Error> {
+        self.try_into()
     }
 }
 

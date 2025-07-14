@@ -14,7 +14,7 @@ type AbiPath = RainString;
 /// Supports `IInterpreterCallerV2` Solidity contracts.
 /// Required info about a contract that receives expression in at least one of
 /// its methods.
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -70,7 +70,7 @@ impl TryFrom<RainMetaDocumentV1Item> for InterpreterCallerMeta {
     }
 }
 
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -89,7 +89,7 @@ pub struct Method {
     pub expressions: Vec<Expression>,
 }
 
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -105,7 +105,7 @@ pub struct MethodInput {
     pub path: AbiPath,
 }
 
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -129,7 +129,7 @@ pub struct Expression {
     pub context_columns: Vec<ContextColumn>,
 }
 
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ContextColumn {
@@ -146,7 +146,7 @@ pub struct ContextColumn {
     pub cells: Vec<ContextCell>,
 }
 
-#[derive(Validate, Debug, Serialize, Deserialize)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ContextCell {
