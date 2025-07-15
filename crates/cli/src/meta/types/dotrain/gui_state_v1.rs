@@ -144,6 +144,7 @@ mod tests {
     use super::*;
     use alloy::primitives::{Address, B256};
     use crate::meta::KnownMagic;
+    use crate::meta::types::dotrain::source_v1::DotrainSourceV1;
 
     fn create_test_instance() -> DotrainGuiStateV1 {
         let mut field_values = BTreeMap::new();
@@ -319,7 +320,6 @@ mod tests {
     #[test]
     fn test_extract_from_meta_not_found() {
         // Create a different type of document
-        use crate::meta::types::dotrain::source_v1::DotrainSourceV1;
         let source = DotrainSourceV1("test code".to_string());
         let document_item: RainMetaDocumentV1Item = source.into();
         let cbor_bytes = document_item.cbor_encode().unwrap();
@@ -333,8 +333,6 @@ mod tests {
         // Create multiple documents, only one is DotrainGuiStateV1
         let instance = create_test_instance();
         let instance_doc: RainMetaDocumentV1Item = instance.clone().try_into().unwrap();
-
-        use crate::meta::types::dotrain::source_v1::DotrainSourceV1;
         let source = DotrainSourceV1("test code".to_string());
         let source_doc: RainMetaDocumentV1Item = source.into();
 
