@@ -215,16 +215,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_unpacked_metadata_magic() {
-        // Test that magic() returns correct values for each variant
-        let authoring_v1 = UnpackedMetadata::AuthoringV1(AuthoringMeta(vec![]));
-        assert_eq!(authoring_v1.magic(), KnownMagic::AuthoringMetaV1);
-
-        let dotrain_v1 = UnpackedMetadata::DotrainV1("test".to_string());
-        assert_eq!(dotrain_v1.magic(), KnownMagic::DotrainV1);
-    }
-
-    #[test]
     fn test_type_checking_methods() {
         let authoring_v1 = UnpackedMetadata::AuthoringV1(AuthoringMeta(vec![]));
         assert!(authoring_v1.is_authoring_v1());

@@ -139,16 +139,16 @@ mod tests {
                     "data": {
                         "metaV1S": [
                             {
-                             "meta": "0x01",
-                             "metaHash": "0x00",
-                             "sender": "0x00",
-                             "id": "0x00",
-                             "metaBoard": {
-                                 "id": "0x00",
-                                 "metas": [],
-                                 "address": "0x00",
-                             },
-                             "subject": "0x00",
+                                "meta": "0x01",
+                                "metaHash": "0x00",
+                                "sender": "0x00",
+                                "id": "0x00",
+                                "metaBoard": {
+                                    "id": "0x00",
+                                    "metas": [],
+                                    "address": "0x00",
+                                },
+                                "subject": "0x00",
                             },
                             {
                                 "meta": "0x02",
@@ -161,7 +161,7 @@ mod tests {
                                     "address": "0x00",
                                 },
                                 "subject": "0x00",
-                               }
+                            }
                         ]
                     }
                 })
@@ -255,7 +255,6 @@ mod tests {
 
         let result = client.get_metabytes_by_subject(&subject).await;
 
-        assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], vec![3]);

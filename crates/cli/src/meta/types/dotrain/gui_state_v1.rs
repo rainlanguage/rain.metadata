@@ -89,11 +89,8 @@ impl DotrainGuiStateV1 {
                 }
             }
             if item.magic == KnownMagic::DotrainGuiStateV1 {
-                // Found a DotrainGuiStateV1 document, try to convert it
-                match DotrainGuiStateV1::try_from(item) {
-                    Ok(instance) => return Ok(Some(instance)),
-                    Err(e) => return Err(e), // Propagate conversion error
-                }
+                let instance = DotrainGuiStateV1::try_from(item)?;
+                return Ok(Some(instance));
             }
         }
 
@@ -147,28 +144,27 @@ mod tests {
     use crate::meta::types::dotrain::source_v1::DotrainSourceV1;
 
     fn create_test_instance() -> DotrainGuiStateV1 {
-        let mut field_values = BTreeMap::new();
-        field_values.insert(
+        let field_values = BTreeMap::from([(
             "amount".to_string(),
             ValueCfg {
                 id: "amount".to_string(),
                 name: Some("Amount".to_string()),
                 value: "100".to_string(),
             },
-        );
+        )]);
 
-        let mut select_tokens = BTreeMap::new();
-        select_tokens.insert(
+        let select_tokens = BTreeMap::from([(
             "input-token".to_string(),
             TokenCfg {
                 network: "ethereum".to_string(),
                 address: Address::from([0x42; 20]),
             },
-        );
+        )]);
 
-        let mut vault_ids = BTreeMap::new();
-        vault_ids.insert("input-0".to_string(), Some("vault-123".to_string()));
-        vault_ids.insert("output-0".to_string(), None);
+        let vault_ids = BTreeMap::from([
+            ("input-0".to_string(), Some("vault-123".to_string())),
+            ("output-0".to_string(), None),
+        ]);
 
         DotrainGuiStateV1 {
             dotrain_hash: B256::from([0x12; 32]),

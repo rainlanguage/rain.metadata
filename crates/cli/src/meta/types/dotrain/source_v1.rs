@@ -36,19 +36,18 @@ impl DotrainSourceV1 {
         match client.get_metabytes_by_subject(&subject_bigint).await {
             Ok(metabytes) => {
                 if metabytes.is_empty() {
-                    Ok(None)
-                } else {
-                    // Try to decode the first meta
-                    let decoded_items = RainMetaDocumentV1Item::cbor_decode(&metabytes[0])?;
-
-                    if decoded_items.is_empty() {
-                        return Ok(None);
-                    }
-
-                    // Try to convert to DotrainSourceV1
-                    let dotrain_source = DotrainSourceV1::try_from(decoded_items[0].clone())?;
-                    Ok(Some(dotrain_source))
+                    return Ok(None);
                 }
+                // Try to decode the first meta
+                let decoded_items = RainMetaDocumentV1Item::cbor_decode(&metabytes[0])?;
+
+                if decoded_items.is_empty() {
+                    return Ok(None);
+                }
+
+                // Try to convert to DotrainSourceV1
+                let dotrain_source = DotrainSourceV1::try_from(decoded_items[0].clone())?;
+                Ok(Some(dotrain_source))
             }
             Err(MetaboardSubgraphClientError::Empty(_)) => {
                 // No meta found for this subject
