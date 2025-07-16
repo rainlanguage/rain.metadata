@@ -226,14 +226,14 @@ mod tests {
                     "data": {
                         "metaV1S": [
                             {
-                             "meta": "0x03",
-                             "metaHash": "0x01",
-                             "sender": "0x02",
-                             "id": "0x01",
-                             "metaBoard": {
-                                 "address": "0x01",
-                             },
-                             "subject": "123",
+                                "meta": "0x03",
+                                "metaHash": "0x01",
+                                "sender": "0x02",
+                                "id": "0x01",
+                                "metaBoard": {
+                                    "address": "0x01",
+                                },
+                                "subject": "123",
                             },
                             {
                                 "meta": "0x04",
