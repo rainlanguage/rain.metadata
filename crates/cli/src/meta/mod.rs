@@ -18,9 +18,11 @@ pub mod magic;
 pub(crate) mod normalize;
 pub(crate) mod query;
 pub mod types;
+pub mod unpacked;
 
 pub use magic::*;
 pub use query::*;
+pub use unpacked::*;
 
 /// All known meta identifiers
 #[derive(Copy, Clone, EnumString, EnumIter, strum::Display, Debug, PartialEq)]
@@ -36,6 +38,8 @@ pub enum KnownMeta {
     ExpressionDeployerV2BytecodeV1,
     RainlangSourceV1,
     AddressList,
+    DotrainSourceV1,
+    DotrainGuiStateV1,
 }
 
 impl TryFrom<KnownMagic> for KnownMeta {
@@ -50,6 +54,8 @@ impl TryFrom<KnownMagic> for KnownMeta {
             KnownMagic::AuthoringMetaV2 => Ok(KnownMeta::AuthoringMetaV2),
             KnownMagic::AddressList => Ok(KnownMeta::AddressList),
             KnownMagic::InterpreterCallerMetaV1 => Ok(KnownMeta::InterpreterCallerMetaV1),
+            KnownMagic::DotrainSourceV1 => Ok(KnownMeta::DotrainSourceV1),
+            KnownMagic::DotrainGuiStateV1 => Ok(KnownMeta::DotrainGuiStateV1),
             KnownMagic::ExpressionDeployerV2BytecodeV1 => {
                 Ok(KnownMeta::ExpressionDeployerV2BytecodeV1)
             }
@@ -282,9 +288,37 @@ impl RainMetaDocumentV1Item {
             | KnownMagic::AddressList
             | KnownMagic::InterpreterCallerMetaV1
             | KnownMagic::ExpressionDeployerV2BytecodeV1
+            | KnownMagic::DotrainSourceV1
+            | KnownMagic::DotrainGuiStateV1
             | KnownMagic::RainlangSourceV1 => T::try_from(self),
             _ => Err(Error::UnsupportedMeta)?,
         }
+    }
+
+    /// Unpacks the metadata into the centralized `UnpackedMetadata` enum
+    ///
+    /// This convenience method automatically determines the correct metadata type
+    /// based on the magic number and returns the parsed metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use rain_metadata::{RainMetaDocumentV1Item, UnpackedMetadata, KnownMagic};
+    /// use rain_metadata::{ContentType, ContentEncoding, ContentLanguage};
+    ///
+    /// let meta_item = RainMetaDocumentV1Item {
+    ///     payload: b"test dotrain content".to_vec().into(),
+    ///     magic: KnownMagic::DotrainV1,
+    ///     content_type: ContentType::Cbor,
+    ///     content_encoding: ContentEncoding::Identity,
+    ///     content_language: ContentLanguage::En,
+    /// };
+    /// let unpacked = meta_item.unpack_typed().unwrap();
+    ///
+    /// assert!(unpacked.is_dotrain_v1());
+    /// ```
+    pub fn unpack_typed(self) -> Result<UnpackedMetadata, Error> {
+        self.try_into()
     }
 }
 
@@ -922,12 +956,8 @@ mod tests {
         ContentEncoding, ContentLanguage, ContentType, Error, RainMetaDocumentV1Item,
     };
     use alloy_ethers_typecast::transaction::ReadableClient;
-    use alloy::{
-        providers::mock::Asserter,
-        rpc::{json_rpc::ErrorPayload},
-        sol_types::{SolType},
-    };
-    use serde_json::{json};
+    use alloy::{providers::mock::Asserter, rpc::json_rpc::ErrorPayload, sol_types::SolType};
+    use serde_json::json;
 
     /// Roundtrip test for an authoring meta
     /// original content -> pack -> MetaMap -> cbor encode -> cbor decode -> MetaMap -> unpack -> original content,
