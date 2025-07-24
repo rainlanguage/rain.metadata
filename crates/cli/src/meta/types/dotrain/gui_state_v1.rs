@@ -7,8 +7,12 @@ use crate::{
     error::Error,
 };
 
+#[cfg(target_family = "wasm")]
+use wasm_bindgen_utils::{prelude::*, impl_wasm_traits};
+
 /// Configuration for a value field in the dotrain instance
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[cfg_attr(target_family = "wasm", derive(Tsify))]
 pub struct ValueCfg {
     /// Unique identifier for the field
     pub id: String,
@@ -17,21 +21,29 @@ pub struct ValueCfg {
     /// The actual value as string
     pub value: String,
 }
+#[cfg(target_family = "wasm")]
+impl_wasm_traits!(ValueCfg);
 
 /// Configuration for a token selection
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[cfg_attr(target_family = "wasm", derive(Tsify))]
 pub struct TokenCfg {
     /// Network name where the token exists
     pub network: String,
     /// Token contract address
+    #[cfg_attr(target_family = "wasm", tsify(type = "string"))]
     pub address: Address,
 }
+#[cfg(target_family = "wasm")]
+impl_wasm_traits!(TokenCfg);
 
 /// Dotrain Instance V1 metadata - contains user's specific configuration
 /// for a deployed order referencing a dotrain template
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(target_family = "wasm", derive(Tsify))]
 pub struct DotrainGuiStateV1 {
     /// Hash of the original dotrain template in Metaboard
+    #[cfg_attr(target_family = "wasm", tsify(type = "string"))]
     pub dotrain_hash: B256,
     /// User-configured field values
     pub field_values: BTreeMap<String, ValueCfg>,
@@ -44,6 +56,8 @@ pub struct DotrainGuiStateV1 {
     /// Selected deployment name from the dotrain
     pub selected_deployment: String,
 }
+#[cfg(target_family = "wasm")]
+impl_wasm_traits!(DotrainGuiStateV1);
 
 impl DotrainGuiStateV1 {
     /// Get the template hash
