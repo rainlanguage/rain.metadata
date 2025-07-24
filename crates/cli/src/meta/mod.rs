@@ -18,11 +18,9 @@ pub mod magic;
 pub(crate) mod normalize;
 pub(crate) mod query;
 pub mod types;
-pub mod unpacked;
 
 pub use magic::*;
 pub use query::*;
-pub use unpacked::*;
 
 /// All known meta identifiers
 #[derive(Copy, Clone, EnumString, EnumIter, strum::Display, Debug, PartialEq)]
@@ -293,32 +291,6 @@ impl RainMetaDocumentV1Item {
             | KnownMagic::RainlangSourceV1 => T::try_from(self),
             _ => Err(Error::UnsupportedMeta)?,
         }
-    }
-
-    /// Unpacks the metadata into the centralized `UnpackedMetadata` enum
-    ///
-    /// This convenience method automatically determines the correct metadata type
-    /// based on the magic number and returns the parsed metadata.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use rain_metadata::{RainMetaDocumentV1Item, UnpackedMetadata, KnownMagic};
-    /// use rain_metadata::{ContentType, ContentEncoding, ContentLanguage};
-    ///
-    /// let meta_item = RainMetaDocumentV1Item {
-    ///     payload: b"test dotrain content".to_vec().into(),
-    ///     magic: KnownMagic::DotrainV1,
-    ///     content_type: ContentType::Cbor,
-    ///     content_encoding: ContentEncoding::Identity,
-    ///     content_language: ContentLanguage::En,
-    /// };
-    /// let unpacked = meta_item.unpack_typed().unwrap();
-    ///
-    /// assert!(unpacked.is_dotrain_v1());
-    /// ```
-    pub fn unpack_typed(self) -> Result<UnpackedMetadata, Error> {
-        self.try_into()
     }
 }
 
@@ -1036,11 +1008,6 @@ mod tests {
         // decoded item must be equal to the original meta_map
         assert_eq!(cbor_decoded[0], meta_map);
 
-        // unpack the payload into AuthoringMeta
-        let unpacked_payload: AuthoringMeta = cbor_decoded.pop().unwrap().unpack_into()?;
-        // must be equal to original meta
-        assert_eq!(unpacked_payload, authoring_meta);
-
         Ok(())
     }
 
@@ -1108,11 +1075,6 @@ mod tests {
         assert_eq!(cbor_decoded.len(), 1);
         // decoded item must be equal to the original meta_map
         assert_eq!(cbor_decoded[0], meta_map);
-
-        // unpack the payload into DotrainMeta, should handle inflation of the payload internally
-        let unpacked_payload: DotrainMeta = cbor_decoded.pop().unwrap().unpack_into()?;
-        // must be equal to the original dotrain content
-        assert_eq!(unpacked_payload, dotrain_content);
 
         Ok(())
     }
@@ -1246,16 +1208,6 @@ mod tests {
         assert_eq!(cbor_decoded[0], meta_map_1);
         // decoded item 2 must be equal to the original meta_map_2
         assert_eq!(cbor_decoded[1], meta_map_2);
-
-        // unpack the payload of the second decoded map into DotrainMeta, should handle inflation of the payload internally
-        let unpacked_payload_2: DotrainMeta = cbor_decoded.pop().unwrap().unpack_into()?;
-        // must be equal to original meta
-        assert_eq!(unpacked_payload_2, dotrain_content);
-
-        // unpack the payload of first decoded map into AuthoringMeta
-        let unpacked_payload_1: AuthoringMeta = cbor_decoded.pop().unwrap().unpack_into()?;
-        // must be equal to the original dotrain content
-        assert_eq!(unpacked_payload_1, authoring_meta);
 
         Ok(())
     }
