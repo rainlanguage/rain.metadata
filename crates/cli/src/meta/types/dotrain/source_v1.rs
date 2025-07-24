@@ -14,9 +14,16 @@ use crate::{
     meta::{ContentEncoding, ContentLanguage, ContentType, KnownMagic, RainMetaDocumentV1Item},
 };
 
+#[cfg(target_family = "wasm")]
+use wasm_bindgen_utils::{prelude::*, impl_wasm_traits};
+
 /// Dotrain Source V1 meta
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(target_family = "wasm", derive(Tsify))]
 pub struct DotrainSourceV1(pub String);
+
+#[cfg(target_family = "wasm")]
+impl_wasm_traits!(DotrainSourceV1);
 
 impl DotrainSourceV1 {
     /// Returns the hash of the dotrain source code
