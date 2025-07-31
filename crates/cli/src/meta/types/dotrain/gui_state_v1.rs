@@ -31,7 +31,7 @@ pub struct TokenCfg {
     /// Network name where the token exists
     pub network: String,
     /// Token contract address
-    #[cfg_attr(target_family = "wasm", tsify(type = "string"))]
+    #[cfg_attr(target_family = "wasm", tsify(type = "Address"))]
     pub address: Address,
 }
 #[cfg(target_family = "wasm")]
@@ -43,7 +43,7 @@ impl_wasm_traits!(TokenCfg);
 #[cfg_attr(target_family = "wasm", derive(Tsify))]
 pub struct DotrainGuiStateV1 {
     /// Hash of the original dotrain template in Metaboard
-    #[cfg_attr(target_family = "wasm", tsify(type = "string"))]
+    #[cfg_attr(target_family = "wasm", tsify(type = "Hex"))]
     pub dotrain_hash: B256,
     /// User-configured field values
     pub field_values: BTreeMap<String, ValueCfg>,
