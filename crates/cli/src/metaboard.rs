@@ -70,9 +70,9 @@ pub fn generate_dotrain_deployment(content: &str) -> Result<DeploymentData, Erro
     let calldata = generate_emit_data_calldata(subject_hash.into(), meta_bytes.clone());
 
     Ok(DeploymentData {
-        subject: format!("0x{}", hex::encode(subject_hash)),
-        meta_bytes: format!("0x{}", hex::encode(meta_bytes)),
-        calldata: format!("0x{}", hex::encode(calldata)),
+        subject: hex::encode_prefixed(subject_hash),
+        meta_bytes: hex::encode_prefixed(meta_bytes),
+        calldata: hex::encode_prefixed(calldata),
     })
 }
 

@@ -2,13 +2,9 @@ use std::path::PathBuf;
 use std::io::{self, Read};
 use std::fs;
 use clap::Args;
-use serde::Serialize;
-use alloy::primitives::hex;
 
 use crate::error::Error;
-use crate::meta::types::dotrain::source_v1::DotrainSourceV1;
-use crate::meta::RainMetaDocumentV1Item;
-use crate::meta::KnownMagic;
+use crate::metaboard::{DeploymentData, generate_dotrain_deployment};
 
 /// Generate deployment data for DotrainSourceV1 content
 #[derive(Args)]
@@ -20,70 +16,6 @@ pub struct Generate {
     /// Path to output JSON file. If not provided, prints to stdout  
     #[arg(short = 'o', long = "output-path")]
     output_path: Option<PathBuf>,
-}
-
-/// Deployment data for publishing to MetaBoard
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub struct DeploymentData {
-    /// Keccak256 hash of the content (hex-encoded with 0x prefix)
-    pub subject: String,
-    /// CBOR-encoded metadata bytes (hex-encoded with 0x prefix)
-    pub meta_bytes: String,
-    /// Complete calldata for MetaBoard.emitMeta() (hex-encoded with 0x prefix)
-    pub calldata: String,
-}
-
-/// Validate dotrain content - basic checks
-fn validate_dotrain_content(content: &str) -> Result<(), Error> {
-    // Check if content is empty or only whitespace
-    if content.trim().is_empty() {
-        return Err(Error::InvalidInput(
-            "Dotrain content cannot be empty".to_string(),
-        ));
-    }
-
-    // Try to create DotrainSourceV1 to ensure it's valid
-    let _dotrain_source = DotrainSourceV1(content.to_string());
-
-    Ok(())
-}
-
-/// Generate deployment data for DotrainSourceV1 content
-/// Validates content and returns subject hash, meta bytes, and calldata
-fn generate_dotrain_deployment(content: &str) -> Result<DeploymentData, Error> {
-    // Validate content
-    validate_dotrain_content(content)?;
-
-    // Create DotrainSourceV1
-    let dotrain_source = DotrainSourceV1(content.to_string());
-
-    // Convert to RainMetaDocumentV1Item
-    let document: RainMetaDocumentV1Item = dotrain_source.into();
-
-    let documents = vec![document.clone()];
-    // Generate CBOR bytes
-    let meta_bytes =
-        RainMetaDocumentV1Item::cbor_encode_seq(&documents, KnownMagic::RainMetaDocumentV1)?;
-
-    // Calculate subject hash
-    let subject_hash = document.hash(false)?;
-
-    // Generate calldata (simplified version without the metaboard module)
-    use alloy::primitives::{Bytes, FixedBytes};
-    use alloy::sol_types::SolCall;
-    use rain_metadata_bindings::MetaBoard::emitMetaCall;
-
-    let call = emitMetaCall {
-        subject: FixedBytes::from(subject_hash),
-        meta: Bytes::from(meta_bytes.clone()),
-    };
-    let calldata = call.abi_encode();
-
-    Ok(DeploymentData {
-        subject: format!("0x{}", hex::encode(subject_hash)),
-        meta_bytes: format!("0x{}", hex::encode(meta_bytes)),
-        calldata: format!("0x{}", hex::encode(calldata)),
-    })
 }
 
 /// Read content from input source (file or stdin)
