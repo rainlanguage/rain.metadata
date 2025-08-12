@@ -58,10 +58,12 @@ pub fn generate_dotrain_deployment(content: &str) -> Result<DeploymentData, Erro
     let dotrain_source = DotrainSourceV1(content.to_string());
 
     // Convert to RainMetaDocumentV1Item
-    let document: RainMetaDocumentV1Item = dotrain_source.into();
+    let document: RainMetaDocumentV1Item = dotrain_source.clone().into();
 
+    let documents = vec![document.clone()];
     // Generate CBOR bytes
-    let meta_bytes = document.cbor_encode()?;
+    let meta_bytes =
+        RainMetaDocumentV1Item::cbor_encode_seq(&documents, crate::KnownMagic::RainMetaDocumentV1)?;
 
     // Calculate subject hash
     let subject_hash = document.hash(false)?;
