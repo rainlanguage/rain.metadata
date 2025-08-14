@@ -59,6 +59,18 @@ fn write_output(data: &DotrainSourceEmitData, output_path: Option<PathBuf>) -> R
 
     match output_path {
         Some(path) => {
+            // Ensure 
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    if let Err(e) = fs::create_dir_all(parent) {
+                        return Err(Error::InvalidInput(format!(
+                            "Failed to create output directory '{}': {}",
+                            parent.display(),
+                            e
+                        )));
+                    }
+                }
+            }
             // Write to file
             fs::write(&path, json_output).map_err(|e| {
                 Error::InvalidInput(format!("Failed to write file '{}': {}", path.display(), e))
