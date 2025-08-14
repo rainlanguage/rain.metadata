@@ -1,14 +1,28 @@
 use std::path::PathBuf;
 use std::io::{self, Read};
 use std::fs;
-use clap::Args;
+use clap::{Args, Subcommand};
 
 use crate::error::Error;
-use crate::metaboard::{DeploymentData, generate_dotrain_deployment};
+use crate::metaboard::{DotrainSourceEmitData, generate_dotrain_source_emit_tx_data};
 
-/// Generate deployment data for DotrainSourceV1 content
+/// Generate tx data to emit metadata
 #[derive(Args)]
 pub struct Generate {
+    #[command(subcommand)]
+    pub command: GenerateCommand,
+}
+
+/// Generate subcommands
+#[derive(Subcommand)]
+pub enum GenerateCommand {
+    /// Generate deployment data for dotrain source code
+    Source(SourceArgs),
+}
+
+/// Arguments for generating source deployment data
+#[derive(Args)]
+pub struct SourceArgs {
     /// Path to input .rain file. If not provided, reads from stdin
     #[arg(short = 'i', long = "input-path")]
     input_path: Option<PathBuf>,
@@ -39,7 +53,7 @@ fn read_input_content(input_path: Option<PathBuf>) -> Result<String, Error> {
 }
 
 /// Write output to destination (file or stdout)
-fn write_output(data: &DeploymentData, output_path: Option<PathBuf>) -> Result<(), Error> {
+fn write_output(data: &DotrainSourceEmitData, output_path: Option<PathBuf>) -> Result<(), Error> {
     // Serialize to pretty JSON
     let json_output = serde_json::to_string_pretty(data).map_err(Error::SerdeJsonError)?;
 
@@ -60,14 +74,20 @@ fn write_output(data: &DeploymentData, output_path: Option<PathBuf>) -> Result<(
 
 /// Execute the generate command
 pub fn generate(args: Generate) -> anyhow::Result<()> {
+    match args.command {
+        GenerateCommand::Source(source_args) => generate_source(source_args),
+    }
+}
+
+/// Execute the generate source command
+fn generate_source(args: SourceArgs) -> anyhow::Result<()> {
     // Read input content
     let content = read_input_content(args.input_path)?;
 
-    // Generate deployment data
-    let deployment_data = generate_dotrain_deployment(&content)?;
+    let tx_data = generate_dotrain_source_emit_tx_data(&content)?;
 
     // Write output
-    write_output(&deployment_data, args.output_path)?;
+    write_output(&tx_data, args.output_path)?;
 
     Ok(())
 }
@@ -97,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_write_output_to_file() {
-        let deployment_data = DeploymentData {
+        let deployment_data = DotrainSourceEmitData {
             subject: "0x1234567890abcdef".to_string(),
             meta_bytes: "0xdeadbeef".to_string(),
             calldata: "0xcafebabe".to_string(),
@@ -127,15 +147,17 @@ mod tests {
 
         // Execute generate command
         let args = Generate {
-            input_path: Some(input_file.path().to_path_buf()),
-            output_path: Some(output_path.clone()),
+            command: GenerateCommand::Source(SourceArgs {
+                input_path: Some(input_file.path().to_path_buf()),
+                output_path: Some(output_path.clone()),
+            }),
         };
 
         generate(args).unwrap();
 
         // Verify output
         let output_content = fs::read_to_string(&output_path).unwrap();
-        let parsed: DeploymentData = serde_json::from_str(&output_content).unwrap();
+        let parsed: DotrainSourceEmitData = serde_json::from_str(&output_content).unwrap();
 
         assert!(parsed.subject.starts_with("0x"));
         assert!(parsed.meta_bytes.starts_with("0x"));
