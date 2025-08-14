@@ -59,7 +59,7 @@ fn write_output(data: &DotrainSourceEmitData, output_path: Option<PathBuf>) -> R
 
     match output_path {
         Some(path) => {
-            // Ensure 
+            // Ensure output directory exists before writing
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
                     if let Err(e) = fs::create_dir_all(parent) {

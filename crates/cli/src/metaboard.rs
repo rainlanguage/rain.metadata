@@ -61,17 +61,17 @@ pub fn generate_dotrain_source_emit_tx_data(content: &str) -> Result<DotrainSour
     let documents = vec![document];
 
     // Generate CBOR bytes
-    let meta_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
-        &documents,
-        crate::KnownMagic::RainMetaDocumentV1,
-    )?;
+    let meta_bytes =
+        RainMetaDocumentV1Item::cbor_encode_seq(&documents, crate::KnownMagic::RainMetaDocumentV1)?;
 
+    // Prepare hex-encoded meta first to avoid cloning later
+    let meta_bytes_hex = hex::encode_prefixed(&meta_bytes);
     // Generate calldata
-    let calldata = generate_emit_data_calldata(subject_hash.into(), meta_bytes.clone());
+    let calldata = generate_emit_data_calldata(subject_hash.into(), meta_bytes);
 
     Ok(DotrainSourceEmitData {
         subject: hex::encode_prefixed(subject_hash),
-        meta_bytes: hex::encode_prefixed(meta_bytes),
+        meta_bytes: meta_bytes_hex,
         calldata: hex::encode_prefixed(calldata),
     })
 }
@@ -134,6 +134,13 @@ mod tests {
         assert_eq!(deployment.subject.len(), 66); // 0x + 64 hex chars
         assert!(deployment.meta_bytes.len() > 10); // Should have some content
         assert!(deployment.calldata.len() > 10); // Should have some content
+
+        // Optional: verify subject in calldata matches the declared subject
+        let calldata_bytes =
+            alloy::hex::decode(deployment.calldata.trim_start_matches("0x")).unwrap();
+        let decoded = emitMetaCall::abi_decode(&calldata_bytes).unwrap();
+        let subject_hex = deployment.subject.to_lowercase();
+        assert_eq!(format!("0x{}", hex::encode(decoded.subject)), subject_hex);
     }
 
     #[test]
