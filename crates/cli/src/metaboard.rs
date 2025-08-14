@@ -24,7 +24,7 @@ pub fn generate_emit_meta_calldata(meta: RainMetaDocumentV1Item) -> Result<Vec<u
 
 /// Deployment data for publishing to MetaBoard
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub struct DeploymentData {
+pub struct DotrainSourceEmitData {
     /// Keccak256 hash of the content (hex-encoded with 0x prefix)
     pub subject: String,
     /// CBOR-encoded metadata bytes (hex-encoded with 0x prefix)
@@ -48,9 +48,9 @@ fn validate_dotrain_content(content: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Generate deployment data for DotrainSourceV1 content
+/// Generate tx data for DotrainSourceV1 content
 /// Validates content and returns subject hash, meta bytes, and calldata
-pub fn generate_dotrain_deployment(content: &str) -> Result<DeploymentData, Error> {
+pub fn generate_dotrain_source_emit_tx_data(content: &str) -> Result<DotrainSourceEmitData, Error> {
     // Validate content
     validate_dotrain_content(content)?;
 
@@ -71,7 +71,7 @@ pub fn generate_dotrain_deployment(content: &str) -> Result<DeploymentData, Erro
     // Generate calldata
     let calldata = generate_emit_data_calldata(subject_hash.into(), meta_bytes.clone());
 
-    Ok(DeploymentData {
+    Ok(DotrainSourceEmitData {
         subject: hex::encode_prefixed(subject_hash),
         meta_bytes: hex::encode_prefixed(meta_bytes),
         calldata: hex::encode_prefixed(calldata),
@@ -123,9 +123,9 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_dotrain_deployment_success() {
+    fn test_generate_dotrain_source_emit_tx_data_success() {
         let content = "#main _ _: int-add(1 2) int-add(2 3)";
-        let deployment = generate_dotrain_deployment(content).unwrap();
+        let deployment = generate_dotrain_source_emit_tx_data(content).unwrap();
 
         // Check all fields have 0x prefix
         assert!(deployment.subject.starts_with("0x"));
@@ -139,11 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_dotrain_deployment_empty_content() {
-        let result = generate_dotrain_deployment("");
+    fn test_generate_dotrain_source_emit_tx_data_empty_content() {
+        let result = generate_dotrain_source_emit_tx_data("");
         assert!(result.is_err());
 
-        let result = generate_dotrain_deployment("   ");
+        let result = generate_dotrain_source_emit_tx_data("   ");
         assert!(result.is_err());
     }
 
