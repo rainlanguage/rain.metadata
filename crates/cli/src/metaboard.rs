@@ -140,7 +140,12 @@ mod tests {
             alloy::hex::decode(deployment.calldata.trim_start_matches("0x")).unwrap();
         let decoded = emitMetaCall::abi_decode(&calldata_bytes).unwrap();
         let subject_hex = deployment.subject.to_lowercase();
-        assert_eq!(format!("0x{}", hex::encode(decoded.subject)), subject_hex);
+        assert_eq!(hex::encode_prefixed(decoded.subject), subject_hex);
+
+        // meta in calldata must equal the meta_bytes field
+        let meta_bytes_from_field =
+            alloy::hex::decode(deployment.meta_bytes.trim_start_matches("0x")).unwrap();
+        assert_eq!(decoded.meta.as_ref(), meta_bytes_from_field.as_slice());
     }
 
     #[test]
