@@ -33,18 +33,14 @@ pub struct DotrainSourceEmitData {
     pub calldata: String,
 }
 
-/// Validate dotrain content - basic checks
+/// Validate dotrain content - currently only checks for non-empty content
 fn validate_dotrain_content(content: &str) -> Result<(), Error> {
-    // Check if content is empty or only whitespace
+    // Reject empty or whitespace-only content
     if content.trim().is_empty() {
         return Err(Error::InvalidInput(
             "Dotrain content cannot be empty".to_string(),
         ));
     }
-
-    // Try to create DotrainSourceV1 to ensure it's valid
-    let _dotrain_source = DotrainSourceV1(content.to_string());
-
     Ok(())
 }
 
@@ -56,17 +52,19 @@ pub fn generate_dotrain_source_emit_tx_data(content: &str) -> Result<DotrainSour
 
     // Create DotrainSourceV1
     let dotrain_source = DotrainSourceV1(content.to_string());
-
     // Convert to RainMetaDocumentV1Item
-    let document: RainMetaDocumentV1Item = dotrain_source.clone().into();
+    let document: RainMetaDocumentV1Item = dotrain_source.into();
 
-    let documents = vec![document.clone()];
-    // Generate CBOR bytes
-    let meta_bytes =
-        RainMetaDocumentV1Item::cbor_encode_seq(&documents, crate::KnownMagic::RainMetaDocumentV1)?;
-
+    // Hash before moving the document into the sequence to avoid cloning.
     // Calculate subject hash
     let subject_hash = document.hash(false)?;
+    let documents = vec![document];
+
+    // Generate CBOR bytes
+    let meta_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+        &documents,
+        crate::KnownMagic::RainMetaDocumentV1,
+    )?;
 
     // Generate calldata
     let calldata = generate_emit_data_calldata(subject_hash.into(), meta_bytes.clone());
