@@ -3673,6 +3673,7 @@ dependencies = [
  "serde_cbor",
  "serde_json",
  "strum 0.24.1",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",

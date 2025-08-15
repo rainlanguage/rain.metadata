@@ -11,6 +11,7 @@ pub mod schema;
 pub mod output;
 pub mod subgraph;
 pub mod validate;
+pub mod generate;
 
 use clap::{Parser, Subcommand, command};
 
@@ -33,6 +34,7 @@ pub enum Meta {
     Solc(solc::Solc),
     #[command(subcommand)]
     Subgraph(subgraph::Sg),
+    Generate(generate::Generate),
 }
 
 pub fn dispatch(meta: Meta) -> anyhow::Result<()> {
@@ -43,6 +45,7 @@ pub fn dispatch(meta: Meta) -> anyhow::Result<()> {
         Meta::Magic(magic) => magic::dispatch(magic),
         Meta::Schema(schema) => schema::dispatch(schema),
         Meta::Validate(validate) => validate::validate(validate),
+        Meta::Generate(generate) => generate::generate(generate),
     }
 }
 

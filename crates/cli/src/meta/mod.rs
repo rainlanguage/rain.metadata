@@ -921,10 +921,7 @@ pub fn bytes32_to_str(bytes: &[u8; 32]) -> Result<&str, Error> {
 #[cfg(test)]
 mod tests {
     use super::{
-        *, bytes32_to_str,
-        magic::KnownMagic,
-        str_to_bytes32,
-        types::{authoring::v1::AuthoringMeta, dotrain::v1::DotrainMeta},
+        *, bytes32_to_str, magic::KnownMagic, str_to_bytes32, types::authoring::v1::AuthoringMeta,
         ContentEncoding, ContentLanguage, ContentType, Error, RainMetaDocumentV1Item,
     };
     use alloy_ethers_typecast::transaction::ReadableClient;
@@ -1002,7 +999,7 @@ mod tests {
         assert_eq!(&cbor_encoded[529..], "application/cbor".as_bytes());
 
         // decode the data back to MetaMap
-        let mut cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
+        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
         // the length of decoded maps must be 1 as we only had 1 encoded item
         assert_eq!(cbor_decoded.len(), 1);
         // decoded item must be equal to the original meta_map
@@ -1070,7 +1067,7 @@ mod tests {
         assert_eq!(&cbor_encoded[88..], "en".as_bytes());
 
         // decode the data back to MetaMap
-        let mut cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
+        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
         // the length of decoded maps must be 1 as we only had 1 encoded item
         assert_eq!(cbor_decoded.len(), 1);
         // decoded item must be equal to the original meta_map
@@ -1200,7 +1197,7 @@ mod tests {
         assert_eq!(&cbor_encoded[641..], "en".as_bytes());
 
         // decode the data back to MetaMap
-        let mut cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
+        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
         // the length of decoded maps must be 2 as we had 2 encoded item
         assert_eq!(cbor_decoded.len(), 2);
 
