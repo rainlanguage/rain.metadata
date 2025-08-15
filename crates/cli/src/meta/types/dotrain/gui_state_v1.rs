@@ -27,7 +27,7 @@ impl_wasm_traits!(ValueCfg);
 /// Configuration for a token selection
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[cfg_attr(target_family = "wasm", derive(Tsify))]
-pub struct TokenCfg {
+pub struct ShortenedTokenCfg {
     /// Network name where the token exists
     pub network: String,
     /// Token contract address
@@ -35,7 +35,7 @@ pub struct TokenCfg {
     pub address: Address,
 }
 #[cfg(target_family = "wasm")]
-impl_wasm_traits!(TokenCfg);
+impl_wasm_traits!(ShortenedTokenCfg);
 
 /// Dotrain Instance V1 metadata - contains user's specific configuration
 /// for a deployed order referencing a dotrain template
@@ -50,7 +50,7 @@ pub struct DotrainGuiStateV1 {
     /// Deposit configurations
     pub deposits: BTreeMap<String, ValueCfg>,
     /// Selected tokens for the order
-    pub select_tokens: BTreeMap<String, TokenCfg>,
+    pub select_tokens: BTreeMap<String, ShortenedTokenCfg>,
     /// Vault IDs mapping (input/output, index) -> vault_id
     pub vault_ids: BTreeMap<String, Option<String>>,
     /// Selected deployment name from the dotrain
@@ -169,7 +169,7 @@ mod tests {
 
         let select_tokens = BTreeMap::from([(
             "input-token".to_string(),
-            TokenCfg {
+            ShortenedTokenCfg {
                 network: "ethereum".to_string(),
                 address: Address::from([0x42; 20]),
             },
