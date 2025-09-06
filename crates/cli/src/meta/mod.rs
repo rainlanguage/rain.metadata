@@ -1314,13 +1314,3 @@ mod tests {
         assert!(!result);
     }
 }
-
-#[cfg(target_family = "wasm")]
-use wasm_bindgen::prelude::wasm_bindgen;
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen(typescript_custom_section)]
-const TS_APPEND_CONTENT: &'static str = r#"
-export type Address = `0x${string}`;
-export type Hex = `0x${string}`;
-"#;
