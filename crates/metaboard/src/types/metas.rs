@@ -23,6 +23,19 @@ pub struct MetasBySubject {
     pub meta_v1_s: Vec<MetaV1>,
 }
 
+#[derive(cynic::QueryVariables, Debug, Default)]
+pub struct MetaBoardAddressesVariables {
+    pub first: Option<i32>,
+    pub skip: Option<i32>,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "Query", variables = "MetaBoardAddressesVariables")]
+pub struct MetaBoardAddresses {
+    #[arguments(first: $first, skip: $skip)]
+    pub meta_boards: Vec<MetaBoard>,
+}
+
 #[derive(cynic::QueryFragment, Debug)]
 pub struct MetaV1 {
     pub meta_hash: Bytes,
