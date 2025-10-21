@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity ^0.8.19;
 
+//forge-lint: disable-next-line(unused-import)
 import {IMetaV1_2, UnexpectedMetaHash, NotRainMetaV1, META_MAGIC_NUMBER_V1} from "../interface/unstable/IMetaV1_2.sol";
 
 /// @title LibMeta
@@ -36,7 +37,10 @@ library LibMeta {
     /// `isRainMetaV1` OR it does not match the expected hash of its data.
     /// @param meta The metadata to check.
     function checkMetaHashedV1(bytes32 expectedHash, bytes memory meta) internal pure {
-        bytes32 actualHash = keccak256(meta);
+        bytes32 actualHash;
+        assembly ("memory-safe") {
+            actualHash := keccak256(add(meta, 0x20), mload(meta))
+        }
         if (expectedHash != actualHash) {
             revert UnexpectedMetaHash(expectedHash, actualHash);
         }

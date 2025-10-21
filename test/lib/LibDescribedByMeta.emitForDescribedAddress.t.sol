@@ -10,14 +10,14 @@ import {MetaBoard} from "src/concrete/MetaBoard.sol";
 import {META_MAGIC_NUMBER_V1} from "src/interface/unstable/IMetaV1_2.sol";
 
 contract TestDescribedByMetaV1 is IDescribedByMetaV1 {
-    bytes32 public immutable expected;
+    bytes32 public immutable EXPECTED;
 
     constructor(bytes memory meta) {
-        expected = keccak256(meta);
+        EXPECTED = keccak256(meta);
     }
 
     function describedByMetaV1() external view override returns (bytes32) {
-        return expected;
+        return EXPECTED;
     }
 }
 
