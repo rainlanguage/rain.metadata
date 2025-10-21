@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity ^0.8.19;
 
+//forge-lint: disable-next-line(unused-import)
 import {UnexpectedMetaHash, NotRainMetaV1, META_MAGIC_NUMBER_V1} from "../deprecated/IMetaV1.sol";
 
 /// @title IMetaV1_2
