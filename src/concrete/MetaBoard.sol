@@ -11,4 +11,17 @@ contract MetaBoard is IMetaBoardV1_2 {
         LibMeta.checkMetaUnhashedV1(meta);
         emit MetaV1_2(msg.sender, subject, meta);
     }
+
+    /// Exposes native hashing algorithm (keccak256) to facilitate indexing data
+    /// under its hash. This avoids the need to roll a new interface to include
+    /// hashes in the event logs.
+    function hash(bytes calldata data) external pure returns (bytes32) {
+        bytes32 dataHash;
+        assembly ("memory-safe") {
+            let free := mload(0x40)
+            calldatacopy(free, data.offset, data.length)
+            dataHash := keccak256(free, data.length)
+        }
+        return dataHash;
+    }
 }
