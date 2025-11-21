@@ -4,7 +4,7 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std/Test.sol";
 import {LibMeta} from "src/lib/LibMeta.sol";
-import {UnexpectedMetaHash, NotRainMetaV1, META_MAGIC_NUMBER_V1} from "src/interface/unstable/IMetaV1_2.sol";
+import {NotRainMetaV1, META_MAGIC_NUMBER_V1} from "src/interface/unstable/IMetaV1_2.sol";
 
 contract LibMetaCheckMetaUnhashedV1_2Test is Test {
     function checkMetaUnhashedV1External(bytes memory meta) external pure {

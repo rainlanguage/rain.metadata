@@ -13,7 +13,10 @@ library LibDescribedByMeta {
         internal
     {
         bytes32 expected = described.describedByMetaV1();
-        bytes32 actual = keccak256(meta);
+        bytes32 actual;
+        assembly ("memory-safe") {
+            actual := keccak256(add(meta, 0x20), mload(meta))
+        }
         if (actual != expected) {
             revert MetadataMismatch(described, expected, actual);
         }
