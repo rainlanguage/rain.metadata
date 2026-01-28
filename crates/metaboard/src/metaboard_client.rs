@@ -1,6 +1,10 @@
 use crate::cynic_client::{CynicClient, CynicClientError};
 use crate::types::metas::*;
-use alloy::primitives::hex::{decode, encode, FromHexError};
+use alloy::primitives::{
+    hex::{decode, encode, FromHexError},
+    Address,
+};
+use core::str::FromStr;
 use reqwest::Url;
 use thiserror::Error;
 
@@ -25,6 +29,17 @@ pub enum MetaboardSubgraphClientError {
         metahash: String,
         #[source]
         source: FromHexError,
+    },
+    #[error("Error parsing metaboard address {address}: {source}")]
+    AddressParseError {
+        address: String,
+        #[source]
+        source: <Address as FromStr>::Err,
+    },
+    #[error("Request error fetching metaboard addresses: {source}")]
+    RequestErrorMetaBoards {
+        #[source]
+        source: CynicClientError,
     },
 }
 
@@ -110,6 +125,35 @@ impl MetaboardSubgraphClient {
         }
 
         Ok(meta_bytes)
+    }
+
+    /// Fetch MetaBoard contract addresses from the subgraph.
+    pub async fn get_metaboard_addresses(
+        &self,
+        first: Option<i32>,
+        skip: Option<i32>,
+    ) -> Result<Vec<Address>, MetaboardSubgraphClientError> {
+        let data =
+            self.query::<MetaBoardAddresses, MetaBoardAddressesVariables>(
+                MetaBoardAddressesVariables { first, skip },
+            )
+            .await
+            .map_err(|e| MetaboardSubgraphClientError::RequestErrorMetaBoards { source: e })?;
+
+        let mut addresses = Vec::with_capacity(data.meta_boards.len());
+        for board in data.meta_boards {
+            let address_hex = board.address.0;
+            let address = Address::from_str(&address_hex).map_err(|e| {
+                MetaboardSubgraphClientError::AddressParseError {
+                    address: address_hex.clone(),
+                    source: e,
+                }
+            })?;
+
+            addresses.push(address);
+        }
+
+        Ok(addresses)
     }
 }
 
@@ -288,5 +332,70 @@ mod tests {
             Err(MetaboardSubgraphClientError::Empty(_)) => (),
             _ => panic!("Unexpected result: {:?}", result),
         }
+    }
+
+    #[tokio::test]
+    async fn test_get_metaboard_addresses_success() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("metaBoards");
+            then.status(200).json_body_obj(&{
+                serde_json::json!({
+                    "data": {
+                        "metaBoards": [
+                            {
+                                "address": "0x0000000000000000000000000000000000000001",
+                            },
+                            {
+                                "address": "0x0000000000000000000000000000000000000002",
+                            }
+                        ]
+                    }
+                })
+            });
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+
+        let result = client
+            .get_metaboard_addresses(Some(10), Some(0))
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 2);
+
+        assert_eq!(
+            result[0],
+            Address::from_str("0x0000000000000000000000000000000000000001").unwrap()
+        );
+        assert_eq!(
+            result[1],
+            Address::from_str("0x0000000000000000000000000000000000000002").unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_metaboard_addresses_empty() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("metaBoards");
+            then.status(200).json_body_obj(&{
+                serde_json::json!({
+                    "data": {
+                        "metaBoards": []
+                    }
+                })
+            });
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+
+        let result = client.get_metaboard_addresses(Some(5), None).await.unwrap();
+
+        assert!(result.is_empty());
     }
 }
