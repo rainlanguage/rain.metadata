@@ -12,6 +12,17 @@ contract Deploy is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYMENT_KEY");
 
+        LibRainDeploy.deployAndBroadcastToSupportedNetworks(
+            vm,
+            LibRainDeploy.supportedNetworks(),
+            deployerPrivateKey,
+            type(MetaBoard).creationCode,
+            "",
+            LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS,
+            LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH,
+            new address[](0)
+        );
+
         vm.startBroadcast(deployerPrivateKey);
 
         new MetaBoard();
