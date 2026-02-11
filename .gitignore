@@ -4,5 +4,7 @@ cache
 .vscode
 .direnv/
 
+.env
+
 # Rust
 target
