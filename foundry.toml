@@ -10,6 +10,10 @@ evm_version = "cancun"
 bytecode_hash = "none"
 cbor_metadata = false
 
+remappings = [
+    "rain.deploy/=lib/rain.deploy/src/"
+]
+
 [fuzz]
 runs = 5096
 

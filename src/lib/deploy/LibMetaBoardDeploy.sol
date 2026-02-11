@@ -17,6 +17,5 @@ library LibMetaBoardDeploy {
     /// standard zoltu deployer. This can be used to verify that the deployed
     /// contract has the expected bytecode, which provides stronger guarantees
     /// than just checking the address.
-    bytes32 constant METABOARD_DEPLOYED_CODEHASH =
-        bytes32(0);
+    bytes32 constant METABOARD_DEPLOYED_CODEHASH = bytes32(0);
 }
