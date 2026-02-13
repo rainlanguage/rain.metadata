@@ -1,5 +1,8 @@
 {
   "lib/forge-std": {
     "rev": "1801b0541f4fda118a10798fd3486bb7051c5dd6"
+  },
+  "lib/rain.deploy": {
+    "rev": "e419a46e2a1317a63639ac13fc5a22d7e967fbef"
   }
 }
