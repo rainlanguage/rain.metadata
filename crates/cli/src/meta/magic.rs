@@ -42,7 +42,7 @@ pub enum KnownMagic {
     /// Dotrain instance meta v1
     DotrainGuiStateV1 = 0xffda7b2fb167c286,
     /// Signed context oracle endpoint v1
-    /// Payload is a single CBOR text string containing the oracle URL.
+    /// Payload is raw UTF-8 bytes containing the oracle endpoint URL.
     /// Used in order metadata to tell takers where to GET signed context data.
     SignedContextOracleV1 = 0xff7a1507ba4419ca,
 }
