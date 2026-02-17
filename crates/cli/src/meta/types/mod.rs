@@ -8,5 +8,5 @@ pub mod interpreter_caller;
 pub mod op;
 pub mod rainlang;
 pub mod rainlangsource;
-pub mod signed_context_oracle;
+pub mod raindex_signed_context_oracle;
 pub mod solidity_abi;

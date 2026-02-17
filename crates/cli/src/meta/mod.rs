@@ -38,7 +38,7 @@ pub enum KnownMeta {
     AddressList,
     DotrainSourceV1,
     DotrainGuiStateV1,
-    SignedContextOracleV1,
+    RaindexSignedContextOracleV1,
 }
 
 impl TryFrom<KnownMagic> for KnownMeta {
@@ -59,7 +59,7 @@ impl TryFrom<KnownMagic> for KnownMeta {
                 Ok(KnownMeta::ExpressionDeployerV2BytecodeV1)
             }
             KnownMagic::RainlangSourceV1 => Ok(KnownMeta::RainlangSourceV1),
-            KnownMagic::SignedContextOracleV1 => Ok(KnownMeta::SignedContextOracleV1),
+            KnownMagic::RaindexSignedContextOracleV1 => Ok(KnownMeta::RaindexSignedContextOracleV1),
             _ => Err(Error::UnsupportedMeta),
         }
     }
@@ -291,7 +291,7 @@ impl RainMetaDocumentV1Item {
             | KnownMagic::DotrainSourceV1
             | KnownMagic::DotrainGuiStateV1
             | KnownMagic::RainlangSourceV1
-            | KnownMagic::SignedContextOracleV1 => T::try_from(self),
+            | KnownMagic::RaindexSignedContextOracleV1 => T::try_from(self),
             _ => Err(Error::UnsupportedMeta)?,
         }
     }
