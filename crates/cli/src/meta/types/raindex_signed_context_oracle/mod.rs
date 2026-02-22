@@ -124,14 +124,18 @@ mod tests {
         let oracle = RaindexSignedContextOracleV1::parse(url).unwrap();
         let item = oracle.to_meta_item();
 
-        let found = RaindexSignedContextOracleV1::find_in_items(&[item]).unwrap().unwrap();
+        let found = RaindexSignedContextOracleV1::find_in_items(&[item])
+            .unwrap()
+            .unwrap();
         assert_eq!(found.url(), url);
     }
 
     #[test]
     fn test_find_in_items_missing() {
         let items: Vec<RainMetaDocumentV1Item> = vec![];
-        assert!(RaindexSignedContextOracleV1::find_in_items(&items).unwrap().is_none());
+        assert!(RaindexSignedContextOracleV1::find_in_items(&items)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -184,7 +188,8 @@ mod tests {
 
     #[test]
     fn test_parsed_url() {
-        let oracle = RaindexSignedContextOracleV1::parse("https://example.com/feed?pair=eth-usd").unwrap();
+        let oracle =
+            RaindexSignedContextOracleV1::parse("https://example.com/feed?pair=eth-usd").unwrap();
         let parsed = oracle.parsed_url().unwrap();
         assert_eq!(parsed.host_str(), Some("example.com"));
         assert_eq!(parsed.path(), "/feed");
