@@ -41,6 +41,10 @@ pub enum KnownMagic {
     DotrainSourceV1 = 0xffa15ef0fc437099,
     /// Dotrain instance meta v1
     DotrainGuiStateV1 = 0xffda7b2fb167c286,
+    /// Signed context oracle endpoint v1
+    /// Payload is raw UTF-8 bytes containing the oracle endpoint URL.
+    /// Used in order metadata to tell takers where to GET signed context data.
+    RaindexSignedContextOracleV1 = 0xff7a1507ba4419ca,
 }
 
 impl KnownMagic {
@@ -71,6 +75,9 @@ impl TryFrom<u64> for KnownMagic {
             v if v == KnownMagic::RainlangSourceV1 as u64 => Ok(KnownMagic::RainlangSourceV1),
             v if v == KnownMagic::DotrainSourceV1 as u64 => Ok(KnownMagic::DotrainSourceV1),
             v if v == KnownMagic::DotrainGuiStateV1 as u64 => Ok(KnownMagic::DotrainGuiStateV1),
+            v if v == KnownMagic::RaindexSignedContextOracleV1 as u64 => {
+                Ok(KnownMagic::RaindexSignedContextOracleV1)
+            }
             _ => Err(crate::error::Error::UnknownMagic),
         }
     }
@@ -175,5 +182,20 @@ mod tests {
         let magic_number_after_prefix = magic_number.to_prefix_bytes();
 
         assert_eq!(hex::encode(magic_number_after_prefix), "ffda7b2fb167c286");
+    }
+
+    #[test]
+    fn test_signed_context_oracle_v1() {
+        let magic_number = KnownMagic::RaindexSignedContextOracleV1;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ff7a1507ba4419ca");
+    }
+
+    #[test]
+    fn test_signed_context_oracle_v1_roundtrip() {
+        let magic_number = KnownMagic::RaindexSignedContextOracleV1;
+        let from_u64 = KnownMagic::try_from(magic_number as u64).unwrap();
+        assert_eq!(magic_number, from_u64);
     }
 }
