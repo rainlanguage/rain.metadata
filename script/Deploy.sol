@@ -11,10 +11,12 @@ import {LibMetaBoardDeploy} from "src/lib/deploy/LibMetaBoardDeploy.sol";
 /// @notice A script that deploys all contracts. This is intended to be run on
 /// every commit by CI to a testnet such as mumbai.
 contract Deploy is Script {
+    mapping(string => mapping(address => bytes32)) internal sDepCodeHashes;
+
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYMENT_KEY");
 
-        LibRainDeploy.deployAndBroadcastToSupportedNetworks(
+        LibRainDeploy.deployAndBroadcast(
             vm,
             LibRainDeploy.supportedNetworks(),
             deployerPrivateKey,
@@ -22,7 +24,8 @@ contract Deploy is Script {
             "",
             LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS,
             LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH,
-            new address[](0)
+            new address[](0),
+            sDepCodeHashes
         );
     }
 }
