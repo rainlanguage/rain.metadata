@@ -24,4 +24,35 @@ contract LibMetaBoardDeployTest is Test {
 
         assertEq(address(metaBoard).codehash, LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH);
     }
+
+    function checkProdDeployment(string memory envVar) internal {
+        vm.createSelectFork(vm.envString(envVar));
+        address deployed = LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS;
+        assertTrue(deployed.code.length > 0, string.concat("MetaBoard not deployed: ", envVar));
+        assertEq(
+            deployed.codehash,
+            LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH,
+            string.concat("MetaBoard codehash mismatch: ", envVar)
+        );
+    }
+
+    function testProdDeployArbitrum() external {
+        checkProdDeployment("CI_FORK_ARB_RPC_URL");
+    }
+
+    function testProdDeployBase() external {
+        checkProdDeployment("CI_FORK_BASE_RPC_URL");
+    }
+
+    function testProdDeployBaseSepolia() external {
+        checkProdDeployment("CI_FORK_BASE_SEPOLIA_RPC_URL");
+    }
+
+    function testProdDeployFlare() external {
+        checkProdDeployment("CI_FORK_FLARE_RPC_URL");
+    }
+
+    function testProdDeployPolygon() external {
+        checkProdDeployment("CI_FORK_POLYGON_RPC_URL");
+    }
 }
