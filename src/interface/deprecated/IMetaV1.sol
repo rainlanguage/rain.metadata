@@ -27,5 +27,6 @@ interface IMetaV1 {
     /// hash of some data/thing that this metadata is about.
     /// @param meta Rain metadata V1 compliant metadata bytes.
     /// https://github.com/rainprotocol/specs/blob/main/metadata-v1.md
+    //slither-disable-next-line unindexed-event-address
     event MetaV1(address sender, uint256 subject, bytes meta);
 }

@@ -1,6 +1,7 @@
 [profile.default]
 
 solc = "0.8.25"
+auto_detect_solc = false
 
 # optimizer settings for snapshotting.
 optimizer = true
@@ -9,9 +10,15 @@ evm_version = "cancun"
 
 bytecode_hash = "none"
 cbor_metadata = false
+ffi = true
 
 remappings = [
     "rain.deploy/=lib/rain.deploy/src/"
+]
+
+fs_permissions = [
+    { access = "read", path = "subgraph/networks.json" },
+    { access = "read", path = "subgraph/subgraph.yaml" }
 ]
 
 [fuzz]

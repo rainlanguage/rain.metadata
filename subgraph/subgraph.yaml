@@ -6,7 +6,7 @@ dataSources:
     name: metaboard0
     network: arbitrum-one
     source:
-      address: "0x017F5651eB8fa4048BBc17433149c6c035d391A6"
+      address: "0xfb8437AeFBB8031064E274527C5fc08e30Ac6928"
       abi: MetaBoard
       startBlock: 266485075
     mapping:

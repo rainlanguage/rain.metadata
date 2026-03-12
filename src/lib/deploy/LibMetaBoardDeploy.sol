@@ -19,4 +19,10 @@ library LibMetaBoardDeploy {
     /// than just checking the address.
     bytes32 constant METABOARD_DEPLOYED_CODEHASH =
         bytes32(0x60e0735a3406074fd8f85adb2813d0d7c346337ea4bcc6f2ef4eb25077a4933c);
+
+    uint256 constant METABOARD_START_BLOCK_ARBITRUM = 431042729;
+    uint256 constant METABOARD_START_BLOCK_BASE = 42021282;
+    uint256 constant METABOARD_START_BLOCK_BASE_SEPOLIA = 38683088;
+    uint256 constant METABOARD_START_BLOCK_FLARE = 55347067;
+    uint256 constant METABOARD_START_BLOCK_POLYGON = 82855948;
 }
