@@ -55,4 +55,39 @@ contract LibMetaBoardDeployTest is Test {
     function testProdDeployPolygon() external {
         checkProdDeployment("CI_FORK_POLYGON_RPC_URL");
     }
+
+    function testSubgraphYamlAddress() external {
+        string[] memory inputs = new string[](3);
+        inputs[0] = "yq";
+        inputs[1] = ".dataSources[0].source.address";
+        inputs[2] = "subgraph/subgraph.yaml";
+        bytes memory result = vm.ffi(inputs);
+        address addr = address(bytes20(result));
+        assertEq(addr, LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS, "subgraph.yaml address mismatch");
+    }
+
+    function testSubgraphTestAddressTs() external {
+        string[] memory inputs = new string[](4);
+        inputs[0] = "grep";
+        inputs[1] = "-oP";
+        inputs[2] = "0x[0-9a-fA-F]{40}";
+        inputs[3] = "subgraph/tests/address.ts";
+        bytes memory result = vm.ffi(inputs);
+        address addr = address(bytes20(result));
+        assertEq(addr, LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS, "subgraph/tests/address.ts address mismatch");
+    }
+
+    function testNetworksJsonAddresses() external view {
+        string memory json = vm.readFile("subgraph/networks.json");
+        string[] memory networks = vm.parseJsonKeys(json, "$");
+        for (uint256 i = 0; i < networks.length; i++) {
+            string memory path = string.concat(".", networks[i], ".metaboard0.address");
+            address addr = vm.parseJsonAddress(json, path);
+            assertEq(
+                addr,
+                LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS,
+                string.concat("networks.json address mismatch: ", networks[i])
+            );
+        }
+    }
 }
