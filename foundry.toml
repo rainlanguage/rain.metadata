@@ -1,6 +1,7 @@
 [profile.default]
 
 solc = "0.8.25"
+auto_detect_solc = false
 
 # optimizer settings for snapshotting.
 optimizer = true
