@@ -25,13 +25,15 @@ All commands require the Nix development shell. Use `nix develop` to enter it, o
 | REUSE license check | `nix develop -c rainix-sol-legal` |
 
 Run a single Solidity test (inside nix shell):
-```
+
+```sh
 forge test --match-test testFunctionName
 forge test --match-contract MetaBoardTest
 ```
 
 Run a single Rust test (inside nix shell):
-```
+
+```sh
 cargo test test_name
 ```
 
