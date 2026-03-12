@@ -69,10 +69,11 @@ contract LibMetaBoardDeployTest is Test {
         );
     }
 
-    /// Foundry's rollFork on Arbitrum maps to L1 block numbers, not L2, so
-    /// findDeployBlock returns wrong results. The Arbitrum start block was
-    /// found via manual binary search using eth_getCode RPC calls against L2
-    /// block numbers, and is verified by testIsStartBlockArbitrum instead.
+    /// findDeployBlock binary searches via rollFork which hits RPC rate limits
+    /// in CI. Skipped there; the isStartBlock tests verify correctness cheaply.
+    /// Arbitrum is always skipped because Foundry's rollFork maps to L1 block
+    /// numbers, not L2. The Arbitrum start block was found via manual binary
+    /// search using eth_getCode RPC calls against L2 block numbers.
     // function testStartBlockArbitrum() external {
     //     assertEq(
     //         findStartBlock("CI_FORK_ARB_RPC_URL", ARBITRUM_NITRO_GENESIS_BLOCK),
@@ -81,20 +82,24 @@ contract LibMetaBoardDeployTest is Test {
     // }
 
     function testStartBlockBase() external {
+        vm.skip(vm.envOr("CI", false));
         assertEq(findStartBlock("CI_FORK_BASE_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE);
     }
 
     function testStartBlockBaseSepolia() external {
+        vm.skip(vm.envOr("CI", false));
         assertEq(
             findStartBlock("CI_FORK_BASE_SEPOLIA_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA
         );
     }
 
     function testStartBlockFlare() external {
+        vm.skip(vm.envOr("CI", false));
         assertEq(findStartBlock("CI_FORK_FLARE_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_FLARE);
     }
 
     function testStartBlockPolygon() external {
+        vm.skip(vm.envOr("CI", false));
         assertEq(findStartBlock("CI_FORK_POLYGON_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_POLYGON);
     }
 
