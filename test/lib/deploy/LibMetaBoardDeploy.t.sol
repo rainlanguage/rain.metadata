@@ -10,6 +10,7 @@ import {MetaBoard} from "src/concrete/MetaBoard.sol";
 contract LibMetaBoardDeployTest is Test {
     /// Arbitrum Nitro genesis block. Archive RPCs can't serve blocks before this.
     uint256 constant ARBITRUM_NITRO_GENESIS_BLOCK = 22207817;
+
     function testDeployAddress() external {
         vm.createSelectFork(vm.envString("CI_FORK_ETH_RPC_URL"));
 
@@ -61,7 +62,10 @@ contract LibMetaBoardDeployTest is Test {
     function findStartBlock(string memory rpcEnvVar, uint256 searchFrom) internal returns (uint256) {
         vm.createSelectFork(vm.envString(rpcEnvVar));
         return LibRainDeploy.findDeployBlock(
-            vm, LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS, LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH, searchFrom
+            vm,
+            LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS,
+            LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH,
+            searchFrom
         );
     }
 
@@ -81,7 +85,9 @@ contract LibMetaBoardDeployTest is Test {
     }
 
     function testStartBlockBaseSepolia() external {
-        assertEq(findStartBlock("CI_FORK_BASE_SEPOLIA_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA);
+        assertEq(
+            findStartBlock("CI_FORK_BASE_SEPOLIA_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA
+        );
     }
 
     function testStartBlockFlare() external {
@@ -96,7 +102,10 @@ contract LibMetaBoardDeployTest is Test {
         vm.createSelectFork(vm.envString(rpcEnvVar));
         assertTrue(
             LibRainDeploy.isStartBlock(
-                vm, LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS, LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH, startBlock
+                vm,
+                LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS,
+                LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH,
+                startBlock
             ),
             string.concat("not start block: ", rpcEnvVar)
         );
@@ -161,11 +170,7 @@ contract LibMetaBoardDeployTest is Test {
         string memory json = vm.readFile("subgraph/networks.json");
         string memory path = string.concat(".", networkKey, ".metaboard0.startBlock");
         uint256 startBlock = vm.parseJsonUint(json, path);
-        assertEq(
-            startBlock,
-            expectedStartBlock,
-            string.concat("networks.json startBlock mismatch: ", networkKey)
-        );
+        assertEq(startBlock, expectedStartBlock, string.concat("networks.json startBlock mismatch: ", networkKey));
     }
 
     function testNetworksJsonStartBlockArbitrum() external view {
