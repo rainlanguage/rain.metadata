@@ -6,8 +6,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
@@ -29,7 +28,26 @@ jobs:
           # 1G = 1073741824
           gc-max-store-size-linux: 1G
 
-      - run: nix develop --command subgraph-deploy
-        env:
-          GOLDSKY_TOKEN: ${{ secrets.CI_GOLDSKY_TOKEN }}
-          GOLDSKY_NAME_AND_VERSION: "test-polygon/0.0.1"
+      - run: nix develop -c rainix-sol-prelude
+
+      - run: nix develop -c npm ci
+        working-directory: subgraph
+
+      - run: nix develop -c graph codegen
+        working-directory: subgraph
+
+      - run: nix develop -c goldsky login --token ${{ secrets.CI_GOLDSKY_TOKEN }}
+
+      - name: Deploy to all networks
+        working-directory: subgraph
+        run: |
+          for NETWORK in $(nix develop -c jq -r 'keys[]' networks.json); do
+            DEPLOY_NAME="rain-metaboard-${NETWORK}"
+            if nix develop -c goldsky subgraph list --filter deployments --summary 2>&1 | grep -q "${DEPLOY_NAME}"; then
+              echo "Skipping ${DEPLOY_NAME} - already deployed"
+            else
+              echo "Deploying ${DEPLOY_NAME}..."
+              nix develop -c graph build --network "${NETWORK}"
+              nix develop -c goldsky subgraph deploy "${DEPLOY_NAME}/$(date -Idate)"
+            fi
+          done
