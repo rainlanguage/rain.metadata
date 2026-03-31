@@ -186,22 +186,8 @@ mod test {
     fn test_solidity_identifier_validate() {
         // valids
         for i in [
-            "A",
-            "AA",
-            "A0",
-            "Raindex",
-            "$",
-            "$$",
-            "_",
-            "__",
-            "a",
-            "aa",
-            "a_",
-            "A_",
-            "a$",
-            "A",
-            "A$",
-            "a0",
+            "A", "AA", "A0", "Raindex", "$", "$$", "_", "__", "a", "aa", "a_", "A_", "a$", "A",
+            "A$", "a0",
         ] {
             assert!(
                 SolidityIdentifier {
