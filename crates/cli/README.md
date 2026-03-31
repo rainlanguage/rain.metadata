@@ -1,5 +1,5 @@
 # Rain Metadata Tooling
-A library that provides all the toolings and utilities in order to work with RainLanguage metadata. Dotrain LSP/compiler, Rain Orderbook, etc are a few examples to mention that use this library under the hood.
+A library that provides all the toolings and utilities in order to work with RainLanguage metadata. Dotrain LSP/compiler, Raindex, etc are a few examples to mention that use this library under the hood.
 
 Also provides CLI app (executable binary) to generate desireable Rain cbor encoded metadata based on [Metadata Specs](https://github.com/rainprotocol/specs/blob/main/metadata-v1.md) which for example is used in Rain deployment CI.
 <br>

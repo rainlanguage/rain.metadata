@@ -189,7 +189,7 @@ mod test {
             "A",
             "AA",
             "A0",
-            "OrderBook",
+            "Raindex",
             "$",
             "$$",
             "_",
