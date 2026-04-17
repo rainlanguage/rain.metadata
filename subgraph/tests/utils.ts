@@ -1,7 +1,8 @@
-import { MetaV1_2 } from "../generated/metaboard0/MetaBoard"; // Update the path as per your file structure
+import { MetaV1_2 } from "../generated/metaboard0/MetaBoard";
 import { ethereum, Address, BigInt, Bytes } from "@graphprotocol/graph-ts";
 import { newMockEvent } from "matchstick-as";
 import { handleMetaV1_2 } from "../src/metaBoard";
+import { CONTRACT_ADDRESS } from "./address";
 
 
 export function createNewMetaV1Event(sender: string, subject: Bytes, meta: Bytes, transactionHash: string, transactionBlockNumber: number, transactionTimestamp: number): MetaV1_2 {
@@ -32,4 +33,4 @@ export function handleNewMetaV1Events(events: MetaV1_2[]): void {
   });
 }
 
-export const CONTRACT_ADDRESS = Address.fromString("0x23F77e7Bc935503e437166498D7D72f2Ea290E1f");
+export { CONTRACT_ADDRESS } from "./address";

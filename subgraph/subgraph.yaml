@@ -4,11 +4,11 @@ schema:
 dataSources:
   - kind: ethereum/contract
     name: metaboard0
-    network: arbitrum-one
+    network: matic
     source:
-      address: "0x017F5651eB8fa4048BBc17433149c6c035d391A6"
       abi: MetaBoard
-      startBlock: 266485075
+      address: "0xfb8437AeFBB8031064E274527C5fc08e30Ac6928"
+      startBlock: 82855948
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7

@@ -3,7 +3,7 @@ name = "rain-metadata"
 version = "0.0.2-alpha.6"
 edition = "2021"
 description = "Tooling and utilities for RainLanguage metadata."
-license.workspace = true
+license = "LicenseRef-DCL-1.0"
 repository = "https://github.com/rainlanguage/rain.metadata"
 
 [features]
@@ -19,7 +19,7 @@ futures = "0.3.29"
 once_cell = "1.18.0"
 strum = { version = "0.24", features = ["derive"] }
 serde = "1.0.192"
-serde_json = { workspace = true }
+serde_json = "1.0.108"
 itertools = "0.10.5"
 serde_bytes = "0.11.12"
 deflate = "1.0.0"
@@ -27,14 +27,14 @@ inflate = "0.4.5"
 serde_cbor = "0.11.2"
 validator = { version = "0.16", features = ["derive"] }
 reqwest = { version = "0.11.22", features = ["json"] }
-alloy = { workspace = true }
+alloy = { version = "1.0.9", features = ["rand", "json", "json-abi"] }
 graphql_client = "0.13.0"
-rain-metaboard-subgraph = { workspace = true }
-rain-metadata-bindings = { workspace = true }
-thiserror = { workspace = true }
-alloy-ethers-typecast = { workspace = true }
-url = { workspace = true }
-rain-erc = { workspace = true }
+rain-metaboard-subgraph = { path = "../metaboard" }
+rain-metadata-bindings = { path = "../bindings" }
+thiserror = "1.0.56"
+alloy-ethers-typecast = { git = "https://github.com/rainlanguage/alloy-ethers-typecast", rev = "f7b5bfd0687f16c77dbfdd4905b2434793fa7885" }
+url = "2.5.0"
+rain-erc = { git = "https://github.com/rainlanguage/rain.erc", rev = "7b0f382f5e0788b0173c2391e09f4411f1c38300" }
 
 # json-schema
 schemars = { version = "0.8.12", optional = true }

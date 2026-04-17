@@ -17,6 +17,7 @@ pub enum Error {
     UnsupportedNetwork,
     InflateError(String),
     InvalidInput(String),
+    InvalidUrl(String),
     Utf8Error(Utf8Error),
     FromUtf8Error(FromUtf8Error),
     ReqwestError(reqwest::Error),
@@ -45,6 +46,7 @@ impl std::fmt::Display for Error {
                 f.write_str("unexpected input size, must be 32 bytes or less")
             }
             Error::InvalidInput(v) => write!(f, "invalid input: {}", v),
+            Error::InvalidUrl(v) => write!(f, "invalid URL: {}", v),
             Error::ReqwestError(v) => write!(f, "{}", v),
             Error::InflateError(v) => write!(f, "{}", v),
             Error::Utf8Error(v) => write!(f, "{}", v),

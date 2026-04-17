@@ -2,6 +2,8 @@ version = 1
 
 [[annotations]]
 path = [
+    ".cargo/config.toml",
+    ".envrc",
     ".gas-snapshot",
     ".github/workflows/**/",
     ".gitignore",
@@ -9,7 +11,9 @@ path = [
     "audit/**/",
     "Cargo.lock",
     "Cargo.toml",
+    "CLAUDE.md",
     "crates/**/",
+    "foundry.lock",
     "subgraph/**/",
     "README.md",
     "flake.lock",

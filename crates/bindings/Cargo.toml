@@ -3,8 +3,8 @@ name = "rain-metadata-bindings"
 version = "0.1.0"
 edition = "2021"
 description = "Solidity bindings for rain metadata."
-license.workspace = true
+license = "LicenseRef-DCL-1.0"
 repository = "https://github.com/rainlanguage/rain.metadata"
 
 [dependencies]
-alloy = { workspace = true }
+alloy = { version = "1.0.9", features = ["rand", "json", "json-abi"] }
