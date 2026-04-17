@@ -39,7 +39,7 @@ pub enum KnownMagic {
     AddressList = 0xffb2637608c09e38,
     /// Dotrain source code meta v1
     DotrainSourceV1 = 0xffa15ef0fc437099,
-    /// Dotrain instance meta v1
+    /// Order builder state meta v1
     OrderBuilderStateV1 = 0xffda7b2fb167c286,
     /// Signed context oracle endpoint v1
     /// Payload is raw UTF-8 bytes containing the oracle endpoint URL.
