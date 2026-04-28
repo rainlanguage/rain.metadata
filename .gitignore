@@ -8,3 +8,5 @@ cache
 
 # Rust
 target
+
+.pre-commit-config.yaml

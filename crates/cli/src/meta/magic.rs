@@ -39,8 +39,8 @@ pub enum KnownMagic {
     AddressList = 0xffb2637608c09e38,
     /// Dotrain source code meta v1
     DotrainSourceV1 = 0xffa15ef0fc437099,
-    /// Dotrain instance meta v1
-    DotrainGuiStateV1 = 0xffda7b2fb167c286,
+    /// Order builder state meta v1
+    OrderBuilderStateV1 = 0xffda7b2fb167c286,
     /// Signed context oracle endpoint v1
     /// Payload is raw UTF-8 bytes containing the oracle endpoint URL.
     /// Used in order metadata to tell takers where to GET signed context data.
@@ -74,7 +74,7 @@ impl TryFrom<u64> for KnownMagic {
             }
             v if v == KnownMagic::RainlangSourceV1 as u64 => Ok(KnownMagic::RainlangSourceV1),
             v if v == KnownMagic::DotrainSourceV1 as u64 => Ok(KnownMagic::DotrainSourceV1),
-            v if v == KnownMagic::DotrainGuiStateV1 as u64 => Ok(KnownMagic::DotrainGuiStateV1),
+            v if v == KnownMagic::OrderBuilderStateV1 as u64 => Ok(KnownMagic::OrderBuilderStateV1),
             v if v == KnownMagic::RaindexSignedContextOracleV1 as u64 => {
                 Ok(KnownMagic::RaindexSignedContextOracleV1)
             }
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_dotrain_instance_meta_v1() {
-        let magic_number = KnownMagic::DotrainGuiStateV1;
+        let magic_number = KnownMagic::OrderBuilderStateV1;
         let magic_number_after_prefix = magic_number.to_prefix_bytes();
 
         assert_eq!(hex::encode(magic_number_after_prefix), "ffda7b2fb167c286");
