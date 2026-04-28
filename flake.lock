@@ -252,13 +252,13 @@
       "locked": {
         "lastModified": 1777286590,
         "narHash": "sha256-7acpPP6U4ik7t6nF2e6dgcloMQSxUbD5sgfmIttC+Yw=",
-        "owner": "rainprotocol",
+        "owner": "rainlanguage",
         "repo": "rainix",
         "rev": "9cff7fcb2a674bb0d6a3b607e47a58992d2e4c96",
         "type": "github"
       },
       "original": {
-        "owner": "rainprotocol",
+        "owner": "rainlanguage",
         "repo": "rainix",
         "type": "github"
       }
