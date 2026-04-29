@@ -507,15 +507,14 @@ impl NPE2Deployer {
 ///
 /// ## Examples
 ///
-/// ```ignore
-/// use rain_meta::Store;
+/// ```
+/// use rain_metadata::Store;
 /// use std::collections::HashMap;
 ///
-///
-/// // to instantiate with including default subgraphs
+/// // to instantiate without any default subgraphs
 /// let mut store = Store::new();
 ///
-/// // to instatiate with default rain subgraphs included
+/// // to instantiate with default rain subgraphs included
 /// let mut store = Store::default();
 ///
 /// // or to instantiate with initial values
@@ -524,44 +523,38 @@ impl NPE2Deployer {
 ///     &HashMap::new(),
 ///     &HashMap::new(),
 ///     &HashMap::new(),
-///     true
+///     true,
 /// );
 ///
 /// // add a new subgraph endpoint url to the subgraph list
 /// store.add_subgraphs(&vec!["sg-url-2".to_string()]);
 ///
-/// // update the store with another Store (merges the stores)
+/// // merge another Store into this one
 /// store.merge(&Store::default());
 ///
-/// // hash of a meta to search and store
-/// let hash = vec![0u8, 1u8, 2u8];
-///
-/// // updates the meta store with a new meta by searching through subgraphs
-/// store.update(&hash);
-///
 /// // updates the meta store with a new meta hash and bytes
+/// let hash = vec![0u8, 1u8, 2u8];
 /// store.update_with(&hash, &vec![0u8, 1u8]);
 ///
-/// // to get a record from store
-/// let meta = store.get_meta(&hash);
+/// // `Store::update(&hash)` is async; it searches each subgraph for `hash` and
+/// // populates the cache with the result. Call it from an async context with `.await`.
 ///
-/// // to get a deployer record from store
-/// let deployer_record = store.get_deployer(&hash);
+/// // to get a record from the store
+/// let _meta = store.get_meta(&hash);
 ///
-/// // path to a .rain file
+/// // to get a deployer record from the store
+/// let _deployer_record = store.get_deployer(&hash);
+///
+/// // Store is agnostic to dotrain contents — it just maps the hash of the content
+/// // to the given uri and puts it as a new meta into the meta cache.
 /// let dotrain_uri = "path/to/file.rain";
-///
-/// // reading the dotrain content as an example,
-/// // Store is agnostic to dotrain contents it just maps the hash of the content to the given
-/// // uri and puts it as a new meta into the meta cache, so obtaining and passing the correct
-/// // content is up to the implementer
-/// let dotrain_content = std::fs::read_to_string(&dotrain_uri).unwrap_or(String::new());
-///
-/// // updates the dotrain cache for a dotrain text and uri
-/// let (new_hash, old_hash) = store.set_dotrain(&dotrain_content, &dotrain_uri.to_string(), false).unwrap();
+/// let dotrain_content = "/* some dotrain source */";
+/// let (_new_hash, _old_hash) = store
+///     .set_dotrain(dotrain_content, dotrain_uri, false)
+///     .unwrap();
 ///
 /// // to get dotrain meta bytes given a uri
-/// let dotrain_meta_bytes = store.get_dotrain_meta(&dotrain_uri.to_string());
+/// let _dotrain_meta_bytes = store.get_dotrain_meta(dotrain_uri);
 /// ```
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Store {
