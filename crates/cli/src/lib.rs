@@ -28,8 +28,8 @@
 //!   lib crate doesn't depend on [mod@tokio]. This is because [mod@tokio] is only used as a runtime for binray crate.
 //!
 //! ## Example
-//! ```ignore
-//! use rain_meta::{*, types::authoring::v1::AuthoringMeta};
+//! ```
+//! use rain_metadata::{*, types::authoring::v1::AuthoringMeta};
 //!
 //! let authoring_meta_content = r#"[
 //!   {
