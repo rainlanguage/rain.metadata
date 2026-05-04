@@ -280,4 +280,241 @@ mod tests {
             .iter()
             .any(|e| e.contains("`MetaV1.subject` type mismatch")));
     }
+
+    #[test]
+    fn empty_source_passes_with_zero_entities() {
+        // No `@entity` types in source means nothing to verify; consumer
+        // can have anything.
+        let source = "scalar Bytes";
+        let consumer = "type Whatever { x: Int }";
+        let n = check(source, consumer).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn non_object_definitions_in_source_are_ignored() {
+        // Enums, scalars, and Object types without `@entity` must not be
+        // treated as entities to check.
+        let source = r#"
+            scalar Bytes
+            enum Direction { ASC DESC }
+            type NotAnEntity {
+                noisefield: Int
+            }
+            type MetaBoard @entity {
+                id: Bytes!
+            }
+        "#;
+        let consumer = r#"
+            type MetaBoard {
+              id: Bytes!
+            }
+        "#;
+        let n = check(source, consumer).unwrap();
+        assert_eq!(n, 1, "only the @entity-tagged type should be verified");
+    }
+
+    #[test]
+    fn entity_directive_with_arguments_is_detected() {
+        // `@entity(immutable: true)` must still be picked up.
+        let source = r#"
+            type Transaction @entity(immutable: true) {
+                id: Bytes!
+            }
+        "#;
+        let consumer = r#"
+            type Transaction {
+              id: Bytes!
+            }
+        "#;
+        let n = check(source, consumer).unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn consumer_extras_are_ignored() {
+        // The consumer schema is the introspected GraphQL service surface
+        // and contains derivative types (filters, orderBy) plus extra
+        // fields with arguments. Those must not cause errors.
+        let consumer = r#"
+            type MetaBoard {
+              id: Bytes!
+              address: Bytes!
+              nextMetaId: BigInt!
+              extraField: String
+            }
+            type MetaV1 {
+              id: ID!
+              sender: Bytes!
+              subject: Bytes!
+            }
+            input MetaBoard_filter {
+              id: Bytes
+            }
+            enum MetaBoard_orderBy { id address }
+        "#;
+        let n = check(SOURCE_OK, consumer).unwrap();
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn consumer_field_with_arguments_matches_when_return_type_matches() {
+        // Introspected derived fields look like `metas(skip: Int = 0, ...): [MetaV1!]`.
+        // We compare only the return type, not the args, so this must pass.
+        let source = r#"
+            type MetaBoard @entity {
+                id: Bytes!
+                metas: [MetaV1!]
+            }
+            type MetaV1 @entity {
+                id: ID!
+            }
+        "#;
+        let consumer = r#"
+            type MetaBoard {
+              id: Bytes!
+              metas(skip: Int = 0, first: Int = 100): [MetaV1!]
+            }
+            type MetaV1 {
+              id: ID!
+            }
+        "#;
+        let n = check(source, consumer).unwrap();
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn nullability_mismatch_is_reported() {
+        // `Bytes` (nullable) vs `Bytes!` (non-null) are distinct types
+        // and must be flagged.
+        let source = r#"
+            type MetaBoard @entity {
+                id: Bytes!
+            }
+        "#;
+        let consumer = r#"
+            type MetaBoard {
+              id: Bytes
+            }
+        "#;
+        let errs = check(source, consumer).unwrap_err();
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("source `Bytes!`"));
+        assert!(errs[0].contains("consumer `Bytes`"));
+    }
+
+    #[test]
+    fn list_vs_scalar_mismatch_is_reported() {
+        let source = r#"
+            type MetaBoard @entity {
+                metas: [MetaV1!]
+            }
+            type MetaV1 @entity {
+                id: ID!
+            }
+        "#;
+        let consumer = r#"
+            type MetaBoard {
+              metas: MetaV1
+            }
+            type MetaV1 {
+              id: ID!
+            }
+        "#;
+        let errs = check(source, consumer).unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| e.contains("`MetaBoard.metas` type mismatch")));
+        assert!(errs.iter().any(|e| e.contains("source `[MetaV1!]`")));
+    }
+
+    #[test]
+    fn nested_wrapper_types_compare_recursively() {
+        // `[Bytes!]!` must match `[Bytes!]!` exactly and differ from `[Bytes!]`.
+        let source = r#"
+            type MetaBoard @entity {
+                tags: [Bytes!]!
+            }
+        "#;
+        let ok_consumer = r#"
+            type MetaBoard {
+              tags: [Bytes!]!
+            }
+        "#;
+        let n = check(source, ok_consumer).unwrap();
+        assert_eq!(n, 1);
+
+        let bad_consumer = r#"
+            type MetaBoard {
+              tags: [Bytes!]
+            }
+        "#;
+        let errs = check(source, bad_consumer).unwrap_err();
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("source `[Bytes!]!`"));
+        assert!(errs[0].contains("consumer `[Bytes!]`"));
+    }
+
+    #[test]
+    fn multiple_errors_are_all_reported() {
+        // One run should surface every problem, not stop at the first.
+        let source = r#"
+            type MetaBoard @entity {
+                id: Bytes!
+                address: Bytes!
+                nextMetaId: BigInt!
+            }
+            type MetaV1 @entity {
+                id: ID!
+                sender: Bytes!
+                subject: Bytes!
+            }
+            type Transaction @entity {
+                id: Bytes!
+            }
+        "#;
+        let consumer = r#"
+            type MetaBoard {
+              id: Bytes!
+              address: BigInt!
+            }
+            type MetaV1 {
+              id: ID!
+              sender: Bytes!
+            }
+        "#;
+        let errs = check(source, consumer).unwrap_err();
+        // MetaBoard.address mismatch + MetaBoard.nextMetaId missing
+        // + MetaV1.subject missing + Transaction entity missing = 4
+        assert_eq!(errs.len(), 4, "errors were: {:?}", errs);
+    }
+
+    #[test]
+    fn unparseable_source_is_reported() {
+        let errs = check("type Broken @entity {", CONSUMER_OK).unwrap_err();
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].starts_with("parse source:"));
+    }
+
+    #[test]
+    fn unparseable_consumer_is_reported() {
+        let errs = check(SOURCE_OK, "type Broken {").unwrap_err();
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].starts_with("parse consumer:"));
+    }
+
+    #[test]
+    fn consumer_with_no_objects_reports_every_source_entity_missing() {
+        // Use a valid-but-Object-free schema (graphql-parser rejects fully
+        // empty input as a parse error, which is its own test case).
+        let errs = check(SOURCE_OK, "scalar Whatever").unwrap_err();
+        // SOURCE_OK has 2 entities (MetaBoard, MetaV1).
+        assert_eq!(errs.len(), 2);
+        assert!(errs
+            .iter()
+            .any(|e| e.contains("entity `MetaBoard` is missing")));
+        assert!(errs
+            .iter()
+            .any(|e| e.contains("entity `MetaV1` is missing")));
+    }
 }
