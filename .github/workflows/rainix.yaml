@@ -1,10 +1,8 @@
 name: Rainix CI
 on: [push]
-
 concurrency:
   group: ${{ github.ref }}-rainix
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
 jobs:
   standard-tests:
     strategy:
@@ -21,7 +19,6 @@ jobs:
           - os: ubuntu-latest
             task: rainix-rs-static
       fail-fast: false
-
     runs-on: ${{ matrix.os }}
     env:
       DEPLOYMENT_KEY: ${{ github.ref == 'refs/heads/main' && secrets.PRIVATE_KEY || secrets.PRIVATE_KEY_DEV }}
@@ -30,7 +27,6 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-
       - uses: nixbuild/nix-quick-install-action@v30
         with:
           nix_conf: |
@@ -44,7 +40,6 @@ jobs:
           # if there's no cache hit, restore a cache by this prefix
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 1G
-
       - run: nix develop -c rainix-sol-prelude
       - run: nix develop -c rainix-rs-prelude
       - name: Run ${{ matrix.task }}
@@ -58,6 +53,25 @@ jobs:
           CI_FORK_POLYGON_RPC_URL: ${{ secrets.CI_FORK_POLYGON_RPC_URL || vars.CI_FORK_POLYGON_RPC_URL || '' }}
           ETHERSCAN_API_KEY: ${{ secrets.EXPLORER_VERIFICATION_KEY }}
         run: nix develop -c ${{ matrix.task }}
-
       - name: Build for wasm target
         run: nix develop -c cargo build --target wasm32-unknown-unknown
+  schema-drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1G
+      - name: Schema drift check
+        run: nix develop -c cargo run -p rain-metadata --bin rain-metadata --quiet -- schema-check --source subgraph/schema.graphql --consumer crates/metaboard/src/schema/metaboard.graphql
