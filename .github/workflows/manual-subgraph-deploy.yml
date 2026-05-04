@@ -3,6 +3,9 @@ on: [workflow_dispatch]
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      GOLDSKY_TOKEN: ${{ secrets.CI_GOLDSKY_TOKEN }}
+      GOLDSKY_SUBGRAPH_NAME: metaboard
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -17,17 +20,36 @@ jobs:
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
-          # restore and save a cache using this key
           primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
-          # if there's no cache hit, restore a cache by this prefix
           restore-prefixes-first-match: nix-${{ runner.os }}-
-          # collect garbage until the Nix store size (in bytes) is at most this number
-          # before trying to save a new cache
-          # 1G = 1073741824
           gc-max-store-size-linux: 1G
-      - name: Schema drift check (block deploy if consumer snapshot is stale)
-        run: nix develop --command cargo run -p rain-metadata --bin rain-metadata --quiet -- schema-check --source subgraph/schema.graphql --consumer crates/metaboard/src/schema/metaboard.graphql
-      - run: nix develop --command subgraph-deploy
-        env:
-          GOLDSKY_TOKEN: ${{ secrets.CI_GOLDSKY_TOKEN }}
-          GOLDSKY_SUBGRAPH_NAME: metaboard
+      - name: Deploy and capture URLs
+        id: deploy
+        run: |
+          set -o pipefail
+          nix develop --command subgraph-deploy 2>&1 | tee deploy.log
+          echo
+          echo "::group::Deployed Goldsky URLs"
+          grep -oE 'https://api\.goldsky\.com/api/public/[^[:space:]]+/gn' deploy.log | sort -u | tee deployed_urls.txt
+          echo "::endgroup::"
+      - name: Schema check against live deployment
+        id: schema_check
+        run: |
+          URL=$(head -n 1 deployed_urls.txt)
+          if [ -z "$URL" ]; then
+            echo "::warning::no deployed URL captured; skipping live schema check"
+            exit 0
+          fi
+          echo "Introspecting: $URL"
+          nix develop --command cargo run -p rain-metadata --bin rain-metadata --quiet -- \
+            schema-check --live-url "$URL" --consumer crates/metaboard/src/schema/metaboard.graphql
+      - name: Rollback on schema failure
+        if: failure() && steps.schema_check.outcome == 'failure'
+        run: |
+          commit=$(git rev-parse --short HEAD)
+          for network in $(jq -r 'keys[]' subgraph/networks.json); do
+            address=$(jq -r --arg net "$network" '.[$net] | to_entries[0].value.address' subgraph/networks.json)
+            name_and_version="${GOLDSKY_SUBGRAPH_NAME}-${network}/${address}-${commit}"
+            echo "Rolling back ${name_and_version}..."
+            nix develop --command goldsky --token "${GOLDSKY_TOKEN}" subgraph delete "${name_and_version}" --force || echo "(delete failed for ${name_and_version}, may not exist)"
+          done

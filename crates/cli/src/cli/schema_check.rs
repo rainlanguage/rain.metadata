@@ -5,6 +5,15 @@ use graphql_parser::schema::{
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+const INTROSPECTION_QUERY: &str = r#"
+{ __schema { types {
+  kind name
+  fields(includeDeprecated: true) {
+    name type { kind name ofType { kind name ofType { kind name ofType { kind name } } } }
+  }
+} } }
+"#;
+
 /// Compare entity types in a subgraph schema against a consumer's snapshot
 /// of the deployed introspection schema. Used in deploy CI to fail early
 /// when the consumer's snapshot has drifted from what is about to be
@@ -12,20 +21,39 @@ use std::path::PathBuf;
 #[derive(Parser)]
 pub struct SchemaCheck {
     /// Path to the source subgraph schema (with `@entity` directives).
-    #[arg(short, long)]
-    pub source: PathBuf,
+    /// Mutually exclusive with --live-url.
+    #[arg(short, long, conflicts_with = "live_url")]
+    pub source: Option<PathBuf>,
+    /// URL of a live deployed subgraph endpoint. Introspection is fetched
+    /// and used as the source of truth in place of --source. The full
+    /// introspection-derived SDL of the entity types is printed on
+    /// failure so the consumer snapshot can be regenerated.
+    #[arg(short, long, conflicts_with = "source")]
+    pub live_url: Option<String>,
     /// Path to the consumer's snapshot of the deployed introspection schema.
     #[arg(short, long)]
     pub consumer: PathBuf,
 }
 
 pub fn schema_check(cmd: SchemaCheck) -> anyhow::Result<()> {
-    let source_sdl = std::fs::read_to_string(&cmd.source)?;
     let consumer_sdl = std::fs::read_to_string(&cmd.consumer)?;
+
+    let (source_sdl, source_label) = match (&cmd.source, &cmd.live_url) {
+        (Some(path), None) => (std::fs::read_to_string(path)?, "source".to_string()),
+        (None, Some(url)) => {
+            let sdl = fetch_live_entities_as_sdl(url)?;
+            (sdl, format!("live ({url})"))
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "exactly one of --source or --live-url must be provided"
+            ));
+        }
+    };
 
     match check(&source_sdl, &consumer_sdl) {
         Ok(count) => {
-            println!("schema check ok: {count} entities verified");
+            println!("schema check ok: {count} entities verified against {source_label}");
             Ok(())
         }
         Err(errors) => {
@@ -34,8 +62,92 @@ pub fn schema_check(cmd: SchemaCheck) -> anyhow::Result<()> {
                 msg.push_str("\n  - ");
                 msg.push_str(e);
             }
+            if cmd.live_url.is_some() {
+                msg.push_str(
+                    "\n\nLive introspection-derived entity SDL (copy into consumer file):\n",
+                );
+                msg.push_str(&source_sdl);
+            }
             Err(anyhow::anyhow!(msg))
         }
+    }
+}
+
+/// POST a GraphQL introspection query to `url` and reduce the response to
+/// a synthetic SDL document containing only entity Object types and their
+/// fields. The synthetic SDL re-tags each type with `@entity` so the
+/// existing `entities` filter picks them up.
+fn fetch_live_entities_as_sdl(url: &str) -> anyhow::Result<String> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(async {
+        let client = reqwest::Client::new();
+        let body = serde_json::json!({ "query": INTROSPECTION_QUERY });
+        let resp: serde_json::Value = client
+            .post(url)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        if let Some(errors) = resp.get("errors") {
+            return Err(anyhow::anyhow!("introspection errors: {errors}"));
+        }
+        let types = resp
+            .pointer("/data/__schema/types")
+            .and_then(|t| t.as_array())
+            .ok_or_else(|| {
+                anyhow::anyhow!("introspection response missing /data/__schema/types")
+            })?;
+
+        let mut sdl = String::new();
+        for t in types {
+            let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if kind != "OBJECT" || !is_entity_object(name) {
+                continue;
+            }
+            sdl.push_str(&format!("type {name} @entity {{\n"));
+            if let Some(fields) = t.get("fields").and_then(|f| f.as_array()) {
+                for f in fields {
+                    let fname = f.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let ftype = render_type(f.get("type").unwrap_or(&serde_json::Value::Null));
+                    sdl.push_str(&format!("  {fname}: {ftype}\n"));
+                }
+            }
+            sdl.push_str("}\n\n");
+        }
+        Ok(sdl)
+    })
+}
+
+/// Filter for "entity-shaped" Object types in a Graph Protocol introspection
+/// response: skip auto-generated derivative types (filter, orderBy, Query,
+/// Subscription, _Meta_, _Block_, etc.) and any name with a leading underscore.
+fn is_entity_object(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('_')
+        && name != "Query"
+        && name != "Subscription"
+        && !name.ends_with("_filter")
+        && !name.ends_with("_orderBy")
+}
+
+/// Render an introspection type-ref into SDL syntax (`Bytes!`, `[Foo!]!`).
+fn render_type(t: &serde_json::Value) -> String {
+    let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+    let name = t.get("name").and_then(|v| v.as_str());
+    let of_type = t.get("ofType");
+    match kind {
+        "NON_NULL" => format!(
+            "{}!",
+            render_type(of_type.unwrap_or(&serde_json::Value::Null))
+        ),
+        "LIST" => format!(
+            "[{}]",
+            render_type(of_type.unwrap_or(&serde_json::Value::Null))
+        ),
+        _ => name.unwrap_or("Unknown").to_string(),
     }
 }
 
