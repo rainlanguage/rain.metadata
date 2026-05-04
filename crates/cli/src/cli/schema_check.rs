@@ -78,47 +78,40 @@ pub fn schema_check(cmd: SchemaCheck) -> anyhow::Result<()> {
 /// fields. The synthetic SDL re-tags each type with `@entity` so the
 /// existing `entities` filter picks them up.
 fn fetch_live_entities_as_sdl(url: &str) -> anyhow::Result<String> {
-    let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(async {
-        let client = reqwest::Client::new();
-        let body = serde_json::json!({ "query": INTROSPECTION_QUERY });
-        let resp: serde_json::Value = client
-            .post(url)
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        if let Some(errors) = resp.get("errors") {
-            return Err(anyhow::anyhow!("introspection errors: {errors}"));
-        }
-        let types = resp
-            .pointer("/data/__schema/types")
-            .and_then(|t| t.as_array())
-            .ok_or_else(|| {
-                anyhow::anyhow!("introspection response missing /data/__schema/types")
-            })?;
+    let client = reqwest::blocking::Client::new();
+    let body = serde_json::json!({ "query": INTROSPECTION_QUERY });
+    let resp: serde_json::Value = client
+        .post(url)
+        .json(&body)
+        .send()?
+        .error_for_status()?
+        .json()?;
+    if let Some(errors) = resp.get("errors") {
+        return Err(anyhow::anyhow!("introspection errors: {errors}"));
+    }
+    let types = resp
+        .pointer("/data/__schema/types")
+        .and_then(|t| t.as_array())
+        .ok_or_else(|| anyhow::anyhow!("introspection response missing /data/__schema/types"))?;
 
-        let mut sdl = String::new();
-        for t in types {
-            let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if kind != "OBJECT" || !is_entity_object(name) {
-                continue;
-            }
-            sdl.push_str(&format!("type {name} @entity {{\n"));
-            if let Some(fields) = t.get("fields").and_then(|f| f.as_array()) {
-                for f in fields {
-                    let fname = f.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let ftype = render_type(f.get("type").unwrap_or(&serde_json::Value::Null));
-                    sdl.push_str(&format!("  {fname}: {ftype}\n"));
-                }
-            }
-            sdl.push_str("}\n\n");
+    let mut sdl = String::new();
+    for t in types {
+        let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if kind != "OBJECT" || !is_entity_object(name) {
+            continue;
         }
-        Ok(sdl)
-    })
+        sdl.push_str(&format!("type {name} @entity {{\n"));
+        if let Some(fields) = t.get("fields").and_then(|f| f.as_array()) {
+            for f in fields {
+                let fname = f.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let ftype = render_type(f.get("type").unwrap_or(&serde_json::Value::Null));
+                sdl.push_str(&format!("  {fname}: {ftype}\n"));
+            }
+        }
+        sdl.push_str("}\n\n");
+    }
+    Ok(sdl)
 }
 
 /// Filter for "entity-shaped" Object types in a Graph Protocol introspection
