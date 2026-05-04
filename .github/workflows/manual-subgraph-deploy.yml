@@ -1,17 +1,14 @@
 name: Subgraph manual deploy
 on: [workflow_dispatch]
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           submodules: recursive
-
       - uses: nixbuild/nix-quick-install-action@v30
         with:
           nix_conf: |
@@ -28,7 +25,8 @@ jobs:
           # before trying to save a new cache
           # 1G = 1073741824
           gc-max-store-size-linux: 1G
-
+      - name: Schema drift check (block deploy if consumer snapshot is stale)
+        run: nix develop --command cargo run -p rain-metadata --bin rain-metadata --quiet -- schema-check --source subgraph/schema.graphql --consumer crates/metaboard/src/schema/metaboard.graphql
       - run: nix develop --command subgraph-deploy
         env:
           GOLDSKY_TOKEN: ${{ secrets.CI_GOLDSKY_TOKEN }}
