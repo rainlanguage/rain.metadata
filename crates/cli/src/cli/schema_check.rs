@@ -638,4 +638,299 @@ mod tests {
             .iter()
             .any(|e| e.contains("entity `MetaV1` is missing")));
     }
+
+    // ---------- helper-function unit tests ----------
+
+    fn parse(sdl: &str) -> Document<'_, String> {
+        parse_schema(sdl).unwrap()
+    }
+
+    #[test]
+    fn entities_returns_only_entity_directive_objects() {
+        let doc = parse(
+            r#"
+            type WithEntity @entity { id: ID! }
+            type WithEntityArgs @entity(immutable: true) { id: ID! }
+            type Plain { id: ID! }
+            type WithOtherDirective @other { id: ID! }
+            scalar S
+            enum E { A B }
+            "#,
+        );
+        let names: Vec<&str> = entities(&doc).iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(names, vec!["WithEntity", "WithEntityArgs"]);
+    }
+
+    #[test]
+    fn all_objects_returns_every_object_type_keyed_by_name() {
+        let doc = parse(
+            r#"
+            type A { x: Int }
+            type B @entity { y: Int }
+            scalar S
+            enum E { X }
+            input I { z: Int }
+            "#,
+        );
+        let m = all_objects(&doc);
+        let mut names: Vec<&str> = m.keys().copied().collect();
+        names.sort();
+        assert_eq!(names, vec!["A", "B"]);
+    }
+
+    fn named(s: &str) -> Type<'static, String> {
+        Type::NamedType(s.to_string())
+    }
+    fn nn(t: Type<'static, String>) -> Type<'static, String> {
+        Type::NonNullType(Box::new(t))
+    }
+    fn list(t: Type<'static, String>) -> Type<'static, String> {
+        Type::ListType(Box::new(t))
+    }
+
+    #[test]
+    fn type_equal_named_named() {
+        assert!(type_equal(&named("Bytes"), &named("Bytes")));
+        assert!(!type_equal(&named("Bytes"), &named("BigInt")));
+    }
+
+    #[test]
+    fn type_equal_distinguishes_wrappers() {
+        assert!(!type_equal(&named("Bytes"), &nn(named("Bytes"))));
+        assert!(!type_equal(&named("Bytes"), &list(named("Bytes"))));
+        assert!(!type_equal(&nn(named("Bytes")), &list(named("Bytes"))));
+    }
+
+    #[test]
+    fn type_equal_recurses_through_nested_wrappers() {
+        let a = nn(list(nn(named("Bytes"))));
+        let b = nn(list(nn(named("Bytes"))));
+        assert!(type_equal(&a, &b));
+        let c = nn(list(named("Bytes")));
+        assert!(!type_equal(&a, &c));
+    }
+
+    #[test]
+    fn type_to_string_renders_sdl_syntax() {
+        assert_eq!(type_to_string(&named("Bytes")), "Bytes");
+        assert_eq!(type_to_string(&nn(named("Bytes"))), "Bytes!");
+        assert_eq!(type_to_string(&list(named("X"))), "[X]");
+        assert_eq!(type_to_string(&nn(list(nn(named("X"))))), "[X!]!");
+    }
+
+    #[test]
+    fn is_entity_object_skips_derivative_and_internal_types() {
+        assert!(is_entity_object("MetaBoard"));
+        assert!(is_entity_object("Transaction"));
+        assert!(!is_entity_object(""));
+        assert!(!is_entity_object("_Meta_"));
+        assert!(!is_entity_object("Query"));
+        assert!(!is_entity_object("Subscription"));
+        assert!(!is_entity_object("MetaV1_filter"));
+        assert!(!is_entity_object("MetaV1_orderBy"));
+    }
+
+    #[test]
+    fn render_type_unwraps_introspection_typeref_recursively() {
+        // NON_NULL[LIST[NON_NULL[Bytes]]] → "[Bytes!]!"
+        let nested = serde_json::json!({
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+                "kind": "LIST",
+                "name": null,
+                "ofType": {
+                    "kind": "NON_NULL",
+                    "name": null,
+                    "ofType": { "kind": "SCALAR", "name": "Bytes", "ofType": null }
+                }
+            }
+        });
+        assert_eq!(render_type(&nested), "[Bytes!]!");
+    }
+
+    #[test]
+    fn render_type_handles_plain_named_type() {
+        let scalar = serde_json::json!({ "kind": "SCALAR", "name": "BigInt", "ofType": null });
+        assert_eq!(render_type(&scalar), "BigInt");
+    }
+
+    #[test]
+    fn render_type_falls_back_to_unknown_for_missing_name() {
+        let bad = serde_json::json!({ "kind": "SCALAR", "name": null, "ofType": null });
+        assert_eq!(render_type(&bad), "Unknown");
+    }
+
+    // ---------- live-URL HTTP path ----------
+
+    #[tokio::test]
+    async fn fetch_live_entities_filters_to_entity_object_types() {
+        use httpmock::Method::POST;
+        use httpmock::MockServer;
+
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(200).json_body(serde_json::json!({
+                "data": { "__schema": { "types": [
+                    { "kind": "OBJECT", "name": "MetaBoard", "fields": [
+                        { "name": "id", "type": { "kind": "NON_NULL", "name": null,
+                            "ofType": { "kind": "SCALAR", "name": "Bytes", "ofType": null } } }
+                    ] },
+                    { "kind": "OBJECT", "name": "MetaV1_filter", "fields": [
+                        { "name": "id", "type": { "kind": "SCALAR", "name": "ID", "ofType": null } }
+                    ] },
+                    { "kind": "OBJECT", "name": "Query", "fields": [] },
+                    { "kind": "OBJECT", "name": "_Meta_", "fields": [] },
+                    { "kind": "SCALAR", "name": "Bytes", "fields": null }
+                ] } }
+            }));
+            })
+            .await;
+
+        let sdl = fetch_live_entities_as_sdl(&server.url("/")).await.unwrap();
+        assert!(sdl.contains("type MetaBoard @entity"));
+        assert!(sdl.contains("id: Bytes!"));
+        assert!(!sdl.contains("MetaV1_filter"));
+        assert!(!sdl.contains("Query"));
+        assert!(!sdl.contains("_Meta_"));
+    }
+
+    #[tokio::test]
+    async fn fetch_live_entities_propagates_graphql_errors() {
+        use httpmock::Method::POST;
+        use httpmock::MockServer;
+
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(200).json_body(serde_json::json!({
+                    "errors": [{ "message": "introspection disabled" }]
+                }));
+            })
+            .await;
+
+        let err = fetch_live_entities_as_sdl(&server.url("/"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("introspection errors"));
+        assert!(err.to_string().contains("introspection disabled"));
+    }
+
+    #[tokio::test]
+    async fn fetch_live_entities_errors_on_malformed_response() {
+        use httpmock::Method::POST;
+        use httpmock::MockServer;
+
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(200)
+                    .json_body(serde_json::json!({ "data": {} }));
+            })
+            .await;
+
+        let err = fetch_live_entities_as_sdl(&server.url("/"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing /data/__schema/types"));
+    }
+
+    #[tokio::test]
+    async fn fetch_live_entities_errors_on_http_failure() {
+        use httpmock::Method::POST;
+        use httpmock::MockServer;
+
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(500);
+            })
+            .await;
+
+        let err = fetch_live_entities_as_sdl(&server.url("/"))
+            .await
+            .unwrap_err();
+        // reqwest's error_for_status produces "500 Internal Server Error" text.
+        assert!(err.to_string().contains("500"));
+    }
+
+    // ---------- end-to-end CLI handler ----------
+
+    #[tokio::test]
+    async fn schema_check_reads_files_and_succeeds_on_match() {
+        use std::io::Write;
+        let mut src = tempfile::NamedTempFile::new().unwrap();
+        src.write_all(SOURCE_OK.as_bytes()).unwrap();
+        let mut con = tempfile::NamedTempFile::new().unwrap();
+        con.write_all(CONSUMER_OK.as_bytes()).unwrap();
+
+        schema_check(SchemaCheck {
+            source: Some(src.path().into()),
+            live_url: None,
+            consumer: con.path().into(),
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn schema_check_rejects_neither_source_nor_live_url() {
+        let mut con = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut con, CONSUMER_OK.as_bytes()).unwrap();
+
+        let err = schema_check(SchemaCheck {
+            source: None,
+            live_url: None,
+            consumer: con.path().into(),
+        })
+        .await
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("exactly one of --source or --live-url"));
+    }
+
+    #[tokio::test]
+    async fn schema_check_failure_includes_live_sdl_in_error() {
+        use httpmock::Method::POST;
+        use httpmock::MockServer;
+        use std::io::Write;
+
+        // Live introspection returns a single MetaBoard entity; consumer
+        // file omits it, so the error should include the live-derived SDL.
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(200).json_body(serde_json::json!({
+                    "data": { "__schema": { "types": [
+                        { "kind": "OBJECT", "name": "MetaBoard", "fields": [
+                            { "name": "id", "type": { "kind": "NON_NULL", "name": null,
+                                "ofType": { "kind": "SCALAR", "name": "Bytes", "ofType": null } } }
+                        ] }
+                    ] } }
+                }));
+            })
+            .await;
+
+        let mut con = tempfile::NamedTempFile::new().unwrap();
+        con.write_all(b"scalar X").unwrap();
+
+        let err = schema_check(SchemaCheck {
+            source: None,
+            live_url: Some(server.url("/")),
+            consumer: con.path().into(),
+        })
+        .await
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("entity `MetaBoard` is missing"));
+        assert!(msg.contains("Live introspection-derived entity SDL"));
+        assert!(msg.contains("type MetaBoard @entity"));
+    }
 }
