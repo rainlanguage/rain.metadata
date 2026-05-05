@@ -39,7 +39,7 @@ pub enum Meta {
     Generate(generate::Generate),
 }
 
-pub fn dispatch(meta: Meta) -> anyhow::Result<()> {
+pub async fn dispatch(meta: Meta) -> anyhow::Result<()> {
     match meta {
         Meta::Build(build) => build::build(build),
         Meta::Solc(solc) => solc::dispatch(solc),
@@ -47,13 +47,13 @@ pub fn dispatch(meta: Meta) -> anyhow::Result<()> {
         Meta::Magic(magic) => magic::dispatch(magic),
         Meta::Schema(schema) => schema::dispatch(schema),
         Meta::Validate(validate) => validate::validate(validate),
-        Meta::SchemaCheck(c) => schema_check::schema_check(c),
+        Meta::SchemaCheck(c) => schema_check::schema_check(c).await,
         Meta::Generate(generate) => generate::generate(generate),
     }
 }
 
-pub fn main() -> anyhow::Result<()> {
+pub async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(tracing_subscriber::fmt::Subscriber::new())?;
     let cli = Cli::parse();
-    dispatch(cli.meta)
+    dispatch(cli.meta).await
 }

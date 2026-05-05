@@ -35,13 +35,13 @@ pub struct SchemaCheck {
     pub consumer: PathBuf,
 }
 
-pub fn schema_check(cmd: SchemaCheck) -> anyhow::Result<()> {
+pub async fn schema_check(cmd: SchemaCheck) -> anyhow::Result<()> {
     let consumer_sdl = std::fs::read_to_string(&cmd.consumer)?;
 
     let (source_sdl, source_label) = match (&cmd.source, &cmd.live_url) {
         (Some(path), None) => (std::fs::read_to_string(path)?, "source".to_string()),
         (None, Some(url)) => {
-            let sdl = fetch_live_entities_as_sdl(url)?;
+            let sdl = fetch_live_entities_as_sdl(url).await?;
             (sdl, format!("live ({url})"))
         }
         _ => {
@@ -77,15 +77,17 @@ pub fn schema_check(cmd: SchemaCheck) -> anyhow::Result<()> {
 /// a synthetic SDL document containing only entity Object types and their
 /// fields. The synthetic SDL re-tags each type with `@entity` so the
 /// existing `entities` filter picks them up.
-fn fetch_live_entities_as_sdl(url: &str) -> anyhow::Result<String> {
-    let client = reqwest::blocking::Client::new();
+async fn fetch_live_entities_as_sdl(url: &str) -> anyhow::Result<String> {
+    let client = reqwest::Client::new();
     let body = serde_json::json!({ "query": INTROSPECTION_QUERY });
     let resp: serde_json::Value = client
         .post(url)
         .json(&body)
-        .send()?
+        .send()
+        .await?
         .error_for_status()?
-        .json()?;
+        .json()
+        .await?;
     if let Some(errors) = resp.get("errors") {
         return Err(anyhow::anyhow!("introspection errors: {errors}"));
     }
