@@ -80,11 +80,19 @@ enum MetaBoard_orderBy {
 
 type MetaV1 {
   id: ID!
+  transaction: Transaction!
   metaBoard: MetaBoard!
   sender: Bytes!
-  subject: BigInt!
+  subject: Bytes!
   metaHash: Bytes!
   meta: Bytes!
+}
+
+type Transaction {
+  id: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  from: Bytes!
 }
 
 input MetaV1_filter {
