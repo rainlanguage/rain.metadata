@@ -4,7 +4,7 @@ use alloy::{
 };
 use rain_metaboard_subgraph::{
     metaboard_client::{MetaboardSubgraphClient, MetaboardSubgraphClientError},
-    types::metas::BigInt,
+    types::metas::Bytes,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -37,10 +37,10 @@ impl DotrainSourceV1 {
         subgraph_url: Url,
     ) -> Result<Option<Self>, Error> {
         let client = MetaboardSubgraphClient::new(subgraph_url);
-        let subject_hex = hex::encode(subject);
-        let subject_bigint = BigInt(subject_hex);
+        let subject_hex = format!("0x{}", hex::encode(subject));
+        let subject_bytes = Bytes(subject_hex);
 
-        match client.get_metabytes_by_subject(&subject_bigint).await {
+        match client.get_metabytes_by_subject(&subject_bytes).await {
             Ok(metabytes) => {
                 if metabytes.is_empty() {
                     return Ok(None);

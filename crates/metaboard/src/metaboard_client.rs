@@ -97,7 +97,7 @@ impl MetaboardSubgraphClient {
     /// Find all metas with a given subject
     pub async fn get_metabytes_by_subject(
         &self,
-        subject: &BigInt,
+        subject: &Bytes,
     ) -> Result<Vec<Vec<u8>>, MetaboardSubgraphClientError> {
         let data = self
             .query::<MetasBySubject, MetasBySubjectVariables>(MetasBySubjectVariables {
@@ -260,7 +260,7 @@ mod tests {
         let server = MockServer::start_async().await;
         let url = Url::parse(&server.url("/")).unwrap();
 
-        let subject = BigInt("123".to_string());
+        let subject = Bytes("0x7b".to_string());
 
         // Mock a successful response
         server.mock(|when, then| {
@@ -323,7 +323,7 @@ mod tests {
         });
 
         let client = MetaboardSubgraphClient::new(url);
-        let subject = BigInt("789".to_string());
+        let subject = Bytes("0x315".to_string());
 
         let result = client.get_metabytes_by_subject(&subject).await;
 

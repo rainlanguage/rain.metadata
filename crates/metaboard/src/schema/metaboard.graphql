@@ -135,14 +135,16 @@ input MetaV1_filter {
   sender_not_in: [Bytes!]
   sender_contains: Bytes
   sender_not_contains: Bytes
-  subject: BigInt
-  subject_not: BigInt
-  subject_gt: BigInt
-  subject_lt: BigInt
-  subject_gte: BigInt
-  subject_lte: BigInt
-  subject_in: [BigInt!]
-  subject_not_in: [BigInt!]
+  subject: Bytes
+  subject_not: Bytes
+  subject_gt: Bytes
+  subject_lt: Bytes
+  subject_gte: Bytes
+  subject_lte: Bytes
+  subject_in: [Bytes!]
+  subject_not_in: [Bytes!]
+  subject_contains: Bytes
+  subject_not_contains: Bytes
   metaHash: Bytes
   metaHash_not: Bytes
   metaHash_gt: Bytes
