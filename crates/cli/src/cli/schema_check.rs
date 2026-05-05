@@ -78,12 +78,18 @@ pub async fn schema_check(cmd: SchemaCheck) -> anyhow::Result<()> {
 /// fields. The synthetic SDL re-tags each type with `@entity` so the
 /// existing `entities` filter picks them up.
 async fn fetch_live_entities_as_sdl(url: &str) -> anyhow::Result<String> {
-    // Bound the request so a slow or hung Goldsky endpoint can't
-    // wedge the deploy job indefinitely.
+    // Bound the request so a slow or hung Goldsky endpoint can't wedge
+    // the deploy job indefinitely. reqwest's wasm impl uses the browser
+    // fetch API and doesn't expose ClientBuilder timing methods, so the
+    // bound is native-only. The CLI binary never runs under wasm.
+    #[cfg(not(target_family = "wasm"))]
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
+    #[cfg(target_family = "wasm")]
+    let client = reqwest::Client::new();
+
     let body = serde_json::json!({ "query": INTROSPECTION_QUERY });
     let resp: serde_json::Value = client
         .post(url)
