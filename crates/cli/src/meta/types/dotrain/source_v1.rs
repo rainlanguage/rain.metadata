@@ -417,4 +417,29 @@ mod tests {
         // Verify the mock was called
         mock.assert();
     }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_sends_0x_prefixed_hex() {
+        // Pin the wire-format change made when MetaV1.subject migrated
+        // BigInt -> Bytes: the 32-byte subject must be sent as a hex
+        // string with a `0x` prefix so the GraphQL Bytes scalar accepts
+        // it. body_contains() makes the mock require the exact string,
+        // and mock.assert() panics if no request matched.
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+
+        let subject = [0x42u8; 32];
+        let expected_hex = format!("0x{}", "42".repeat(32));
+
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains(&expected_hex);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({ "data": { "metaV1S": [] } }));
+        });
+
+        let _ = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
+        mock.assert();
+    }
 }
