@@ -78,7 +78,12 @@ pub async fn schema_check(cmd: SchemaCheck) -> anyhow::Result<()> {
 /// fields. The synthetic SDL re-tags each type with `@entity` so the
 /// existing `entities` filter picks them up.
 async fn fetch_live_entities_as_sdl(url: &str) -> anyhow::Result<String> {
-    let client = reqwest::Client::new();
+    // Bound the request so a slow or hung Goldsky endpoint can't
+    // wedge the deploy job indefinitely.
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
     let body = serde_json::json!({ "query": INTROSPECTION_QUERY });
     let resp: serde_json::Value = client
         .post(url)
@@ -154,6 +159,14 @@ fn check(source_sdl: &str, consumer_sdl: &str) -> Result<usize, Vec<String>> {
 
     let source_entities = entities(&source_doc);
     let consumer_objects = all_objects(&consumer_doc);
+
+    if source_entities.is_empty() {
+        return Err(vec![
+            "source schema has no `@entity` types; check that --source/--live-url \
+             points at a subgraph SDL or live introspection endpoint"
+                .to_string(),
+        ]);
+    }
 
     let mut errors = Vec::new();
 
@@ -389,13 +402,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_source_passes_with_zero_entities() {
-        // No `@entity` types in source means nothing to verify; consumer
-        // can have anything.
+    fn source_with_no_entities_is_an_error() {
+        // Silently passing with 0 entities verified would mask a
+        // misconfigured --source path or a non-subgraph SDL in CI.
         let source = "scalar Bytes";
         let consumer = "type Whatever { x: Int }";
-        let n = check(source, consumer).unwrap();
-        assert_eq!(n, 0);
+        let errs = check(source, consumer).unwrap_err();
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("no `@entity` types"));
     }
 
     #[test]
