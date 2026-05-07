@@ -164,7 +164,7 @@ fn check(source_sdl: &str, consumer_sdl: &str) -> Result<usize, Vec<String>> {
         parse_schema(consumer_sdl).map_err(|e| vec![format!("parse consumer: {e}")])?;
 
     let source_entities = entities(&source_doc);
-    let consumer_objects = all_objects(&consumer_doc);
+    let consumer_field_index = build_field_index(&consumer_doc);
 
     if source_entities.is_empty() {
         return Err(vec![
@@ -177,17 +177,12 @@ fn check(source_sdl: &str, consumer_sdl: &str) -> Result<usize, Vec<String>> {
     let mut errors = Vec::new();
 
     for entity in &source_entities {
-        match consumer_objects.get(entity.name.as_str()) {
+        match consumer_field_index.get(entity.name.as_str()) {
             None => errors.push(format!(
                 "entity `{}` is missing from consumer schema",
                 entity.name
             )),
-            Some(consumer_entity) => {
-                let consumer_fields: BTreeMap<&str, &Field<'_, String>> = consumer_entity
-                    .fields
-                    .iter()
-                    .map(|f| (f.name.as_str(), f))
-                    .collect();
+            Some(consumer_fields) => {
                 for field in &entity.fields {
                     match consumer_fields.get(field.name.as_str()) {
                         None => errors.push(format!(
@@ -232,12 +227,19 @@ fn entities<'a>(doc: &'a Document<'a, String>) -> Vec<&'a ObjectType<'a, String>
         .collect()
 }
 
-fn all_objects<'a>(doc: &'a Document<'a, String>) -> BTreeMap<&'a str, &'a ObjectType<'a, String>> {
+/// Build a name → (field-name → field) lookup over every Object type in
+/// the document, so the per-entity field map isn't reconstructed inside
+/// the comparison loop.
+fn build_field_index<'a>(
+    doc: &'a Document<'a, String>,
+) -> BTreeMap<&'a str, BTreeMap<&'a str, &'a Field<'a, String>>> {
     doc.definitions
         .iter()
         .filter_map(|def| {
             if let Definition::TypeDefinition(TypeDefinition::Object(obj)) = def {
-                Some((obj.name.as_str(), obj))
+                let fields: BTreeMap<&str, &Field<'_, String>> =
+                    obj.fields.iter().map(|f| (f.name.as_str(), f)).collect();
+                Some((obj.name.as_str(), fields))
             } else {
                 None
             }
@@ -668,20 +670,24 @@ mod tests {
     }
 
     #[test]
-    fn all_objects_returns_every_object_type_keyed_by_name() {
+    fn build_field_index_returns_field_maps_keyed_by_object_name() {
         let doc = parse(
             r#"
-            type A { x: Int }
+            type A { x: Int y: String }
             type B @entity { y: Int }
             scalar S
             enum E { X }
             input I { z: Int }
             "#,
         );
-        let m = all_objects(&doc);
+        let m = build_field_index(&doc);
         let mut names: Vec<&str> = m.keys().copied().collect();
         names.sort();
         assert_eq!(names, vec!["A", "B"]);
+        let mut a_fields: Vec<&str> = m["A"].keys().copied().collect();
+        a_fields.sort();
+        assert_eq!(a_fields, vec!["x", "y"]);
+        assert_eq!(m["B"].keys().copied().collect::<Vec<_>>(), vec!["y"]);
     }
 
     fn named(s: &str) -> Type<'static, String> {
