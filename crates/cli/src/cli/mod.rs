@@ -8,6 +8,7 @@ pub mod solc;
 pub mod build;
 pub mod magic;
 pub mod schema;
+pub mod schema_check;
 pub mod output;
 pub mod subgraph;
 pub mod validate;
@@ -27,6 +28,7 @@ pub enum Meta {
     #[command(subcommand)]
     Schema(schema::Schema),
     Validate(validate::Validate),
+    SchemaCheck(schema_check::SchemaCheck),
     #[command(subcommand)]
     Magic(magic::Magic),
     Build(build::Build),
@@ -37,7 +39,7 @@ pub enum Meta {
     Generate(generate::Generate),
 }
 
-pub fn dispatch(meta: Meta) -> anyhow::Result<()> {
+pub async fn dispatch(meta: Meta) -> anyhow::Result<()> {
     match meta {
         Meta::Build(build) => build::build(build),
         Meta::Solc(solc) => solc::dispatch(solc),
@@ -45,12 +47,13 @@ pub fn dispatch(meta: Meta) -> anyhow::Result<()> {
         Meta::Magic(magic) => magic::dispatch(magic),
         Meta::Schema(schema) => schema::dispatch(schema),
         Meta::Validate(validate) => validate::validate(validate),
+        Meta::SchemaCheck(c) => schema_check::schema_check(c).await,
         Meta::Generate(generate) => generate::generate(generate),
     }
 }
 
-pub fn main() -> anyhow::Result<()> {
+pub async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(tracing_subscriber::fmt::Subscriber::new())?;
     let cli = Cli::parse();
-    dispatch(cli.meta)
+    dispatch(cli.meta).await
 }

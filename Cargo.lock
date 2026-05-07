@@ -3657,6 +3657,7 @@ dependencies = [
  "clap",
  "deflate",
  "futures",
+ "graphql-parser",
  "graphql_client",
  "httpmock",
  "inflate",

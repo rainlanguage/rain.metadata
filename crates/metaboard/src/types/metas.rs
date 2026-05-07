@@ -13,7 +13,7 @@ pub struct MetasByHash {
 
 #[derive(cynic::QueryVariables, Debug)]
 pub struct MetasBySubjectVariables {
-    pub subject: Option<BigInt>,
+    pub subject: Option<Bytes>,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -43,7 +43,7 @@ pub struct MetaV1 {
     pub sender: Bytes,
     pub id: cynic::Id,
     pub meta_board: MetaBoard,
-    pub subject: BigInt,
+    pub subject: Bytes,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
