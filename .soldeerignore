@@ -13,7 +13,9 @@
 CLAUDE.md
 /audit
 /cache
+/crates
 /dependencies
+/subgraph
 /flake.lock
 /flake.nix
 /foundry.lock
