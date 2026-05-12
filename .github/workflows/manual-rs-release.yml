@@ -1,6 +1,5 @@
 name: Manual rs release
 on: [workflow_dispatch]
-
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -9,7 +8,6 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-
       - uses: nixbuild/nix-quick-install-action@v30
         with:
           nix_conf: |
@@ -26,14 +24,13 @@ jobs:
           # before trying to save a new cache
           # 1G = 1073741824
           gc-max-store-size-linux: 1G
-
       - run: |
           git config --global user.email "${{ secrets.CI_GIT_EMAIL }}"
           git config --global user.name "${{ secrets.CI_GIT_USER }}"
-
+      - name: Install soldeer dependencies
+        run: nix develop github:rainlanguage/rainix#sol-shell -c forge soldeer install
       - run: nix develop --command rainix-sol-prelude
       - run: nix develop --command rainix-rs-prelude
-
       - run: nix develop --command cargo release --no-confirm --execute alpha
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
