@@ -88,9 +88,7 @@ contract LibMetaBoardDeployTest is Test {
 
     function testStartBlockBaseSepolia() external {
         vm.skip(vm.envOr("CI", false));
-        assertEq(
-            findStartBlock("BASE_SEPOLIA_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA
-        );
+        assertEq(findStartBlock("BASE_SEPOLIA_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA);
     }
 
     function testStartBlockFlare() external {
