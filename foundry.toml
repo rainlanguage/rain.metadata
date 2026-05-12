@@ -12,24 +12,29 @@ bytecode_hash = "none"
 cbor_metadata = false
 ffi = true
 
-remappings = [
-    "rain.deploy/=lib/rain.deploy/src/"
-]
+libs = ["dependencies"]
 
 fs_permissions = [
-    { access = "read", path = "subgraph/networks.json" },
-    { access = "read", path = "subgraph/subgraph.yaml" }
+  { access = "read", path = "subgraph/networks.json" },
+  { access = "read", path = "subgraph/subgraph.yaml" },
 ]
 
 [fuzz]
 runs = 5096
 
+[dependencies]
+forge-std = "1.16.1"
+"rain-deploy" = "0.1.2"
+
+[soldeer]
+recursive_deps = false
+
 [rpc_endpoints]
-arbitrum = "${CI_DEPLOY_ARBITRUM_RPC_URL}"
-base = "${CI_DEPLOY_BASE_RPC_URL}"
-base_sepolia = "${CI_DEPLOY_BASE_SEPOLIA_RPC_URL}"
-flare = "${CI_DEPLOY_FLARE_RPC_URL}"
-polygon = "${CI_DEPLOY_POLYGON_RPC_URL}"
+arbitrum = "${ARBITRUM_RPC_URL}"
+base = "${BASE_RPC_URL}"
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
+flare = "${FLARE_RPC_URL}"
+polygon = "${POLYGON_RPC_URL}"
 
 [etherscan]
 arbitrum = { key = "${CI_DEPLOY_ARBITRUM_ETHERSCAN_API_KEY}" }

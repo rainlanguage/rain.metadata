@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {Test} from "forge-std/Test.sol";
-import {LibRainDeploy} from "rain.deploy/lib/LibRainDeploy.sol";
+import {Test} from "forge-std-1.16.1/src/Test.sol";
+import {LibRainDeploy} from "rain-deploy-0.1.2/src/lib/LibRainDeploy.sol";
 import {LibMetaBoardDeploy} from "src/lib/deploy/LibMetaBoardDeploy.sol";
 import {MetaBoard} from "src/concrete/MetaBoard.sol";
 
@@ -12,7 +12,7 @@ contract LibMetaBoardDeployTest is Test {
     uint256 constant ARBITRUM_NITRO_GENESIS_BLOCK = 22207817;
 
     function testDeployAddress() external {
-        vm.createSelectFork(vm.envString("CI_FORK_ETH_RPC_URL"));
+        vm.createSelectFork(vm.envString("ETH_RPC_URL"));
 
         address deployedAddress = LibRainDeploy.deployZoltu(type(MetaBoard).creationCode);
 
@@ -40,23 +40,23 @@ contract LibMetaBoardDeployTest is Test {
     }
 
     function testProdDeployArbitrum() external {
-        checkProdDeployment("CI_FORK_ARB_RPC_URL");
+        checkProdDeployment("ARBITRUM_RPC_URL");
     }
 
     function testProdDeployBase() external {
-        checkProdDeployment("CI_FORK_BASE_RPC_URL");
+        checkProdDeployment("BASE_RPC_URL");
     }
 
     function testProdDeployBaseSepolia() external {
-        checkProdDeployment("CI_FORK_BASE_SEPOLIA_RPC_URL");
+        checkProdDeployment("BASE_SEPOLIA_RPC_URL");
     }
 
     function testProdDeployFlare() external {
-        checkProdDeployment("CI_FORK_FLARE_RPC_URL");
+        checkProdDeployment("FLARE_RPC_URL");
     }
 
     function testProdDeployPolygon() external {
-        checkProdDeployment("CI_FORK_POLYGON_RPC_URL");
+        checkProdDeployment("POLYGON_RPC_URL");
     }
 
     function findStartBlock(string memory rpcEnvVar, uint256 searchFrom) internal returns (uint256) {
@@ -76,31 +76,29 @@ contract LibMetaBoardDeployTest is Test {
     /// search using eth_getCode RPC calls against L2 block numbers.
     // function testStartBlockArbitrum() external {
     //     assertEq(
-    //         findStartBlock("CI_FORK_ARB_RPC_URL", ARBITRUM_NITRO_GENESIS_BLOCK),
+    //         findStartBlock("ARBITRUM_RPC_URL", ARBITRUM_NITRO_GENESIS_BLOCK),
     //         LibMetaBoardDeploy.METABOARD_START_BLOCK_ARBITRUM
     //     );
     // }
 
     function testStartBlockBase() external {
         vm.skip(vm.envOr("CI", false));
-        assertEq(findStartBlock("CI_FORK_BASE_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE);
+        assertEq(findStartBlock("BASE_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE);
     }
 
     function testStartBlockBaseSepolia() external {
         vm.skip(vm.envOr("CI", false));
-        assertEq(
-            findStartBlock("CI_FORK_BASE_SEPOLIA_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA
-        );
+        assertEq(findStartBlock("BASE_SEPOLIA_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA);
     }
 
     function testStartBlockFlare() external {
         vm.skip(vm.envOr("CI", false));
-        assertEq(findStartBlock("CI_FORK_FLARE_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_FLARE);
+        assertEq(findStartBlock("FLARE_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_FLARE);
     }
 
     function testStartBlockPolygon() external {
         vm.skip(vm.envOr("CI", false));
-        assertEq(findStartBlock("CI_FORK_POLYGON_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_POLYGON);
+        assertEq(findStartBlock("POLYGON_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_POLYGON);
     }
 
     function checkIsStartBlock(string memory rpcEnvVar, uint256 startBlock) internal {
@@ -117,23 +115,23 @@ contract LibMetaBoardDeployTest is Test {
     }
 
     function testIsStartBlockArbitrum() external {
-        checkIsStartBlock("CI_FORK_ARB_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_ARBITRUM);
+        checkIsStartBlock("ARBITRUM_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_ARBITRUM);
     }
 
     function testIsStartBlockBase() external {
-        checkIsStartBlock("CI_FORK_BASE_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE);
+        checkIsStartBlock("BASE_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE);
     }
 
     function testIsStartBlockBaseSepolia() external {
-        checkIsStartBlock("CI_FORK_BASE_SEPOLIA_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA);
+        checkIsStartBlock("BASE_SEPOLIA_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA);
     }
 
     function testIsStartBlockFlare() external {
-        checkIsStartBlock("CI_FORK_FLARE_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_FLARE);
+        checkIsStartBlock("FLARE_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_FLARE);
     }
 
     function testIsStartBlockPolygon() external {
-        checkIsStartBlock("CI_FORK_POLYGON_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_POLYGON);
+        checkIsStartBlock("POLYGON_RPC_URL", LibMetaBoardDeploy.METABOARD_START_BLOCK_POLYGON);
     }
 
     function testSubgraphYamlAddress() external {

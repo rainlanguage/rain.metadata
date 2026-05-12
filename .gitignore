@@ -1,12 +1,10 @@
 out
 cache
-.DS_Store
-.vscode
-.direnv/
-
+result
 .env
-
-# Rust
-target
-
+.fixes
+dependencies
+remappings.txt
 .pre-commit-config.yaml
+.claude
+target
