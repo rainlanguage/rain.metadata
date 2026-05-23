@@ -1,0 +1,22 @@
+name: Package Release
+on:
+  push:
+    branches:
+      - main
+jobs:
+  # rain-metadata-bindings (leaf, no internal deps)
+  bindings:
+    uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
+    with:
+      crate: rain-metadata-bindings
+    secrets: inherit
+  # rain-metaboard-subgraph (leaf, no internal deps)
+  metaboard:
+    uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
+    needs: bindings
+    with:
+      crate: rain-metaboard-subgraph
+    secrets: inherit
+  # rain-metadata (cli) is intentionally not wired up yet: it still pulls
+  # alloy-ethers-typecast as a git dep, which blocks `cargo publish`.
+  # Re-add once that's gone.
