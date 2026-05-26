@@ -1,8 +1,8 @@
 use alloy::{primitives::FixedBytes, sol_types::SolType};
-use alloy_ethers_typecast::transaction::{
-    ReadContractParametersBuilder, ReadContractParametersBuilderError, ReadableClient,
-    ReadableClientError,
-};
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::types::TransactionRequest;
+use alloy::sol_types::SolCall;
+use alloy::transports::{RpcError, TransportErrorKind};
 use alloy::primitives::hex::FromHexError;
 use alloy::sol_types::private::Address;
 use alloy::sol;
@@ -50,9 +50,7 @@ pub enum AuthoringMetaV2Error {
     #[error(transparent)]
     UrlParseError(#[from] url::ParseError),
     #[error(transparent)]
-    ReadableClientError(#[from] ReadableClientError),
-    #[error(transparent)]
-    ReadContractParametersError(#[from] ReadContractParametersBuilderError),
+    RpcError(#[from] RpcError<TransportErrorKind>),
     #[error(transparent)]
     MetaboardSubgraphError(
         #[from] rain_metaboard_subgraph::metaboard_client::MetaboardSubgraphClientError,
@@ -67,6 +65,8 @@ pub enum AuthoringMetaV2Error {
     MetaError(#[from] crate::error::Error),
     #[error("Contract has no words")]
     HasNoWords,
+    #[error("no RPC URLs provided")]
+    NoRpcs,
 }
 
 #[derive(Error, Debug)]
@@ -126,18 +126,27 @@ impl AuthoringMetaV2 {
         rpcs: Vec<String>,
         metaboard_url: String,
     ) -> Result<Self, FetchAuthoringMetaV2WordError> {
-        // get the metahash
-        let client = ReadableClient::new_from_http_urls(rpcs.clone()).map_err(|error| {
-            FetchAuthoringMetaV2WordError {
+        // build a read provider over the first RPC
+        let url = rpcs
+            .first()
+            .cloned()
+            .ok_or_else(|| FetchAuthoringMetaV2WordError {
+                contract_address,
+                rpcs: rpcs.clone(),
+                metaboard_url: metaboard_url.clone(),
+                error: AuthoringMetaV2Error::NoRpcs,
+            })?
+            .parse()
+            .map_err(|error: url::ParseError| FetchAuthoringMetaV2WordError {
                 contract_address,
                 rpcs: rpcs.clone(),
                 metaboard_url: metaboard_url.clone(),
                 error: error.into(),
-            }
-        })?;
+            })?;
+        let provider = ProviderBuilder::new().connect_http(url);
 
         // return "has no words" error if the contract does not implement IDescribeByMetaV2 interface
-        if !implements_i_described_by_meta_v1(&client, contract_address).await {
+        if !implements_i_described_by_meta_v1(&provider, contract_address).await {
             return Err(FetchAuthoringMetaV2WordError {
                 contract_address,
                 rpcs: rpcs.clone(),
@@ -146,27 +155,28 @@ impl AuthoringMetaV2 {
             });
         }
 
-        let parameters = ReadContractParametersBuilder::default()
-            .address(contract_address)
-            .call(IDescribedByMetaV1::describedByMetaV1Call {})
-            .build()
+        let call = IDescribedByMetaV1::describedByMetaV1Call {};
+        let tx = TransactionRequest::default()
+            .to(contract_address)
+            .input(call.abi_encode().into());
+        let bytes = provider
+            .call(tx)
+            .await
             .map_err(|error| FetchAuthoringMetaV2WordError {
                 contract_address,
                 rpcs: rpcs.clone(),
                 metaboard_url: metaboard_url.clone(),
                 error: error.into(),
             })?;
-
-        let FixedBytes(metahash) =
-            client
-                .read(parameters)
-                .await
-                .map_err(|error| FetchAuthoringMetaV2WordError {
-                    contract_address,
-                    rpcs: rpcs.clone(),
-                    metaboard_url: metaboard_url.clone(),
-                    error: error.into(),
-                })?;
+        let FixedBytes(metahash) = IDescribedByMetaV1::describedByMetaV1Call::abi_decode_returns(
+            &bytes,
+        )
+        .map_err(|error| FetchAuthoringMetaV2WordError {
+            contract_address,
+            rpcs: rpcs.clone(),
+            metaboard_url: metaboard_url.clone(),
+            error: error.into(),
+        })?;
 
         // query the metaboard for the metas
         let subgraph_client = MetaboardSubgraphClient::new(metaboard_url.parse().map_err(
