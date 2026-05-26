@@ -222,7 +222,7 @@ impl TryFrom<RainMetaDocumentV1Item> for AuthoringMetaV2 {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use alloy::primitives::hex::{decode, encode};
     use serde_bytes::ByteBuf;

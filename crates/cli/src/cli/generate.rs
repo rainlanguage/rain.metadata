@@ -104,7 +104,7 @@ fn generate_source(args: SourceArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
     use std::io::Write;

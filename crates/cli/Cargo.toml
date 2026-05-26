@@ -63,7 +63,11 @@ tokio = { version = "1.34.0", features = [
 wasm-bindgen-utils = { git = "https://github.com/rainlanguage/rain.wasm", rev = "06990d85a0b7c55378a1c8cca4dd9e2bc34a596a" }
 wasm-bindgen = "0.2.100"
 
-[dev-dependencies]
+# These dev-deps drive native-only tests (httpmock runs a local tokio/hyper
+# server -> mio, which has no wasm target; tempfile needs a real filesystem).
+# The tests that use them are gated to non-wasm, so the deps are too, keeping
+# the wasm test build (rs-wasm-test) clean.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 httpmock = "0.7.0"
 tempfile = "3.8.0"
 

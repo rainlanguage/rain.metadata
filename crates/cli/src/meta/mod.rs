@@ -914,7 +914,7 @@ pub fn bytes32_to_str(bytes: &[u8; 32]) -> Result<&str, Error> {
     Ok(std::str::from_utf8(&bytes[..len])?)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::{
         *, bytes32_to_str, magic::KnownMagic, str_to_bytes32, types::authoring::v1::AuthoringMeta,

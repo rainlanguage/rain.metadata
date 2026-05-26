@@ -538,7 +538,7 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use std::path::PathBuf;
     use alloy::json_abi::JsonAbi;
