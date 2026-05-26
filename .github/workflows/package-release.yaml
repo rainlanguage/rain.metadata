@@ -4,19 +4,12 @@ on:
     branches:
       - main
 jobs:
-  # rain-metadata-bindings (leaf, no internal deps)
-  bindings:
+  release:
+    # Single workspace publish (rainix#191): one job bumps all members in
+    # dependency order and publishes them — bindings + metaboard (leaves), then
+    # the cli that pins both. The workspace releases as a unit (lockstep), so a
+    # change to any crate bumps + republishes all; no chained-job race.
     uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
     with:
-      crate: rain-metadata-bindings
+      crates: rain-metadata-bindings rain-metaboard-subgraph rain-metadata
     secrets: inherit
-  # rain-metaboard-subgraph (leaf, no internal deps)
-  metaboard:
-    uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
-    needs: bindings
-    with:
-      crate: rain-metaboard-subgraph
-    secrets: inherit
-  # rain-metadata (cli) is intentionally not wired up yet: it still pulls
-  # alloy-ethers-typecast as a git dep, which blocks `cargo publish`.
-  # Re-add once that's gone.
