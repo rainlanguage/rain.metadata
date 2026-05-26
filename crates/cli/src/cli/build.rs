@@ -151,7 +151,7 @@ pub fn build(b: Build) -> anyhow::Result<()> {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use strum::IntoEnumIterator;
     use crate::meta::{

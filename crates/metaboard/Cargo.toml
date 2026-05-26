@@ -13,7 +13,11 @@ thiserror = "1.0.56"
 alloy = { version = "1.0.9", features = ["rand", "json", "json-abi"] }
 async-trait = "0.1.77"
 
-[dev-dependencies]
+# The only test module (metaboard_client) is native: httpmock runs a local
+# tokio/hyper server (-> mio, no wasm target) and tokio "full" pulls net.
+# The module is gated to non-wasm, so its dev-deps are too, keeping the wasm
+# test build (rs-wasm-test) clean.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 httpmock = "0.7.0"
 insta = "1.34.0"
 tokio = { version = "1.28.0", features = ["full"] }

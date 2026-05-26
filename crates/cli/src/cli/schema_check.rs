@@ -264,7 +264,7 @@ fn type_to_string(t: &Type<'_, String>) -> String {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
 

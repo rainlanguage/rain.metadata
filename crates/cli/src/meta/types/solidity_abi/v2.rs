@@ -538,14 +538,16 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use std::path::PathBuf;
     use alloy::json_abi::JsonAbi;
     use super::SolidityAbiMeta;
     use crate::error::Error;
 
-    static SOLIDITY_ARTIFACTS_PATH: &str = "../../out";
+    // Committed deterministic abi subset written by CopyArtifacts.sol.
+    // Lets cargo test run without a prior `forge build`.
+    static SOLIDITY_ARTIFACTS_PATH: &str = "../bindings/abi";
 
     #[test]
     fn test_all() -> anyhow::Result<()> {
@@ -556,19 +558,13 @@ mod tests {
         Ok(())
     }
 
-    // building the artifacts
     fn build_artifacts() -> anyhow::Result<Vec<PathBuf>> {
         let mut files_to_read = vec![];
         for file in std::fs::read_dir(SOLIDITY_ARTIFACTS_PATH)? {
             let file = file?;
-            if file.path().is_dir() {
-                for file in std::fs::read_dir(file.path())? {
-                    let file = file?;
-                    if file.path().is_file() {
-                        files_to_read.push(file.path());
-                    }
-                }
-            } else if file.path().is_file() && file.path().ends_with(".json") {
+            if file.path().is_file()
+                && file.path().extension().and_then(|s| s.to_str()) == Some("json")
+            {
                 files_to_read.push(file.path());
             }
         }
@@ -643,10 +639,7 @@ mod tests {
 
     // test reading a json artifact with no abi present
     fn test_no_abi_artifact_parse() -> anyhow::Result<()> {
-        let json = format!(
-            "{}{}",
-            SOLIDITY_ARTIFACTS_PATH, "/MetaBoard.sol/MetaBoard.json"
-        );
+        let json = format!("{}{}", SOLIDITY_ARTIFACTS_PATH, "/MetaBoard.json");
         let data = std::fs::read(json)?;
         let mut v = serde_json::from_slice::<serde_json::Value>(&data)?;
         // take out the abi field and serialize the json value again

@@ -17,6 +17,10 @@ libs = ["dependencies"]
 fs_permissions = [
   { access = "read", path = "subgraph/networks.json" },
   { access = "read", path = "subgraph/subgraph.yaml" },
+  # CopyArtifacts.sol reads forge build output and writes the stable
+  # subset for the rust bindings to consume.
+  { access = "read", path = "out/" },
+  { access = "read-write", path = "crates/bindings/abi/" },
 ]
 
 [fuzz]

@@ -95,7 +95,7 @@ impl TryFrom<RainMetaDocumentV1Item> for DotrainSourceV1 {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
     use crate::meta::KnownMagic;
