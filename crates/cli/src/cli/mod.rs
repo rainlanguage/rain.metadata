@@ -14,7 +14,7 @@ pub mod subgraph;
 pub mod validate;
 pub mod generate;
 
-use clap::{Parser, Subcommand, command};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
