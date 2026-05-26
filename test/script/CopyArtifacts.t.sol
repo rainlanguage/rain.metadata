@@ -13,8 +13,7 @@ contract CopyArtifactsTest is Test {
             keccak256(liveAbi),
             keccak256(committed),
             string.concat(
-                contractName,
-                ": run `forge script script/CopyArtifacts.sol` to update the committed artifact"
+                contractName, ": run `forge script script/CopyArtifacts.sol` to update the committed artifact"
             )
         );
     }
