@@ -4,25 +4,12 @@ on:
     branches:
       - main
 jobs:
-  # rain-metadata-bindings (leaf, no internal deps)
-  bindings:
+  release:
+    # Single workspace publish (rainix#191): one job bumps all members in
+    # dependency order and publishes them — bindings + metaboard (leaves), then
+    # the cli that pins both. The workspace releases as a unit (lockstep), so a
+    # change to any crate bumps + republishes all; no chained-job race.
     uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
     with:
-      crate: rain-metadata-bindings
-    secrets: inherit
-  # rain-metaboard-subgraph (leaf, no internal deps)
-  metaboard:
-    uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
-    needs: bindings
-    with:
-      crate: rain-metaboard-subgraph
-    secrets: inherit
-  # rain-metadata (cli) — depends on bindings + metaboard, so runs last.
-  # Typecast is gone (#122), so it now publishes. bindings/metaboard no-op on
-  # the content gate when unchanged, so only the cli pushes (no race).
-  cli:
-    uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
-    needs: [bindings, metaboard]
-    with:
-      crate: rain-metadata
+      crates: rain-metadata-bindings rain-metaboard-subgraph rain-metadata
     secrets: inherit
