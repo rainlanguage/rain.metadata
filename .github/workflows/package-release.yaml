@@ -17,6 +17,12 @@ jobs:
     with:
       crate: rain-metaboard-subgraph
     secrets: inherit
-  # rain-metadata (cli) is intentionally not wired up yet: it still pulls
-  # alloy-ethers-typecast as a git dep, which blocks `cargo publish`.
-  # Re-add once that's gone.
+  # rain-metadata (cli) — depends on bindings + metaboard, so runs last.
+  # Typecast is gone (#122), so it now publishes. bindings/metaboard no-op on
+  # the content gate when unchanged, so only the cli pushes (no race).
+  cli:
+    uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
+    needs: [bindings, metaboard]
+    with:
+      crate: rain-metadata
+    secrets: inherit
