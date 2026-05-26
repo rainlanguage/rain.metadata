@@ -40,9 +40,8 @@ graphql-parser = { version = "0.4", optional = true }
 rain-metaboard-subgraph = { path = "../metaboard", version = "0.1.2" }
 rain-metadata-bindings = { path = "../bindings", version = "0.1.4" }
 thiserror = "1.0.56"
-alloy-ethers-typecast = { git = "https://github.com/rainlanguage/alloy-ethers-typecast", rev = "f7b5bfd0687f16c77dbfdd4905b2434793fa7885" }
 url = "2.5.0"
-rain-erc = { git = "https://github.com/rainlanguage/rain.erc", rev = "7b0f382f5e0788b0173c2391e09f4411f1c38300" }
+rain-erc = "0.1"
 
 # json-schema
 schemars = { version = "0.8.12", optional = true }

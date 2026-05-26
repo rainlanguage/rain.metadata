@@ -11,7 +11,9 @@ use std::{collections::HashMap, convert::TryFrom, fmt::Debug, sync::Arc};
 use strum::{EnumIter, EnumString};
 use types::authoring::v1::AuthoringMeta;
 use alloy::sol_types::private::Address;
-use alloy_ethers_typecast::transaction::{ReadContractParameters, ReadableClient};
+use alloy::providers::Provider;
+use alloy::rpc::types::TransactionRequest;
+use alloy::sol_types::SolCall;
 use rain_erc::erc165::{IERC165, XorSelectors, supports_erc165};
 
 pub mod magic;
@@ -421,11 +423,14 @@ pub async fn search_deployer(
 }
 
 /// checks if the given contract implements IDescribeByMetaV1 interface
-pub async fn implements_i_described_by_meta_v1(
-    client: &ReadableClient,
+pub async fn implements_i_described_by_meta_v1<P: Provider>(
+    provider: &P,
     contract_address: Address,
 ) -> bool {
-    if !supports_erc165(client, contract_address).await {
+    if !supports_erc165(provider, contract_address)
+        .await
+        .unwrap_or(false)
+    {
         return false;
     }
 
@@ -434,15 +439,16 @@ pub async fn implements_i_described_by_meta_v1(
         return false;
     }
 
-    let parameters = ReadContractParameters {
-        address: contract_address,
-        call: IERC165::supportsInterfaceCall {
-            interfaceID: interface_id_res.unwrap().into(),
-        },
-        block_number: None,
-        gas: None,
+    let call = IERC165::supportsInterfaceCall {
+        interfaceID: interface_id_res.unwrap().into(),
     };
-    client.read(parameters).await.unwrap_or(false)
+    let tx = TransactionRequest::default()
+        .to(contract_address)
+        .input(call.abi_encode().into());
+    match provider.call(tx).await {
+        Ok(bytes) => IERC165::supportsInterfaceCall::abi_decode_returns(&bytes).unwrap_or(false),
+        Err(_) => false,
+    }
 }
 
 /// All required NPE2 ExpressionDeployer data for reproducing it on a local evm
@@ -920,7 +926,7 @@ mod tests {
         *, bytes32_to_str, magic::KnownMagic, str_to_bytes32, types::authoring::v1::AuthoringMeta,
         ContentEncoding, ContentLanguage, ContentType, Error, RainMetaDocumentV1Item,
     };
-    use alloy_ethers_typecast::transaction::ReadableClient;
+    use alloy::providers::ProviderBuilder;
     use alloy::{providers::mock::Asserter, rpc::json_rpc::ErrorPayload, sol_types::SolType};
     use serde_json::json;
 
@@ -1268,9 +1274,9 @@ mod tests {
     #[tokio::test]
     async fn test_implements_i_describe_by_meta_v1() {
         // makes new server/client with success response for erc165 check
-        async fn new_server_client() -> (Asserter, ReadableClient) {
+        async fn new_server_client() -> (Asserter, impl Provider) {
             let asserter = Asserter::new();
-            let client = ReadableClient::new_mocked(asserter.clone());
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
 
             // Mock a responses for successful supports erc165 check
             asserter.push_success(
@@ -1280,33 +1286,33 @@ mod tests {
                 &"0x0000000000000000000000000000000000000000000000000000000000000000",
             );
 
-            (asserter, client)
+            (asserter, provider)
         }
 
         let address = Address::random();
 
         // mock a true response for implements IDescribedByMetaV1
-        let (asserter, client) = new_server_client().await;
+        let (asserter, provider) = new_server_client().await;
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        let result = implements_i_described_by_meta_v1(&client, address).await;
+        let result = implements_i_described_by_meta_v1(&provider, address).await;
         assert!(result);
 
         // mock a false response for implements IDescribedByMetaV1
-        let (asserter, client) = new_server_client().await;
+        let (asserter, provider) = new_server_client().await;
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
-        let result = implements_i_described_by_meta_v1(&client, address).await;
+        let result = implements_i_described_by_meta_v1(&provider, address).await;
         assert!(!result);
 
         // mock a revert response for implements IDescribedByMetaV1
-        let (asserter, client) = new_server_client().await;
+        let (asserter, provider) = new_server_client().await;
         asserter.push_failure(ErrorPayload {
             code: -32003,
             message: "execution reverted".into(),
             data: Some(serde_json::value::to_raw_value(&json!("0x00")).unwrap()),
         });
-        let result = implements_i_described_by_meta_v1(&client, address).await;
+        let result = implements_i_described_by_meta_v1(&provider, address).await;
         assert!(!result);
     }
 }
