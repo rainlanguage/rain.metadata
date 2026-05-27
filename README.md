@@ -20,7 +20,8 @@ CI usage.
 
 ## Legal stuff
 
-Everything is under DecentraLicense 1.0 (DCL-1.0) which can be found in `LICENSES/`.
+Everything is under DecentraLicense 1.0 (DCL-1.0) which can be found in
+`LICENSES/`.
 
 This is basically `CAL-1.0` which is an open source license
 https://opensource.org/license/cal-1-0
@@ -32,8 +33,8 @@ to those users as relevant, and that private keys remain private.
 Roughly it's "not your keys, not your coins" aware, as close as we could get in
 legalese.
 
-This is the default situation on permissionless blockchains, so shouldn't require
-any additional effort by dev-users to adhere to the license terms.
+This is the default situation on permissionless blockchains, so shouldn't
+require any additional effort by dev-users to adhere to the license terms.
 
 This repo is REUSE 3.2 compliant https://reuse.software/spec-3.2/ and compatible
 with `reuse` tooling (also available in the nix shell here).

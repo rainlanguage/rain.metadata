@@ -1,18 +1,44 @@
 # Rain Metadata Tooling
-A library that provides tools and utilities to work with RainLanguage metadata. Dotrain LSP/compiler, Raindex, and others use this library.
 
-Also provides CLI app (executable binary) to generate desireable Rain cbor encoded metadata based on [Metadata Specs](https://github.com/rainprotocol/specs/blob/main/metadata-v1.md) which for example is used in Rain deployment CI.
+A library that provides tools and utilities to work with RainLanguage metadata.
+Dotrain LSP/compiler, Raindex, and others use this library.
+
+Also provides CLI app (executable binary) to generate desireable Rain cbor
+encoded metadata based on
+[Metadata Specs](https://github.com/rainprotocol/specs/blob/main/metadata-v1.md)
+which for example is used in Rain deployment CI.
 <br>
 
 ## Features
-`cli` and `json-schema` features are default however, in most cases non of the features are needed for using the lib crate, so they can be disabled by using `default-features = false`, just be aware that `cli` feature is required for building the binary.
 
-- `cli`: A [clap](https://docs.rs/clap/latest/clap/) based CLI crate for functionalities of this library, this feature has [tokio](https://docs.rs/tokio/latest/tokio/) dependency with features enabled that are compatible for `wasm` family target builds. Enabling this feature will also enable `json-schema` feature, This feature is required for building the binary crate.
-- `json-schema`: Enables implementation of Json Schema for different types of Rain meta.
-- `tokio-full`: Installs [tokio](https://docs.rs/tokio/latest/tokio/) with full features which is a dependency of `cli` feature, this allows for multi-threading of the CLI app, however it results in erroneous builds for `wasm` target family as explained in [tokio docs](https://docs.rs/tokio/latest/tokio/#wasm-support), this feature is only effective for binary crate and using it for lib crate just installs [tokio](https://docs.rs/tokio/latest/tokio/) with its full features as a dependency as the entire lib crate doesn't depend on [tokio](https://docs.rs/tokio/latest/tokio/). This is because [tokio](https://docs.rs/tokio/latest/tokio/) is only used as a runtime for binray crate.
-<br>
+`cli` and `json-schema` features are default however, in most cases non of the
+features are needed for using the lib crate, so they can be disabled by using
+`default-features = false`, just be aware that `cli` feature is required for
+building the binary.
+
+- `cli`: A [clap](https://docs.rs/clap/latest/clap/) based CLI crate for
+  functionalities of this library, this feature has
+  [tokio](https://docs.rs/tokio/latest/tokio/) dependency with features enabled
+  that are compatible for `wasm` family target builds. Enabling this feature
+  will also enable `json-schema` feature, This feature is required for building
+  the binary crate.
+- `json-schema`: Enables implementation of Json Schema for different types of
+  Rain meta.
+- `tokio-full`: Installs [tokio](https://docs.rs/tokio/latest/tokio/) with full
+  features which is a dependency of `cli` feature, this allows for
+  multi-threading of the CLI app, however it results in erroneous builds for
+  `wasm` target family as explained in
+  [tokio docs](https://docs.rs/tokio/latest/tokio/#wasm-support), this feature
+  is only effective for binary crate and using it for lib crate just installs
+  [tokio](https://docs.rs/tokio/latest/tokio/) with its full features as a
+  dependency as the entire lib crate doesn't depend on
+  [tokio](https://docs.rs/tokio/latest/tokio/). This is because
+  [tokio](https://docs.rs/tokio/latest/tokio/) is only used as a runtime for
+  binray crate.
+  <br>
 
 ## CLI (Binary Crate)
+
     Tooling and utilities for RainLanguage metadata.
 
     Usage: rain-metadata <COMMAND>
@@ -29,11 +55,15 @@ Also provides CLI app (executable binary) to generate desireable Rain cbor encod
     Options:
       -h, --help     Print help
       -V, --version  Print version
+
 <br>
 
 ## Examples
+
 ### Encode/Decode
+
 Create a meta item and cbor encode/decode it:
+
 ```rust
 let authoring_meta_content = r#"[
     {
@@ -70,10 +100,17 @@ let cbor_decoded_vec = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
 // unpack the payload into AuthoringMeta
 let unpacked_payload: AuthoringMeta = cbor_decoded_vec[0].unpack_into()?;
 ```
+
 <br>
 
 ### Meta Storage (CAS)
-`Store` is a struct that provides functionalities to store, read, fetch(remotely) Rain metadata and ExpressionDeployers as a Content Addressed Storage(CAS), which is a critical piece of dotrain language server protocol and compiler implementation by caching all that is imported in .rain file that can be later accessed easily by language server and compiler.
+
+`Store` is a struct that provides functionalities to store, read,
+fetch(remotely) Rain metadata and ExpressionDeployers as a Content Addressed
+Storage(CAS), which is a critical piece of dotrain language server protocol and
+compiler implementation by caching all that is imported in .rain file that can
+be later accessed easily by language server and compiler.
+
 ```rust
 use rain_meta::meta::Store;
 use std::collections::HashMap;
@@ -117,16 +154,25 @@ let (new_hash, old_hash) = store.set_dotrain(&dotrain_content, &dotrain_uri, fal
 // to get dotrain meta bytes given a uri
 let dotrain_meta_bytes = store.get_dotrain_meta(&dotrain_uri);
 ```
+
 <br>
 
 ## Developers
-To build from source first clone this repo and make sure you already have `rustup` installed and next you can build the lib/binary using `cargo build`, if you have nixOS installed you can simply run:
+
+To build from source first clone this repo and make sure you already have
+`rustup` installed and next you can build the lib/binary using `cargo build`, if
+you have nixOS installed you can simply run:
+
 ```bash
 nix build
 ```
+
 to build the binary crate or enter the nix with:
+
 ```bash
 nix develop
 ```
-which will fetch all the required packages and put them in your path and you can proceed to build lib/binary crate using `cargo build`.
-for running test use `cargo test` and for generating docs use `cargo doc`.
+
+which will fetch all the required packages and put them in your path and you can
+proceed to build lib/binary crate using `cargo build`. for running test use
+`cargo test` and for generating docs use `cargo doc`.

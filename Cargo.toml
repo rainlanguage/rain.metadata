@@ -13,7 +13,6 @@ cynic = "3.4.0"
 thiserror = "1.0.56"
 insta = { version = "1.34.0" }
 alloy = { version = "1.0.9", features = ["rand", "json", "json-abi"] }
-alloy-ethers-typecast = { git = "https://github.com/rainlanguage/alloy-ethers-typecast", rev = "f7b5bfd0687f16c77dbfdd4905b2434793fa7885" }
 url = "2.5.0"
 serde_json = "1.0.108"
 async-trait = "0.1.77"

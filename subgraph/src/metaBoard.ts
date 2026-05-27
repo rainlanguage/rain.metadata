@@ -6,7 +6,7 @@ import { createTransactionEntity } from "./transaction";
 export function handleMetaV1_2(event: MetaV1Event): void {
   createTransactionEntity(event);
   let metaBoard = MetaBoard.load(event.address);
-  if ( !metaBoard ) {
+  if (!metaBoard) {
     metaBoard = new MetaBoard(event.address);
     metaBoard.address = event.address;
     metaBoard.nextMetaId = BigInt.fromI32(0);
