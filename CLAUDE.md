@@ -76,7 +76,10 @@ cargo test test_name
   `bytecode_hash = "none"`, `cbor_metadata = false`
 - **Rust workspace**: `Cargo.toml` at root, three crates
 - **Fuzz runs**: 5,096 (foundry.toml `[fuzz]`)
-- **Remappings**: `rain.deploy/=lib/rain.deploy/src/`
+- **Dependencies**: managed by [Soldeer](https://soldeer.xyz) (`[dependencies]`
+  in `foundry.toml`, `libs = ["dependencies"]`), not git submodules; remappings
+  point into `dependencies/` (e.g.
+  `rain-deploy-0.1.2/=dependencies/rain-deploy-0.1.2/`)
 
 ## Licensing
 
