@@ -12,4 +12,5 @@ jobs:
     uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
     with:
       crates: rain-metadata-bindings rain-metaboard-subgraph rain-metadata
+      soldeer-package: rain-metadata
     secrets: inherit
