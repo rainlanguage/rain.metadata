@@ -8,18 +8,7 @@ import {IDescribedByMetaV1} from "src/interface/IDescribedByMetaV1.sol";
 import {IMetaBoardV1_2} from "src/interface/unstable/IMetaBoardV1_2.sol";
 import {MetaBoard} from "src/concrete/MetaBoard.sol";
 import {META_MAGIC_NUMBER_V1} from "src/interface/unstable/IMetaV1_2.sol";
-
-contract TestDescribedByMetaV1 is IDescribedByMetaV1 {
-    bytes32 public immutable EXPECTED;
-
-    constructor(bytes memory meta) {
-        EXPECTED = keccak256(meta);
-    }
-
-    function describedByMetaV1() external view override returns (bytes32) {
-        return EXPECTED;
-    }
-}
+import {TestDescribedByMetaV1} from "test/lib/TestDescribedByMetaV1.sol";
 
 contract LibDescribedByMetaEmitForDescribedAddressTest is Test {
     function externalEmitForDescribedAddress(IMetaBoardV1_2 metaboard, IDescribedByMetaV1 described, bytes memory meta)
