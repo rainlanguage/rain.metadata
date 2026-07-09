@@ -45,6 +45,16 @@ pub enum KnownMagic {
     /// Payload is raw UTF-8 bytes containing the oracle endpoint URL.
     /// Used in order metadata to tell takers where to GET signed context data.
     RaindexSignedContextOracleV1 = 0xff7a1507ba4419ca,
+    /// OffchainAsset schema reference for offchain asset data
+    OaSchema = 0xffa8e8a9b9cf4a31,
+    /// OffchainAsset IPFS hash list for offchain assets
+    OaHashList = 0xff9fae3cc645f463,
+    /// OffchainAsset structured data (e.g. receipt information)
+    OaStructure = 0xffc47a6299e8a911,
+    /// OffchainAsset token image metadata
+    OaTokenImage = 0xff8cd2927c8c86cb,
+    /// OffchainAsset token credential links
+    OaTokenCredentialLinks = 0xffbc38eb14ad2209,
 }
 
 impl KnownMagic {
@@ -77,6 +87,13 @@ impl TryFrom<u64> for KnownMagic {
             v if v == KnownMagic::OrderBuilderStateV1 as u64 => Ok(KnownMagic::OrderBuilderStateV1),
             v if v == KnownMagic::RaindexSignedContextOracleV1 as u64 => {
                 Ok(KnownMagic::RaindexSignedContextOracleV1)
+            }
+            v if v == KnownMagic::OaSchema as u64 => Ok(KnownMagic::OaSchema),
+            v if v == KnownMagic::OaHashList as u64 => Ok(KnownMagic::OaHashList),
+            v if v == KnownMagic::OaStructure as u64 => Ok(KnownMagic::OaStructure),
+            v if v == KnownMagic::OaTokenImage as u64 => Ok(KnownMagic::OaTokenImage),
+            v if v == KnownMagic::OaTokenCredentialLinks as u64 => {
+                Ok(KnownMagic::OaTokenCredentialLinks)
             }
             _ => Err(crate::error::Error::UnknownMagic),
         }
@@ -197,5 +214,59 @@ mod tests {
         let magic_number = KnownMagic::RaindexSignedContextOracleV1;
         let from_u64 = KnownMagic::try_from(magic_number as u64).unwrap();
         assert_eq!(magic_number, from_u64);
+    }
+
+    #[test]
+    fn test_oa_schema() {
+        let magic_number = KnownMagic::OaSchema;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ffa8e8a9b9cf4a31");
+    }
+
+    #[test]
+    fn test_oa_hash_list() {
+        let magic_number = KnownMagic::OaHashList;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ff9fae3cc645f463");
+    }
+
+    #[test]
+    fn test_oa_structure() {
+        let magic_number = KnownMagic::OaStructure;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ffc47a6299e8a911");
+    }
+
+    #[test]
+    fn test_oa_token_image() {
+        let magic_number = KnownMagic::OaTokenImage;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ff8cd2927c8c86cb");
+    }
+
+    #[test]
+    fn test_oa_token_credential_links() {
+        let magic_number = KnownMagic::OaTokenCredentialLinks;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ffbc38eb14ad2209");
+    }
+
+    #[test]
+    fn test_oa_magics_roundtrip() {
+        for magic_number in [
+            KnownMagic::OaSchema,
+            KnownMagic::OaHashList,
+            KnownMagic::OaStructure,
+            KnownMagic::OaTokenImage,
+            KnownMagic::OaTokenCredentialLinks,
+        ] {
+            let from_u64 = KnownMagic::try_from(magic_number as u64).unwrap();
+            assert_eq!(magic_number, from_u64);
+        }
     }
 }
