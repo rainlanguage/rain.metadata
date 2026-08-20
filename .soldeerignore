@@ -8,6 +8,7 @@
 .gitignore
 .gitmodules
 .pre-commit-config.yaml
+.prettierignore
 .soldeerignore
 .vscode
 CLAUDE.md
