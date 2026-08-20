@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 thedavidmeister
 pragma solidity ^0.8.25;
 
-import {Vm} from "forge-std-1.16.1/src/Vm.sol";
+import {Vm} from "forge-std-1.16.2/src/Vm.sol";
 
 /// @notice Shared logic between `script/CopyArtifacts.sol` (writes the
 /// committed ABI) and `test/script/CopyArtifacts.t.sol` (asserts the

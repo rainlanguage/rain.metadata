@@ -31,8 +31,8 @@ fs_permissions = [
 runs = 5096
 
 [dependencies]
-forge-std = "1.16.1"
-"rain-deploy" = "0.1.3"
+forge-std = "1.16.2"
+"rain-deploy" = "0.1.7"
 
 [soldeer]
 recursive_deps = false
@@ -41,12 +41,16 @@ recursive_deps = false
 arbitrum = "${ARBITRUM_RPC_URL}"
 base = "${BASE_RPC_URL}"
 base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
+ethereum = "${ETHEREUM_RPC_URL}"
 flare = "${FLARE_RPC_URL}"
+hyperevm = "${HYPEREVM_RPC_URL}"
 polygon = "${POLYGON_RPC_URL}"
 
 [etherscan]
 arbitrum = { key = "${CI_DEPLOY_ARBITRUM_ETHERSCAN_API_KEY}" }
 base = { key = "${CI_DEPLOY_BASE_ETHERSCAN_API_KEY}" }
 base_sepolia = { key = "${CI_DEPLOY_BASE_SEPOLIA_ETHERSCAN_API_KEY}" }
+ethereum = { key = "${CI_DEPLOY_ETHEREUM_ETHERSCAN_API_KEY}", chain = 1 }
 flare = { key = "${CI_DEPLOY_FLARE_ETHERSCAN_API_KEY}" }
+hyperevm = { key = "${CI_DEPLOY_HYPEREVM_ETHERSCAN_API_KEY}", chain = 999 }
 polygon = { key = "${CI_DEPLOY_POLYGON_ETHERSCAN_API_KEY}" }
