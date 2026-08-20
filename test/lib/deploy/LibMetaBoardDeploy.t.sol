@@ -16,16 +16,27 @@ contract LibMetaBoardDeployTest is Test {
 
         address deployedAddress = LibRainDeploy.deployZoltu(type(MetaBoard).creationCode);
 
-        assertEq(deployedAddress, LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS);
+        assertEq(deployedAddress, LibMetaBoardDeploy.METABOARD_CANDIDATE_ADDRESS);
         assertTrue(address(deployedAddress).code.length > 0, "Deployed address has no code");
 
-        assertEq(address(deployedAddress).codehash, LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH);
+        assertEq(address(deployedAddress).codehash, LibMetaBoardDeploy.METABOARD_CANDIDATE_CODEHASH);
     }
 
     function testExpectedCodeHash() external {
         MetaBoard metaBoard = new MetaBoard();
 
-        assertEq(address(metaBoard).codehash, LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH);
+        assertEq(address(metaBoard).codehash, LibMetaBoardDeploy.METABOARD_CANDIDATE_CODEHASH);
+    }
+
+    /// The zoltu factory can be etched locally, so the candidate deploy
+    /// address and codehash can be verified without a fork or RPC env.
+    function testCandidateDeployAddressLocal() external {
+        LibRainDeploy.etchZoltuFactory(vm);
+
+        address deployedAddress = LibRainDeploy.deployZoltu(type(MetaBoard).creationCode);
+
+        assertEq(deployedAddress, LibMetaBoardDeploy.METABOARD_CANDIDATE_ADDRESS);
+        assertEq(address(deployedAddress).codehash, LibMetaBoardDeploy.METABOARD_CANDIDATE_CODEHASH);
     }
 
     function checkProdDeployment(string memory envVar) internal {
