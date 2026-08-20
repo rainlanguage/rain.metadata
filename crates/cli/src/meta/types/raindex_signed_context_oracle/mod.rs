@@ -56,6 +56,7 @@ impl RaindexSignedContextOracleV1 {
             content_type: ContentType::None,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         }
     }
 
@@ -147,6 +148,7 @@ mod tests {
             content_type: ContentType::None,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
         assert!(RaindexSignedContextOracleV1::find_in_items(&[item]).is_err());
     }
@@ -182,6 +184,7 @@ mod tests {
             content_type: ContentType::None,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
         assert!(RaindexSignedContextOracleV1::try_from(item).is_err());
     }

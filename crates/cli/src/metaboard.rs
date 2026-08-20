@@ -88,6 +88,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         }
     }
 
