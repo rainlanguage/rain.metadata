@@ -78,6 +78,7 @@ impl TryFrom<&BuildItem> for RainMetaDocumentV1Item {
             content_type: item.content_type,
             content_encoding: item.content_encoding,
             content_language: item.content_language,
+            schema: None,
         })
     }
 }
@@ -192,6 +193,7 @@ mod tests {
             content_type: ContentType::Json,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::En,
+            schema: None,
         };
         assert_eq!(meta_document, expected_meta_document);
         Ok(())

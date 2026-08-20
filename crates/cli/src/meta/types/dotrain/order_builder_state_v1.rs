@@ -127,6 +127,7 @@ impl TryFrom<OrderBuilderStateV1> for RainMetaDocumentV1Item {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         })
     }
 }
@@ -234,6 +235,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
 
         let recovered_instance = OrderBuilderStateV1::try_from(document_item).unwrap();
@@ -251,6 +253,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
 
         let result = OrderBuilderStateV1::try_from(document_item);
@@ -273,6 +276,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
 
         let result = OrderBuilderStateV1::try_from(document_item);
@@ -386,6 +390,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
         let cbor_bytes = corrupted_doc.cbor_encode().unwrap();
 

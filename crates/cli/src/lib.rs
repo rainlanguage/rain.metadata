@@ -55,6 +55,7 @@
 //!   content_type: ContentType::Cbor,
 //!   content_encoding: ContentEncoding::None,
 //!   content_language: ContentLanguage::None,
+//!   schema: None,
 //! };
 //!
 //! // cbor encode the meta item

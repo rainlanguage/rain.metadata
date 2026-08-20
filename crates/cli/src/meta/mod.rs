@@ -163,6 +163,10 @@ pub struct RainMetaDocumentV1Item {
     pub content_type: ContentType,
     pub content_encoding: ContentEncoding,
     pub content_language: ContentLanguage,
+    /// optional reference to the schema of the payload, encoded under the
+    /// [KnownMagic::OaSchema] magic number as an additional cbor map key
+    /// beyond the standard 0-4 keys
+    pub schema: Option<String>,
 }
 
 // this implementation is mainly used by Rainlang and Dotrain metas as they are aliased type for String
@@ -191,6 +195,9 @@ impl RainMetaDocumentV1Item {
             l += 1;
         }
         if !matches!(self.content_language, ContentLanguage::None) {
+            l += 1;
+        }
+        if self.schema.is_some() {
             l += 1;
         }
         l
@@ -316,6 +323,9 @@ impl Serialize for RainMetaDocumentV1Item {
             ContentLanguage::None => {}
             content_language => map.serialize_entry(&4, &content_language)?,
         }
+        if let Some(schema) = &self.schema {
+            map.serialize_entry(&(KnownMagic::OaSchema as u64), schema)?;
+        }
         map.end()
     }
 }
@@ -334,12 +344,14 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                 self,
                 mut map: T,
             ) -> Result<Self::Value, T::Error> {
+                const OA_SCHEMA_KEY: u64 = KnownMagic::OaSchema as u64;
                 let mut payload = None;
                 let mut magic: Option<u64> = None;
                 let mut content_type = None;
                 let mut content_encoding = None;
                 let mut content_language = None;
-                while match map.next_key() {
+                let mut schema = None;
+                while match map.next_key::<u64>() {
                     Ok(Some(key)) => {
                         match key {
                             0 => payload = Some(map.next_value()?),
@@ -347,6 +359,7 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                             2 => content_type = Some(map.next_value()?),
                             3 => content_encoding = Some(map.next_value()?),
                             4 => content_language = Some(map.next_value()?),
+                            OA_SCHEMA_KEY => schema = Some(map.next_value()?),
                             other => Err(serde::de::Error::custom(format!(
                                 "found unexpected key in the map: {other}"
                             )))?,
@@ -374,6 +387,7 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                     content_type,
                     content_encoding,
                     content_language,
+                    schema,
                 })
             }
         }
@@ -860,6 +874,7 @@ impl Store {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         }
         .cbor_encode()?;
         let new_hash = keccak256(&bytes).0.to_vec();
@@ -971,6 +986,7 @@ mod tests {
             content_type: ContentType::Cbor,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
         let cbor_encoded = meta_map.cbor_encode()?;
 
@@ -1026,6 +1042,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding,
             content_language: ContentLanguage::En,
+            schema: None,
         };
         let cbor_encoded = meta_map.cbor_encode()?;
 
@@ -1102,6 +1119,7 @@ mod tests {
             content_type: ContentType::Cbor,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
 
         let dotrain_content = "#main _ _: int-add(1 2) int-add(2 3)";
@@ -1114,6 +1132,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding,
             content_language: ContentLanguage::En,
+            schema: None,
         };
 
         // cbor encode as RainMetaDocument sequence
@@ -1314,5 +1333,140 @@ mod tests {
         });
         let result = implements_i_described_by_meta_v1(&provider, address).await;
         assert!(!result);
+    }
+
+    /// Roundtrip test for a meta map carrying the OaSchema magic number as an
+    /// additional CBOR map key beyond the standard 0-4 keys.
+    /// MetaMap (with schema) -> cbor encode -> cbor decode -> MetaMap, assert equality
+    #[test]
+    fn oa_schema_map_key_roundtrip() -> Result<(), Error> {
+        let payload = vec![0x01, 0x02, 0x03];
+        // an IPFS hash referencing the schema of the payload, as written by
+        // the SFT frontend under the OaSchema map key
+        let schema = "QmSchemaHash1234567890abcdefghijklmnopqrstuvwx".to_string();
+        assert_eq!(schema.len(), 46);
+
+        let meta_map = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(payload.clone()),
+            magic: KnownMagic::OaStructure,
+            content_type: ContentType::Json,
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::None,
+            schema: Some(schema.clone()),
+        };
+        let cbor_encoded = meta_map.cbor_encode()?;
+
+        // cbor map with 5 keys (0, 1, 2, 3 and the OaSchema magic)
+        assert_eq!(cbor_encoded[0], 0xa5);
+        // key 0
+        assert_eq!(cbor_encoded[1], 0x00);
+        // major type 2 (bytes) length 3
+        assert_eq!(cbor_encoded[2], 0b010_00011);
+        // payload
+        assert_eq!(cbor_encoded[3..6], payload);
+        // key 1
+        assert_eq!(cbor_encoded[6], 0x01);
+        // major type 0 (unsigned integer) value 27
+        assert_eq!(cbor_encoded[7], 0b000_11011);
+        // magic number
+        assert_eq!(
+            &cbor_encoded[8..16],
+            KnownMagic::OaStructure.to_prefix_bytes()
+        );
+        // key 2
+        assert_eq!(cbor_encoded[16], 0x02);
+        // text string application/json length 16
+        assert_eq!(cbor_encoded[17], 0b011_10000);
+        assert_eq!(&cbor_encoded[18..34], "application/json".as_bytes());
+        // key 3
+        assert_eq!(cbor_encoded[34], 0x03);
+        // text string deflate length 7
+        assert_eq!(cbor_encoded[35], 0b011_00111);
+        assert_eq!(&cbor_encoded[36..43], "deflate".as_bytes());
+        // the OaSchema magic as key, major type 0 (unsigned integer) value 27
+        assert_eq!(cbor_encoded[43], 0b000_11011);
+        assert_eq!(
+            &cbor_encoded[44..52],
+            KnownMagic::OaSchema.to_prefix_bytes()
+        );
+        // schema value, text string length 46
+        assert_eq!(cbor_encoded[52], 0b011_11000);
+        assert_eq!(cbor_encoded[53], 46);
+        // the schema hash string, must be the end of data
+        assert_eq!(&cbor_encoded[54..], schema.as_bytes());
+
+        // decode the data back to MetaMap
+        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
+        // the length of decoded maps must be 1 as we only had 1 encoded item
+        assert_eq!(cbor_decoded.len(), 1);
+        // decoded item must be equal to the original meta_map
+        assert_eq!(cbor_decoded[0], meta_map);
+
+        Ok(())
+    }
+
+    /// A meta map without the schema key must keep encoding exactly as before
+    /// (no schema entry on the wire) and roundtrip with schema None
+    #[test]
+    fn no_schema_key_encodes_as_before_roundtrip() -> Result<(), Error> {
+        let payload = vec![0x0a, 0x0b];
+        let meta_map = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(payload.clone()),
+            magic: KnownMagic::OaStructure,
+            content_type: ContentType::None,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let cbor_encoded = meta_map.cbor_encode()?;
+
+        // cbor map with only the 2 mandatory keys
+        assert_eq!(cbor_encoded[0], 0xa2);
+        // key 0
+        assert_eq!(cbor_encoded[1], 0x00);
+        // major type 2 (bytes) length 2
+        assert_eq!(cbor_encoded[2], 0b010_00010);
+        // payload
+        assert_eq!(cbor_encoded[3..5], payload);
+        // key 1
+        assert_eq!(cbor_encoded[5], 0x01);
+        // major type 0 (unsigned integer) value 27
+        assert_eq!(cbor_encoded[6], 0b000_11011);
+        // magic number, must be the end of data
+        assert_eq!(
+            &cbor_encoded[7..],
+            KnownMagic::OaStructure.to_prefix_bytes()
+        );
+
+        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
+        assert_eq!(cbor_decoded.len(), 1);
+        assert_eq!(cbor_decoded[0], meta_map);
+
+        Ok(())
+    }
+
+    /// Any magic number other than OaSchema used as an extra map key must
+    /// still be rejected on decode
+    #[test]
+    fn non_oa_schema_extra_map_key_errors() -> Result<(), Error> {
+        // build a map identical to a valid 2 key meta map but with an extra
+        // OaHashList magic key carrying a text string
+        let mut bytes: Vec<u8> = vec![
+            // cbor map with 3 keys
+            0xa3, // key 0, bytes payload of length 1
+            0x00, 0x41, 0xff, // key 1, unsigned integer magic number
+            0x01, 0x1b,
+        ];
+        bytes.extend_from_slice(&KnownMagic::OaStructure.to_prefix_bytes());
+        // the OaHashList magic as key
+        bytes.push(0x1b);
+        bytes.extend_from_slice(&KnownMagic::OaHashList.to_prefix_bytes());
+        // text string value of length 2
+        bytes.extend_from_slice(&[0x62, 0x68, 0x69]);
+
+        let result = RainMetaDocumentV1Item::cbor_decode(&bytes);
+        assert!(matches!(result, Err(Error::SerdeCborError(_))));
+
+        Ok(())
     }
 }

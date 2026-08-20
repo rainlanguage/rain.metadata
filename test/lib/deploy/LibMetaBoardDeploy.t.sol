@@ -8,24 +8,35 @@ import {LibMetaBoardDeploy} from "src/lib/deploy/LibMetaBoardDeploy.sol";
 import {MetaBoard} from "src/concrete/MetaBoard.sol";
 
 contract LibMetaBoardDeployTest is Test {
-    /// Arbitrum Nitro genesis block. Archive RPCs can't serve blocks before this.
-    uint256 constant ARBITRUM_NITRO_GENESIS_BLOCK = 22207817;
-
     function testDeployAddress() external {
-        vm.createSelectFork(vm.envString("ETH_RPC_URL"));
+        // Ethereum mainnet has the zoltu factory deployed but no MetaBoard,
+        // so the deterministic deploy cannot collide with a live deployment.
+        // ETHEREUM_RPC_URL is exported by the rainix rpc-preflight in CI.
+        vm.createSelectFork(vm.envString("ETHEREUM_RPC_URL"));
 
         address deployedAddress = LibRainDeploy.deployZoltu(type(MetaBoard).creationCode);
 
-        assertEq(deployedAddress, LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS);
+        assertEq(deployedAddress, LibMetaBoardDeploy.METABOARD_CANDIDATE_ADDRESS);
         assertTrue(address(deployedAddress).code.length > 0, "Deployed address has no code");
 
-        assertEq(address(deployedAddress).codehash, LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH);
+        assertEq(address(deployedAddress).codehash, LibMetaBoardDeploy.METABOARD_CANDIDATE_CODEHASH);
     }
 
     function testExpectedCodeHash() external {
         MetaBoard metaBoard = new MetaBoard();
 
-        assertEq(address(metaBoard).codehash, LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH);
+        assertEq(address(metaBoard).codehash, LibMetaBoardDeploy.METABOARD_CANDIDATE_CODEHASH);
+    }
+
+    /// The zoltu factory can be etched locally, so the candidate deploy
+    /// address and codehash can be verified without a fork or RPC env.
+    function testCandidateDeployAddressLocal() external {
+        LibRainDeploy.etchZoltuFactory(vm);
+
+        address deployedAddress = LibRainDeploy.deployZoltu(type(MetaBoard).creationCode);
+
+        assertEq(deployedAddress, LibMetaBoardDeploy.METABOARD_CANDIDATE_ADDRESS);
+        assertEq(address(deployedAddress).codehash, LibMetaBoardDeploy.METABOARD_CANDIDATE_CODEHASH);
     }
 
     function checkProdDeployment(string memory envVar) internal {
@@ -59,48 +70,12 @@ contract LibMetaBoardDeployTest is Test {
         checkProdDeployment("POLYGON_RPC_URL");
     }
 
-    function findStartBlock(string memory rpcEnvVar, uint256 searchFrom) internal returns (uint256) {
-        vm.createSelectFork(vm.envString(rpcEnvVar));
-        return LibRainDeploy.findDeployBlock(
-            vm,
-            LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS,
-            LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH,
-            searchFrom
-        );
-    }
-
-    /// findDeployBlock binary searches via rollFork which hits RPC rate limits
-    /// in CI. Skipped there; the isStartBlock tests verify correctness cheaply.
-    /// Arbitrum is always skipped because Foundry's rollFork maps to L1 block
-    /// numbers, not L2. The Arbitrum start block was found via manual binary
-    /// search using eth_getCode RPC calls against L2 block numbers.
-    // function testStartBlockArbitrum() external {
-    //     assertEq(
-    //         findStartBlock("ARBITRUM_RPC_URL", ARBITRUM_NITRO_GENESIS_BLOCK),
-    //         LibMetaBoardDeploy.METABOARD_START_BLOCK_ARBITRUM
-    //     );
-    // }
-
-    function testStartBlockBase() external {
-        vm.skip(vm.envOr("CI", false));
-        assertEq(findStartBlock("BASE_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE);
-    }
-
-    function testStartBlockBaseSepolia() external {
-        vm.skip(vm.envOr("CI", false));
-        assertEq(findStartBlock("BASE_SEPOLIA_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_BASE_SEPOLIA);
-    }
-
-    function testStartBlockFlare() external {
-        vm.skip(vm.envOr("CI", false));
-        assertEq(findStartBlock("FLARE_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_FLARE);
-    }
-
-    function testStartBlockPolygon() external {
-        vm.skip(vm.envOr("CI", false));
-        assertEq(findStartBlock("POLYGON_RPC_URL", 0), LibMetaBoardDeploy.METABOARD_START_BLOCK_POLYGON);
-    }
-
+    /// Start block DISCOVERY (`LibRainDeploy.findDeployBlock`) is deliberately
+    /// not tested here: its rollFork binary search hits RPC rate limits, and on
+    /// Arbitrum rollFork maps to L1 block numbers, not L2 (the Arbitrum start
+    /// block was found via manual binary search using eth_getCode RPC calls
+    /// against L2 block numbers). The `testIsStartBlock*` tests below verify
+    /// the pinned constants directly and cheaply instead.
     function checkIsStartBlock(string memory rpcEnvVar, uint256 startBlock) internal {
         vm.createSelectFork(vm.envString(rpcEnvVar));
         assertTrue(

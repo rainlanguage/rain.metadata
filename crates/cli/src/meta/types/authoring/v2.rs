@@ -255,6 +255,7 @@ mod tests {
             payload: ByteBuf::from(payload),
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
             content_type: ContentType::None,
         };
 
@@ -283,6 +284,7 @@ mod tests {
             payload: ByteBuf::from(payload),
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
             content_type: ContentType::None,
         };
 
