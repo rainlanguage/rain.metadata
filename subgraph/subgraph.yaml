@@ -18,7 +18,7 @@ dataSources:
         - MetaV1
       abis:
         - name: MetaBoard
-          file: ../out/MetaBoard.sol/MetaBoard.json
+          file: ../out/IMetaBoardV1_2.sol/IMetaBoardV1_2.json
       eventHandlers:
         - event: MetaV1_2(address,bytes32,bytes)
           handler: handleMetaV1_2
