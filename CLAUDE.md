@@ -47,8 +47,10 @@ cargo test test_name
 
 ### Solidity (`src/`)
 
-- `src/concrete/MetaBoard.sol` — Main contract; emits `MetaV1_2` events with
-  sender, subject, and metadata bytes
+- `src/concrete/MetaBoard.sol` — Main contract; one delegation per entry point
+  into `src/lib/LibIMetaBoardV1_2.sol` and no behaviour of its own
+- `src/lib/LibIMetaBoardV1_2.sol` — The whole of `IMetaBoardV1_2` as library
+  logic; validates then emits `MetaV1_2` with sender, subject and meta bytes
 - `src/lib/LibMeta.sol` — Metadata validation; checks magic number prefix
   `0xff0a89c674ee7874`
 - `src/lib/LibDescribedByMeta.sol` — Helper for contracts implementing
