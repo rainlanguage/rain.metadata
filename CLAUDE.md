@@ -79,7 +79,7 @@ cargo test test_name
 - **Dependencies**: managed by [Soldeer](https://soldeer.xyz) (`[dependencies]`
   in `foundry.toml`, `libs = ["dependencies"]`), not git submodules; remappings
   point into `dependencies/` (e.g.
-  `rain-deploy-0.1.2/=dependencies/rain-deploy-0.1.2/`)
+  `rain-deploy-0.1.3/=dependencies/rain-deploy-0.1.3/`)
 
 ## Licensing
 

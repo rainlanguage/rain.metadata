@@ -12,7 +12,6 @@ path = [
   "Cargo.toml",
   "CLAUDE.md",
   "crates/**/",
-  "foundry.lock",
   "subgraph/**/",
   "README.md",
   "flake.lock",
