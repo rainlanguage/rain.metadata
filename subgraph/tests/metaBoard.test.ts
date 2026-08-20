@@ -1,7 +1,6 @@
 import {
   test,
   assert,
-  createMockedFunction,
   clearStore,
   describe,
   afterEach,
@@ -13,7 +12,6 @@ import {
 import { createNewMetaV1Event, CONTRACT_ADDRESS } from "./utils";
 import { Bytes, BigInt, ethereum, Address } from "@graphprotocol/graph-ts";
 import {
-  MetaBoard as MetaBoardContract,
   MetaV1_2,
 } from "../generated/metaboard0/MetaBoard";
 import {
@@ -44,20 +42,6 @@ describe("Test meta event", () => {
     clearStore();
     clearInBlockStore();
   });
-  test("Can mock metaBoard function correctly", () => {
-    const meta = Bytes.fromHexString("0xff0a89c674ee7874010203");
-    createMockedFunction(CONTRACT_ADDRESS, "hash", "hash(bytes):(bytes32)")
-      .withArgs([ethereum.Value.fromBytes(meta)])
-      .returns([ethereum.Value.fromBytes(Bytes.fromHexString(metaHashString))]);
-
-    let metaBoardContract = MetaBoardContract.bind(CONTRACT_ADDRESS);
-    let result = metaBoardContract.hash(meta);
-
-    assert.equals(
-      ethereum.Value.fromBytes(Bytes.fromHexString(metaHashString)),
-      ethereum.Value.fromBytes(result),
-    );
-  });
   test("Checks event params", () => {
     // Call mappings
     const meta = Bytes.fromHexString(metaString);
@@ -70,10 +54,6 @@ describe("Test meta event", () => {
       transactionBlockNumber,
       transactionTimestamp,
     );
-
-    createMockedFunction(CONTRACT_ADDRESS, "hash", "hash(bytes):(bytes32)")
-      .withArgs([ethereum.Value.fromBytes(meta)])
-      .returns([ethereum.Value.fromBytes(Bytes.fromHexString(metaHashString))]);
 
     handleMetaV1_2(newMetaV1Event);
 
@@ -207,10 +187,6 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
       transactionBlockNumber,
       transactionTimestamp,
     );
-
-    createMockedFunction(CONTRACT_ADDRESS, "hash", "hash(bytes):(bytes32)")
-      .withArgs([ethereum.Value.fromBytes(meta)])
-      .returns([ethereum.Value.fromBytes(Bytes.fromHexString(metaHashString))]);
 
     handleMetaV1_2(newMetaV1Event);
   });

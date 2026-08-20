@@ -22,8 +22,8 @@ contract Deploy is Script {
             deployerPrivateKey,
             type(MetaBoard).creationCode,
             "",
-            LibMetaBoardDeploy.METABOARD_DEPLOYED_ADDRESS,
-            LibMetaBoardDeploy.METABOARD_DEPLOYED_CODEHASH,
+            LibMetaBoardDeploy.METABOARD_CANDIDATE_ADDRESS,
+            LibMetaBoardDeploy.METABOARD_CANDIDATE_CODEHASH,
             new address[](0),
             sDepCodeHashes
         );
