@@ -1,12 +1,10 @@
 .DS_Store
 .cargo
-.coderabbit.yaml
 .envrc
 .gas-snapshot
 .git
 .github
 .gitignore
-.gitmodules
 .pre-commit-config.yaml
 .prettierignore
 .soldeerignore
@@ -19,9 +17,7 @@ CLAUDE.md
 /subgraph
 /flake.lock
 /flake.nix
-/foundry.lock
 /foundry.toml
-/lib
 /out
 /remappings.txt
 /slither.config.json
