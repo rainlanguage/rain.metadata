@@ -6,7 +6,7 @@ import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {LibDescribedByMeta, MetadataMismatch} from "src/lib/LibDescribedByMeta.sol";
 import {IDescribedByMetaV1} from "src/interface/IDescribedByMetaV1.sol";
 import {IMetaBoardV1_2} from "src/interface/unstable/IMetaBoardV1_2.sol";
-import {MetaBoard} from "src/concrete/MetaBoard.sol";
+import {TestMetaBoard} from "test/concrete/TestMetaBoard.sol";
 import {META_MAGIC_NUMBER_V1} from "src/interface/unstable/IMetaV1_2.sol";
 import {TestDescribedByMetaV1} from "test/lib/TestDescribedByMetaV1.sol";
 
@@ -18,7 +18,7 @@ contract LibDescribedByMetaEmitForDescribedAddressTest is Test {
     }
 
     function testEmitForDescribedAddressHappy(bytes memory metaData) external {
-        IMetaBoardV1_2 metaboard = new MetaBoard();
+        IMetaBoardV1_2 metaboard = new TestMetaBoard();
 
         bytes memory meta = abi.encodePacked(META_MAGIC_NUMBER_V1, metaData);
 
@@ -28,7 +28,7 @@ contract LibDescribedByMetaEmitForDescribedAddressTest is Test {
     }
 
     function testEmitForDescribedAddressMismatch(bytes memory metaData, bytes memory expectedMetaData) external {
-        IMetaBoardV1_2 metaboard = new MetaBoard();
+        IMetaBoardV1_2 metaboard = new TestMetaBoard();
 
         bytes memory meta = abi.encodePacked(META_MAGIC_NUMBER_V1, metaData);
         bytes memory expectedMeta = abi.encodePacked(META_MAGIC_NUMBER_V1, expectedMetaData);

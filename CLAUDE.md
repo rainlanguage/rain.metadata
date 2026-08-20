@@ -5,13 +5,21 @@ code in this repository.
 
 ## Project Overview
 
-Rain Protocol metadata system — Solidity contracts, Rust CLI/bindings, and a
-Graph subgraph for emitting and indexing on-chain metadata following the
+Rain Protocol metadata system — Solidity interfaces and libraries, a Rust
+CLI/bindings, and a Graph subgraph for emitting and indexing on-chain metadata
+following the
 [MetadataV1 spec](https://github.com/rainprotocol/specs/blob/main/metadata-v1.md).
 
-The core contract is **MetaBoard** — deterministically deployed at
-`0xfb8437AeFBB8031064E274527C5fc08e30Ac6928` across all supported networks. It
-emits `MetaV1_2` events that the subgraph indexes.
+This repo is the **library half** (rainlanguage/rain.metadata#134): the
+`IMetaBoardV1_2` / `IMetaV1_2` / `IDescribedByMetaV1` interface surface plus the
+`Lib*` logic that implements it. It autopublishes to Soldeer as `rain-metadata`
+on merge to main. It holds no concrete contract and no deployment.
+
+The **deploy half** is `rain.metadata.deploy`: the concrete `MetaBoard`, its
+deterministic-deploy address and codehash pins, the frozen release snapshots and
+`script/Deploy.sol`. It depends on this repo's Soldeer package and releases only
+on a manual `sol-v*` tag. The deployed `MetaBoard` address lives there, not
+here. `MetaBoard` is what emits the `MetaV1_2` events the subgraph here indexes.
 
 ## Build & Test Commands
 
@@ -34,7 +42,7 @@ Run a single Solidity test (inside nix shell):
 
 ```sh
 forge test --match-test testFunctionName
-forge test --match-contract MetaBoardTest
+forge test --match-contract LibIMetaBoardV1_2EmitMetaTest
 ```
 
 Run a single Rust test (inside nix shell):
@@ -47,23 +55,40 @@ cargo test test_name
 
 ### Solidity (`src/`)
 
-- `src/concrete/MetaBoard.sol` — Main contract; one delegation per entry point
-  into `src/lib/LibIMetaBoardV1_2.sol` and no behaviour of its own
+- `src/interface/unstable/IMetaBoardV1_2.sol` — The metaboard entry point:
+  `emitMeta(bytes32,bytes)`. Extends `IMetaV1_2`
+- `src/interface/unstable/IMetaV1_2.sol` — Declares the `MetaV1_2` event the
+  subgraph indexes
+- `src/interface/IDescribedByMetaV1.sol` — For contracts that describe
+  themselves with metadata
+- `src/interface/deprecated/` — Superseded `IMetaV1` / `IMetaBoardV1`, kept for
+  consumers still pinned to them. `IMetaV1.sol` also carries the file-level
+  `NotRainMetaV1` and `UnexpectedMetaHash` errors the current libs revert with
 - `src/lib/LibIMetaBoardV1_2.sol` — The whole of `IMetaBoardV1_2` as library
-  logic; validates then emits `MetaV1_2` with sender, subject and meta bytes
+  logic; validates then emits `MetaV1_2` with sender, subject and meta bytes. A
+  conforming concrete is one delegation per entry point into this and nothing
+  else
 - `src/lib/LibMeta.sol` — Metadata validation; checks magic number prefix
   `0xff0a89c674ee7874`
 - `src/lib/LibDescribedByMeta.sol` — Helper for contracts implementing
   `IDescribedByMetaV1`
-- `src/lib/deploy/LibMetaBoardDeploy.sol` — Deterministic deployment using Zoltu
-  deployer pattern
+
+`test/concrete/TestMetaBoard.sol` is a pure-delegation `IMetaBoardV1_2` that
+exists only so tests can drive the library across a real external call —
+`msg.sender` attribution and event emission are not observable otherwise. It is
+test scaffolding, not a shipped contract; the shipped concrete is in
+`rain.metadata.deploy`.
 
 ### Rust (`crates/`)
 
 - `crates/cli` — `rain-metadata` binary; metadata generation/validation for
   multiple types (authoring, dotrain, Solidity ABI, etc.)
-- `crates/bindings` — Solidity bindings generated via `alloy::sol!` from JSON
-  ABIs in `/out`
+- `crates/bindings` — Solidity bindings generated via `alloy::sol!` from the
+  committed interface ABIs in `crates/bindings/abi/`. Those are written by
+  `forge script script/CopyArtifacts.sol --ffi` (a deterministic `jq` subset of
+  the forge artifact) and asserted fresh by `test/script/CopyArtifacts.t.sol`.
+  Adding a contract means adding it to `LibCopyArtifacts.contracts()` and to
+  `crates/bindings/src/lib.rs` together
 - `crates/metaboard` — GraphQL client (Cynic) for querying MetaBoard subgraph
   data
 
@@ -75,13 +100,16 @@ cargo test test_name
 ## Key Configuration
 
 - **Solidity**: `foundry.toml` — solc 0.8.25, Cancun EVM, optimizer 1M runs,
-  `bytecode_hash = "none"`, `cbor_metadata = false`
+  `bytecode_hash = "none"`, `cbor_metadata = false`. `ffi = true` and the
+  `out/` + `crates/bindings/abi/` filesystem permissions exist solely for
+  `CopyArtifacts`; nothing else here touches the filesystem or shells out
 - **Rust workspace**: `Cargo.toml` at root, three crates
 - **Fuzz runs**: 5,096 (foundry.toml `[fuzz]`)
 - **Dependencies**: managed by [Soldeer](https://soldeer.xyz) (`[dependencies]`
   in `foundry.toml`, `libs = ["dependencies"]`), not git submodules; remappings
   point into `dependencies/` (e.g.
-  `rain-deploy-0.1.7/=dependencies/rain-deploy-0.1.7/`)
+  `forge-std-1.16.2/=dependencies/forge-std-1.16.2/`). The published `src/`
+  imports nothing external, so the only dependency is the test harness
 
 ## Licensing
 
