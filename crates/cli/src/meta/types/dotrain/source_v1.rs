@@ -76,6 +76,7 @@ impl From<DotrainSourceV1> for RainMetaDocumentV1Item {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         }
     }
 }
@@ -123,6 +124,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
 
         let dotrain_source = DotrainSourceV1::try_from(document_item).unwrap();
@@ -137,6 +139,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
 
         let result = DotrainSourceV1::try_from(document_item);
@@ -159,6 +162,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
 
         let result = DotrainSourceV1::try_from(document_item);
@@ -371,6 +375,7 @@ mod tests {
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
+            schema: None,
         };
         let wrong_cbor_bytes = wrong_document.cbor_encode().unwrap();
         let wrong_cbor_hex = hex::encode(&wrong_cbor_bytes);
