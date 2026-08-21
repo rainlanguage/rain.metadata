@@ -88,9 +88,10 @@ contract SubgraphManifestTest is Test {
     string constant DEPLOYMENT_FACT_PATHS = "[.. | select(key == \"address\" or key == \"startBlock\") | path"
         " | join(\".\")] | \"|\" + join(\"|\") + \"|\"";
 
-    /// `DEPLOYMENT_FACT_PATHS` over a manifest carrying none: the two
-    /// delimiters with nothing between them.
-    string constant NO_DEPLOYMENT_FACT_PATHS = "||";
+    /// An empty path list, as `DEPLOYMENT_FACT_PATHS` and
+    /// `networkResidueExpression` both encode one: the two delimiters with
+    /// nothing between them.
+    string constant NO_PATHS = "||";
 
     /// `yq` over `vm.ffi`, the same shape `LibCopyArtifacts` already reads the
     /// forge artifact with `jq` in: the parsing is the shell tool's, and what
@@ -276,6 +277,27 @@ contract SubgraphManifestTest is Test {
         );
     }
 
+    /// Every node in the document keyed `network` that is not the placeholder,
+    /// by path.
+    ///
+    /// Document wide for the same reason `DEPLOYMENT_FACT_PATHS` is: a
+    /// `templates:` entry carries a `network:` of its own, `networks.json` can
+    /// name it, and `graph build --network` writes the chain into that one too.
+    /// A residue parked there is the same residue.
+    ///
+    /// Built rather than declared so `TEMPLATE_NETWORK` is spelled once. An
+    /// empty result means every `network:` in the document is the placeholder —
+    /// and also means there is no `network:` at all, which is why the data
+    /// source's own is read at its path as well.
+    /// @return The `yq` expression.
+    function networkResidueExpression() internal pure returns (string memory) {
+        return string.concat(
+            "[.. | select(key == \"network\" and . != \"",
+            TEMPLATE_NETWORK,
+            "\") | path | join(\".\")] | \"|\" + join(\"|\") + \"|\""
+        );
+    }
+
     /// The manifest MUST carry no deployment fact.
     ///
     /// `graph build --network <x>` fills `address`, `startBlock` AND `network`
@@ -290,13 +312,18 @@ contract SubgraphManifestTest is Test {
     /// document, and the failure names the path each was found at.
     ///
     /// `network:` is the one of the three that has to be present, so it is
-    /// pinned to the placeholder rather than asserted absent, and it is read at
-    /// its path rather than searched for — a `# network: template` left above a
-    /// live `network: matic` satisfies a search and is exactly the write-back
-    /// this is here to catch. It is checked for the same reason as the other
-    /// two and not as a lesser case: a real chain name sitting in a template is
-    /// read as a default by everyone downstream of it, and `--network`
-    /// overrides it silently, so nothing else would ever contradict it.
+    /// pinned to the placeholder rather than asserted absent. It is checked for
+    /// the same reason as the other two and not as a lesser case: a real chain
+    /// name sitting in a template is read as a default by everyone downstream
+    /// of it, and `--network` overrides it silently, so nothing else would ever
+    /// contradict it. Two assertions, because presence and absence of a residue
+    /// are different claims and neither implies the other: every `network:` in
+    /// the document is the placeholder, document wide so a `templates:` entry
+    /// is covered; and the data source's own is read AT its path, which is what
+    /// makes the document-wide list empty by placeholder rather than by there
+    /// being no `network:` to find. Both name their node rather than searching
+    /// the text — a `# network: template` left above a live `network: matic`
+    /// satisfies a search and is exactly the write-back this is here to catch.
     ///
     /// A `graph build --network` run in this tree therefore fails HERE rather
     /// than silently committing a network's address the next time someone runs
@@ -304,9 +331,18 @@ contract SubgraphManifestTest is Test {
     function testManifestSourceCarriesNoDeploymentFact() external {
         assertEq(
             yq("-o=yaml", DEPLOYMENT_FACT_PATHS),
-            NO_DEPLOYMENT_FACT_PATHS,
+            NO_PATHS,
             "subgraph.yaml carries a deployment fact at the paths listed; networks.json is the"
             " deployment record and it is not in this repo"
+        );
+        assertEq(
+            yq("-o=yaml", networkResidueExpression()),
+            NO_PATHS,
+            string.concat(
+                "subgraph.yaml carries a network other than the placeholder ",
+                TEMPLATE_NETWORK,
+                " at the paths listed; networks.json is the deployment record and it is not in this repo"
+            )
         );
         assertEq(
             vm.parseJsonString(manifestJson(), string.concat(THE_DATA_SOURCE, ".network")),
