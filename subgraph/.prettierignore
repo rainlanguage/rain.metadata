@@ -1,7 +1,0 @@
-## Deps
-node_modules
-
-## Subgraph
-subgraph.template.yaml
-build
-generated

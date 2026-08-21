@@ -31,9 +31,17 @@ means adding it to `LibCopyArtifacts.contracts()` AND
 permissions exist solely for `CopyArtifacts`; nothing else here shells out or
 touches the filesystem.
 
-The subgraph indexes `MetaV1_2` events from the `MetaBoard` deployed out of the
-deploy repo, sourcing its ABI from this repo's interface artifact — so moving or
-renaming that artifact breaks the subgraph build.
+The MetaBoard **subgraph is NOT here** — it moved to `rain.metadata.deploy`
+(rainlanguage/rain.metadata.deploy#2), because `networks.json` is a deployment
+record and belongs with the deploy records. It now sources its ABI from that
+repo's own concrete, so this repo's interface artifacts no longer feed it.
+
+`crates/metaboard` (published as `rain-metaboard-subgraph`) is the Cynic client
+that CONSUMES that subgraph and stays here: it is keyed by endpoint URL, with no
+address or Goldsky coupling. Its `src/schema/metaboard.graphql` is a snapshot of
+the deployed schema, and the `schema-check` run that used to compare it against
+a freshly deployed endpoint went with the deploy workflow — nothing in either
+repo checks that snapshot for drift now.
 
 ## Licensing
 
