@@ -10,15 +10,18 @@ evm_version = "cancun"
 
 bytecode_hash = "none"
 cbor_metadata = false
+
+# `script/CopyArtifacts.sol` and its freshness test shell out to `jq` via
+# `vm.ffi` to extract the deterministic subset of the forge artifact.
 ffi = true
 
 libs = ["dependencies"]
 
+# The only filesystem access in this repo. `script/CopyArtifacts.sol` reads
+# forge build output and writes the stable subset for the rust bindings to
+# consume; `test/script/CopyArtifacts.t.sol` reads both back to assert the
+# committed copy is fresh.
 fs_permissions = [
-  { access = "read", path = "subgraph/networks.json" },
-  { access = "read", path = "subgraph/subgraph.yaml" },
-  # CopyArtifacts.sol reads forge build output and writes the stable
-  # subset for the rust bindings to consume.
   { access = "read", path = "out/" },
   { access = "read-write", path = "crates/bindings/abi/" },
 ]
@@ -26,27 +29,13 @@ fs_permissions = [
 [fuzz]
 runs = 5096
 
+# Library repo: the `IMetaBoardV1_2`/`IMetaV1_2`/`IDescribedByMetaV1` interface
+# surface plus the `Lib*` logic that implements it. The concrete `MetaBoard`,
+# its deploy-pin snapshots and the deploy scripts live in rain.metadata.deploy
+# (rainlanguage/rain.metadata#134). The published `src/` imports nothing
+# external, so every dependency here is test-harness only.
 [dependencies]
 forge-std = "1.16.2"
-"rain-deploy" = "0.1.7"
 
 [soldeer]
 recursive_deps = false
-
-[rpc_endpoints]
-arbitrum = "${ARBITRUM_RPC_URL}"
-base = "${BASE_RPC_URL}"
-base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
-ethereum = "${ETHEREUM_RPC_URL}"
-flare = "${FLARE_RPC_URL}"
-hyperevm = "${HYPEREVM_RPC_URL}"
-polygon = "${POLYGON_RPC_URL}"
-
-[etherscan]
-arbitrum = { key = "${CI_DEPLOY_ARBITRUM_ETHERSCAN_API_KEY}" }
-base = { key = "${CI_DEPLOY_BASE_ETHERSCAN_API_KEY}" }
-base_sepolia = { key = "${CI_DEPLOY_BASE_SEPOLIA_ETHERSCAN_API_KEY}" }
-ethereum = { key = "${CI_DEPLOY_ETHEREUM_ETHERSCAN_API_KEY}", chain = 1 }
-flare = { key = "${CI_DEPLOY_FLARE_ETHERSCAN_API_KEY}" }
-hyperevm = { key = "${CI_DEPLOY_HYPEREVM_ETHERSCAN_API_KEY}", chain = 999 }
-polygon = { key = "${CI_DEPLOY_POLYGON_ETHERSCAN_API_KEY}" }

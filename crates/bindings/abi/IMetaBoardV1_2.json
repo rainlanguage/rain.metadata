@@ -1,0 +1,53 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "emitMeta",
+      "inputs": [
+        {
+          "name": "subject",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "meta",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "MetaV1_2",
+      "inputs": [
+        {
+          "name": "sender",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "subject",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "meta",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        }
+      ],
+      "anonymous": false
+    }
+  ],
+  "bytecode": {
+    "object": "0x"
+  },
+  "deployedBytecode": {
+    "object": "0x"
+  }
+}

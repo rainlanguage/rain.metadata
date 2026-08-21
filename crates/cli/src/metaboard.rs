@@ -1,12 +1,12 @@
 use alloy::primitives::{Bytes, FixedBytes, hex};
 use alloy::sol_types::SolCall;
-use rain_metadata_bindings::MetaBoard::emitMetaCall;
+use rain_metadata_bindings::IMetaBoardV1_2::emitMetaCall;
 use serde::Serialize;
 
 use crate::{Error, RainMetaDocumentV1Item};
 use crate::meta::types::dotrain::source_v1::DotrainSourceV1;
 
-/// Generate calldata for MetaBoard.emitMeta() function using raw bytes
+/// Generate calldata for IMetaBoardV1_2.emitMeta() function using raw bytes
 fn generate_emit_data_calldata(subject: FixedBytes<32>, data: Vec<u8>) -> Vec<u8> {
     let call = emitMetaCall {
         subject,
@@ -15,7 +15,7 @@ fn generate_emit_data_calldata(subject: FixedBytes<32>, data: Vec<u8>) -> Vec<u8
     call.abi_encode()
 }
 
-/// Generate calldata for MetaBoard.emitMeta() function from any RainMetaDocumentV1Item
+/// Generate calldata for IMetaBoardV1_2.emitMeta() function from any RainMetaDocumentV1Item
 pub fn generate_emit_meta_calldata(meta: RainMetaDocumentV1Item) -> Result<Vec<u8>, Error> {
     let meta_bytes = meta.cbor_encode()?;
     let hash = meta.hash(false)?;
@@ -29,7 +29,7 @@ pub struct DotrainSourceEmitData {
     pub subject: String,
     /// CBOR-encoded metadata bytes (hex-encoded with 0x prefix)
     pub meta_bytes: String,
-    /// Complete calldata for MetaBoard.emitMeta() (hex-encoded with 0x prefix)
+    /// Complete calldata for IMetaBoardV1_2.emitMeta() (hex-encoded with 0x prefix)
     pub calldata: String,
 }
 

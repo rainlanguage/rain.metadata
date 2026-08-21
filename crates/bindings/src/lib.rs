@@ -8,6 +8,6 @@ sol!(
 
 sol!(
     #![sol(all_derives = true)]
-    MetaBoard,
-    concat!(env!("CARGO_MANIFEST_DIR"), "/abi/MetaBoard.json")
+    IMetaBoardV1_2,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/abi/IMetaBoardV1_2.json")
 );

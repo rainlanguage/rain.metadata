@@ -11,9 +11,17 @@ library LibCopyArtifacts {
     /// @notice Contract artifacts that the rust crate consumes via
     /// alloy::sol!. Adding a new contract here also requires the rust
     /// crate to reference it.
+    ///
+    /// These are interfaces, not concretes. This repo is the library half
+    /// (rainlanguage/rain.metadata#134) and holds no concrete contract to point
+    /// at — the concrete `MetaBoard` lives in rain.metadata.deploy. An
+    /// interface is the better source regardless: what the rust crate needs is
+    /// the call and event encoding, which is the interface, and binding to the
+    /// interface makes the generated types apply to every implementation
+    /// rather than to one deployment.
     function contracts() internal pure returns (string[] memory) {
         string[] memory names = new string[](2);
-        names[0] = "MetaBoard";
+        names[0] = "IMetaBoardV1_2";
         names[1] = "IDescribedByMetaV1";
         return names;
     }
