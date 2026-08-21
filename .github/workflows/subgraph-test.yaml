@@ -26,7 +26,14 @@ jobs:
           gc-max-store-size-linux: 1G
       - name: Install soldeer dependencies
         run: nix develop github:rainlanguage/rainix#sol-shell -c forge soldeer install
-      - name: Build subgraph
-        run: nix develop -c subgraph-build
+      # NOT `subgraph-build`. That task loops `graph build --network` over
+      # `networks.json`, which is a deployment record and lives in
+      # rain.metadata.deploy now, and each pass would write that network's
+      # address and startBlock back into the SOURCE `subgraph.yaml` — the
+      # residue the template exists to not carry. `graph codegen` is everything
+      # matchstick needs from the graph toolchain and it reads no deployment
+      # fact at all.
+      - name: Generate subgraph types
+        run: nix develop -c bash -c 'forge build && cd subgraph && npm ci && graph codegen'
       - name: Matchstick tests
         run: nix develop -c subgraph-test

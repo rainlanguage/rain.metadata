@@ -27,13 +27,41 @@ writes and `test/script/CopyArtifacts.t.sol` asserts fresh. Adding a contract
 means adding it to `LibCopyArtifacts.contracts()` AND
 `crates/bindings/src/lib.rs` together, or that assertion fails.
 
-`foundry.toml`'s `ffi = true` and the `out/` + `crates/bindings/abi/` filesystem
-permissions exist solely for `CopyArtifacts`; nothing else here shells out or
+`foundry.toml`'s `ffi = true` and its filesystem permissions exist for
+`CopyArtifacts` and for `test/subgraph/SubgraphManifest.t.sol`, which reads the
+built interface artifact with `jq` and the subgraph manifest with `yq` — both
+over `vm.ffi`, so the manifest needs no `fs_permissions` entry, and both
+binaries have to be on `PATH` in the sol shell. Nothing else here shells out or
 touches the filesystem.
 
-The subgraph indexes `MetaV1_2` events from the `MetaBoard` deployed out of the
-deploy repo, sourcing its ABI from this repo's interface artifact — so moving or
-renaming that artifact breaks the subgraph build.
+## The subgraph is SOURCE only (#149)
+
+`subgraph/` holds subgraph source and no deployment fact. `subgraph.yaml` is a
+TEMPLATE: its `source:` block is `abi: MetaBoard` alone, and its `network:` is
+the placeholder `template`. The per-network addresses and start blocks are in
+`subgraph/networks.json` in **rain.metadata.deploy**, which fetches this source
+at deploy time, drops its own `networks.json` beside it and builds there.
+
+So **never run `subgraph-build` or `graph build --network` in this tree.** Those
+fill `address` and `startBlock` from `networks.json` and write them back into
+the SOURCE manifest, not only into `build/` — a stub does not stay stubbed in a
+tree that runs `build`. Without `networks.json` the build fails outright, and
+`test/subgraph/SubgraphManifest.t.sol` fails on a manifest carrying either
+field. `graph codegen` and `graph test` need neither, and they are all the
+`MetaBoard Subgraph CI` lane runs.
+
+The manifest reads its ABI from this repo's interface artifact, so moving or
+renaming that artifact breaks the subgraph build. `SubgraphManifest.t.sol` pins
+the path to `LibCopyArtifacts.livePath` and the indexed signature to
+`IMetaV1_2.MetaV1_2.selector`, so both break in the `rainix-sol` lane first,
+without docker.
+
+It reads the manifest as PARSED YAML — `yq` over `vm.ffi`, then the forge JSON
+cheatcodes at a path — not as text. A substring search answers a different
+question: a commented-out line satisfies a positive one, and a key respelled
+`address :` or `"address":` or moved into a flow mapping defeats a negative one.
+So new manifest assertions name the node they are about; do not add one that
+greps the file.
 
 ## Licensing
 
