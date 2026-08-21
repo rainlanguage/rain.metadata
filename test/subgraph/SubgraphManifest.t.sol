@@ -45,6 +45,16 @@ contract SubgraphManifestTest is Test {
     /// caught.
     string constant INDEXED_EVENT_SIGNATURE = "MetaV1_2(address,bytes32,bytes)";
 
+    /// The placeholder `network:` the template carries.
+    ///
+    /// A name rather than an absence, because `network:` is required: the
+    /// manifest does not parse without it. So the check that no real network
+    /// has settled here cannot be "the field is missing" and cannot be "the
+    /// field is not one of the deployed networks" either — that list is
+    /// `networks.json` and it is in rain.metadata.deploy. It is that the field
+    /// still holds the one value that is deliberately not a chain.
+    string constant TEMPLATE_NETWORK = "template";
+
     /// The manifest, read once per test.
     /// @return The file contents.
     function manifest() internal view returns (string memory) {
@@ -149,13 +159,20 @@ contract SubgraphManifestTest is Test {
 
     /// The manifest MUST carry no deployment fact.
     ///
-    /// `graph build --network <x>` fills `address` and `startBlock` from
-    /// `networks.json` — and writes them back into the SOURCE manifest, not
-    /// only into `build/`. So a manifest with either field in it is either a
-    /// deployment record that has drifted into the library half, or the residue
-    /// of whichever network happened to sort last in the most recent build.
-    /// Before #149 it was the latter, indistinguishable from the former by
-    /// inspection, and nothing checked.
+    /// `graph build --network <x>` fills `address`, `startBlock` AND `network`
+    /// from `networks.json` — and writes all three back into the SOURCE
+    /// manifest, not only into `build/`. So a manifest carrying any of them is
+    /// either a deployment record that has drifted into the library half, or
+    /// the residue of whichever network happened to sort last in the most
+    /// recent build. Before #149 it was the latter, indistinguishable from the
+    /// former by inspection, and nothing checked.
+    ///
+    /// `network:` is the one of the three that has to be present, so it is
+    /// pinned to the placeholder rather than asserted absent. It is checked for
+    /// the same reason as the other two and not as a lesser case: a real chain
+    /// name sitting in a template is read as a default by everyone downstream
+    /// of it, and `--network` overrides it silently, so nothing else would ever
+    /// contradict it.
     ///
     /// A `graph build --network` run in this tree therefore fails HERE rather
     /// than silently committing a network's address the next time someone runs
@@ -169,6 +186,14 @@ contract SubgraphManifestTest is Test {
         assertFalse(
             vm.contains(yaml, "startBlock:"),
             "subgraph.yaml names a startBlock; networks.json is the deployment record and it is not in this repo"
+        );
+        assertTrue(
+            vm.contains(yaml, string.concat("network: ", TEMPLATE_NETWORK)),
+            string.concat(
+                "subgraph.yaml's network is not the placeholder ",
+                TEMPLATE_NETWORK,
+                "; networks.json is the deployment record and it is not in this repo"
+            )
         );
     }
 }

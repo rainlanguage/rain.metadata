@@ -18,6 +18,7 @@ CLAUDE.md
 /flake.lock
 /flake.nix
 /foundry.toml
+/mutants.toml
 /out
 /remappings.txt
 /slither.config.json

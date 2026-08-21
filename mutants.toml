@@ -1,0 +1,90 @@
+# Mutation probe config for the subgraph manifest's coupling to this repo
+# (rainlanguage/rain.metadata#149).
+#
+# The subgraph is split on whether a file carries a DEPLOYMENT FACT.
+# `networks.json` — the per-network address and start block table — went to
+# `rain.metadata.deploy`, and the mutants for that half are in that repo. What
+# is left here is subgraph SOURCE, and the part of it these mutants attack is
+# `subgraph.yaml`: which artifact's ABI is decoded, which event signature is
+# decoded out of it, and that no deployment fact has crept back in.
+#
+# The thing under test is therefore DATA — a YAML manifest — plus the two
+# Solidity records it is held against, so the mutants break those rather than
+# any function's logic. None of these are reachable by mutating Solidity
+# statements, and every one of them ships silently without these assertions:
+# `graph codegen` resolves the event by NAME, so a re-typed parameter still
+# generates, still compiles, and decodes the wrong layout out of a live log.
+#
+# `M08` is the one that costs a test. `graph build --network` writes the network
+# it was given back into the SOURCE manifest, exactly as it does with `address`
+# and `startBlock`, so a real network name in the template is the same residue
+# one level up — and nothing here noticed until the probe asked.
+#
+# NOT covered here, and out of this file's reach rather than overlooked: the
+# manifest's `schema:` and mapping `file:` paths and its `handler:` name. Those
+# are checked by `graph codegen` and matchstick in the `MetaBoard Subgraph CI`
+# lane, which needs docker and node and is not what `command` below runs.
+
+[suite]
+root = "."
+command = ["nix", "develop", "--command", "forge", "test"]
+proof = '(\d+) passed; (\d+) failed'
+fail-pattern = '\[FAIL[^\]]*\] (\S+)'
+timeout-secs = 1800
+
+[[mutants]]
+name = "M01 the manifest indexes a re-typed MetaV1_2 the interface does not declare"
+file = "subgraph/subgraph.yaml"
+target = '        - event: MetaV1_2(address,bytes32,bytes)'
+replacement = '        - event: MetaV1_2(address,bytes32,bytes32)'
+
+[[mutants]]
+name = "M02 the manifest decodes with another artifact this repo publishes"
+file = "subgraph/subgraph.yaml"
+target = '          file: ../out/IMetaBoardV1_2.sol/IMetaBoardV1_2.json'
+replacement = '          file: ../out/IDescribedByMetaV1.sol/IDescribedByMetaV1.json'
+
+[[mutants]]
+name = "M03 the artifact layout moves and the manifest's ABI path is left behind"
+file = "script/lib/LibCopyArtifacts.sol"
+target = '        return string.concat("out/", contractName, ".sol/", contractName, ".json");'
+replacement = '        return string.concat("artifacts/", contractName, ".sol/", contractName, ".json");'
+
+[[mutants]]
+name = "M04 the indexed interface is dropped from the published artifact list"
+file = "script/lib/LibCopyArtifacts.sol"
+target = '''        string[] memory names = new string[](2);
+        names[0] = "IMetaBoardV1_2";
+        names[1] = "IDescribedByMetaV1";'''
+replacement = '''        string[] memory names = new string[](1);
+        names[0] = "IDescribedByMetaV1";'''
+
+[[mutants]]
+name = "M05 the indexed artifact stops declaring the indexed event"
+file = "src/interface/unstable/IMetaBoardV1_2.sol"
+target = 'interface IMetaBoardV1_2 is IMetaV1_2 {'
+replacement = 'interface IMetaBoardV1_2 {'
+
+[[mutants]]
+name = "M06 a build write-back leaves an address in the source manifest"
+file = "subgraph/subgraph.yaml"
+target = '''    source:
+      abi: MetaBoard'''
+replacement = '''    source:
+      abi: MetaBoard
+      address: "0xfb8437AeFBB8031064E274527C5fc08e30Ac6928"'''
+
+[[mutants]]
+name = "M07 a build write-back leaves a startBlock in the source manifest"
+file = "subgraph/subgraph.yaml"
+target = '''    source:
+      abi: MetaBoard'''
+replacement = '''    source:
+      abi: MetaBoard
+      startBlock: 82855948'''
+
+[[mutants]]
+name = "M08 a build write-back leaves a real network name in the source manifest"
+file = "subgraph/subgraph.yaml"
+target = '    network: template'
+replacement = '    network: matic'
