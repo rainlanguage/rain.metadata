@@ -29,7 +29,9 @@ means adding it to `LibCopyArtifacts.contracts()` AND
 
 `foundry.toml`'s `ffi = true` and its filesystem permissions exist for
 `CopyArtifacts` and for `test/subgraph/SubgraphManifest.t.sol`, which reads the
-manifest and the built interface artifact; nothing else here shells out or
+built interface artifact with `jq` and the subgraph manifest with `yq` — both
+over `vm.ffi`, so the manifest needs no `fs_permissions` entry, and both
+binaries have to be on `PATH` in the sol shell. Nothing else here shells out or
 touches the filesystem.
 
 ## The subgraph is SOURCE only (#149)
@@ -53,6 +55,13 @@ renaming that artifact breaks the subgraph build. `SubgraphManifest.t.sol` pins
 the path to `LibCopyArtifacts.livePath` and the indexed signature to
 `IMetaV1_2.MetaV1_2.selector`, so both break in the `rainix-sol` lane first,
 without docker.
+
+It reads the manifest as PARSED YAML — `yq` over `vm.ffi`, then the forge JSON
+cheatcodes at a path — not as text. A substring search answers a different
+question: a commented-out line satisfies a positive one, and a key respelled
+`address :` or `"address":` or moved into a flow mapping defeats a negative one.
+So new manifest assertions name the node they are about; do not add one that
+greps the file.
 
 ## Licensing
 

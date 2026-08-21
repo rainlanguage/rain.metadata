@@ -15,10 +15,22 @@
 # `graph codegen` resolves the event by NAME, so a re-typed parameter still
 # generates, still compiles, and decodes the wrong layout out of a live log.
 #
-# `M08` is the one that costs a test. `graph build --network` writes the network
-# it was given back into the SOURCE manifest, exactly as it does with `address`
-# and `startBlock`, so a real network name in the template is the same residue
-# one level up — and nothing here noticed until the probe asked.
+# `M08` is the one that cost a test in the first round. `graph build --network`
+# writes the network it was given back into the SOURCE manifest, exactly as it
+# does with `address` and `startBlock`, so a real network name in the template
+# is the same residue one level up — and nothing here noticed until the probe
+# asked.
+#
+# `M09`–`M17` are the second round, and they cost the checks their whole shape.
+# CodeRabbit's review of #148 said the assertions searched the manifest as TEXT
+# instead of reading it as YAML; these nine are that claim made falsifiable.
+# Every one is a manifest change a `graph` build would honour, spelled so the
+# substring form could not see it: a declaration hidden in a `#` comment, a key
+# respelled `address :` or `"address":` or folded into a flow mapping, an `abis`
+# entry the `source.abi` is not wired to, a second data source carrying the fact
+# the first does not. All nine survived; the finding was real. The checks read
+# `yq -o=json` over `vm.ffi` with the forge JSON cheatcodes at a path now, and
+# name the node rather than the characters.
 #
 # NOT covered here, and out of this file's reach rather than overlooked: the
 # manifest's `schema:` and mapping `file:` paths and its `handler:` name. Those
@@ -88,3 +100,120 @@ name = "M08 a build write-back leaves a real network name in the source manifest
 file = "subgraph/subgraph.yaml"
 target = '    network: template'
 replacement = '    network: matic'
+
+# ---------------------------------------------------------------------------
+# CodeRabbit rainlanguage/rain.metadata#148 review comment 3832066311:
+# "Make the manifest checks YAML-aware." Three sub-points, and one mutant class
+# per sub-point, each written to EVADE the raw-substring form of the check
+# rather than to trip it.
+#
+#   sub-point 1 (L88-97)   validate the event under `mapping.eventHandlers`
+#                          -> M09, M10
+#   sub-point 2 (L114-118) validate the path under the `MetaBoard` ABI entry
+#                          -> M11, M12
+#   sub-point 3 (L163-172) reject PARSED `address`/`startBlock` fields
+#                          -> M13, M14, M15, M17
+#
+# and M16 for the positive half of the same test — `network:` — which is the
+# same "unrelated text satisfies a positive check" shape as M09.
+# ---------------------------------------------------------------------------
+
+[[mutants]]
+name = "M09 the indexed event survives only as a comment and nothing is handled"
+file = "subgraph/subgraph.yaml"
+target = '''      eventHandlers:
+        - event: MetaV1_2(address,bytes32,bytes)
+          handler: handleMetaV1_2'''
+replacement = '''      eventHandlers:
+        # - event: MetaV1_2(address,bytes32,bytes)
+        #   handler: handleMetaV1_2'''
+
+[[mutants]]
+name = "M10 the indexed event survives only as a comment and the handler is re-typed"
+file = "subgraph/subgraph.yaml"
+target = '''      eventHandlers:
+        - event: MetaV1_2(address,bytes32,bytes)
+          handler: handleMetaV1_2'''
+replacement = '''      eventHandlers:
+        # was event: MetaV1_2(address,bytes32,bytes)
+        - event: MetaV1_2(address,bytes32,bytes32)
+          handler: handleMetaV1_2'''
+
+[[mutants]]
+name = "M11 the wired MetaBoard abi points elsewhere and the real path is left on an unwired entry"
+file = "subgraph/subgraph.yaml"
+target = '''      abis:
+        - name: MetaBoard
+          file: ../out/IMetaBoardV1_2.sol/IMetaBoardV1_2.json'''
+replacement = '''      abis:
+        - name: MetaBoard
+          file: ../out/IDescribedByMetaV1.sol/IDescribedByMetaV1.json
+        - name: MetaBoardUnwired
+          file: ../out/IMetaBoardV1_2.sol/IMetaBoardV1_2.json'''
+
+[[mutants]]
+name = "M12 the source abi names no entry in the abis list"
+file = "subgraph/subgraph.yaml"
+target = '''    source:
+      abi: MetaBoard'''
+replacement = '''    source:
+      abi: MetaBoardV1_2'''
+
+[[mutants]]
+name = "M13 a build write-back leaves an address whose key has a space before the colon"
+file = "subgraph/subgraph.yaml"
+target = '''    source:
+      abi: MetaBoard'''
+replacement = '''    source:
+      abi: MetaBoard
+      address : "0xfb8437AeFBB8031064E274527C5fc08e30Ac6928"'''
+
+[[mutants]]
+name = "M14 a build write-back leaves a startBlock behind a quoted key"
+file = "subgraph/subgraph.yaml"
+target = '''    source:
+      abi: MetaBoard'''
+replacement = '''    source:
+      abi: MetaBoard
+      "startBlock": 82855948'''
+
+[[mutants]]
+name = "M15 a build write-back leaves address and startBlock in a flow mapping"
+file = "subgraph/subgraph.yaml"
+target = '''    source:
+      abi: MetaBoard'''
+replacement = '''    source: { abi: MetaBoard, "address": "0xfb8437AeFBB8031064E274527C5fc08e30Ac6928", "startBlock": 82855948 }'''
+
+[[mutants]]
+name = "M16 the placeholder network survives only as a comment and a real chain is indexed"
+file = "subgraph/subgraph.yaml"
+target = '    network: template'
+replacement = '''    # network: template
+    network: matic'''
+
+[[mutants]]
+name = "M17 a second data source carries the deployment fact in evasive spelling"
+file = "subgraph/subgraph.yaml"
+target = '      file: ./src/metaBoard.ts'
+replacement = '''      file: ./src/metaBoard.ts
+  - kind: ethereum/contract
+    name: metaboard1
+    network: matic
+    source:
+      abi: MetaBoard
+      address : "0xfb8437AeFBB8031064E274527C5fc08e30Ac6928"
+      "startBlock": 82855948
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - MetaBoard
+        - MetaV1
+      abis:
+        - name: MetaBoard
+          file: ../out/IMetaBoardV1_2.sol/IMetaBoardV1_2.json
+      eventHandlers:
+        - event: MetaV1_2(address,bytes32,bytes)
+          handler: handleMetaV1_2
+      file: ./src/metaBoard.ts'''
