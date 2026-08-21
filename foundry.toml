@@ -17,13 +17,15 @@ ffi = true
 
 libs = ["dependencies"]
 
-# The only filesystem access in this repo. `script/CopyArtifacts.sol` reads
-# forge build output and writes the stable subset for the rust bindings to
-# consume; `test/script/CopyArtifacts.t.sol` reads both back to assert the
-# committed copy is fresh.
+# The filesystem access in this repo. `script/CopyArtifacts.sol` reads forge
+# build output and writes the stable subset for the rust bindings to consume;
+# `test/script/CopyArtifacts.t.sol` reads both back to assert the committed copy
+# is fresh. `test/subgraph/SubgraphManifest.t.sol` reads the subgraph manifest to
+# hold it against the interface it indexes.
 fs_permissions = [
   { access = "read", path = "out/" },
   { access = "read-write", path = "crates/bindings/abi/" },
+  { access = "read", path = "subgraph/" },
 ]
 
 [fuzz]

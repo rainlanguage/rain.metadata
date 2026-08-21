@@ -27,21 +27,32 @@ writes and `test/script/CopyArtifacts.t.sol` asserts fresh. Adding a contract
 means adding it to `LibCopyArtifacts.contracts()` AND
 `crates/bindings/src/lib.rs` together, or that assertion fails.
 
-`foundry.toml`'s `ffi = true` and the `out/` + `crates/bindings/abi/` filesystem
-permissions exist solely for `CopyArtifacts`; nothing else here shells out or
+`foundry.toml`'s `ffi = true` and its filesystem permissions exist for
+`CopyArtifacts` and for `test/subgraph/SubgraphManifest.t.sol`, which reads the
+manifest and the built interface artifact; nothing else here shells out or
 touches the filesystem.
 
-The MetaBoard **subgraph is NOT here** — it moved to `rain.metadata.deploy`
-(rainlanguage/rain.metadata.deploy#2), because `networks.json` is a deployment
-record and belongs with the deploy records. It now sources its ABI from that
-repo's own concrete, so this repo's interface artifacts no longer feed it.
+## The subgraph is SOURCE only (#149)
 
-`crates/metaboard` (published as `rain-metaboard-subgraph`) is the Cynic client
-that CONSUMES that subgraph and stays here: it is keyed by endpoint URL, with no
-address or Goldsky coupling. Its `src/schema/metaboard.graphql` is a snapshot of
-the deployed schema, and the `schema-check` run that used to compare it against
-a freshly deployed endpoint went with the deploy workflow — nothing in either
-repo checks that snapshot for drift now.
+`subgraph/` holds subgraph source and no deployment fact. `subgraph.yaml` is a
+TEMPLATE: its `source:` block is `abi: MetaBoard` alone, and its `network:` is
+the placeholder `template`. The per-network addresses and start blocks are in
+`subgraph/networks.json` in **rain.metadata.deploy**, which fetches this source
+at deploy time, drops its own `networks.json` beside it and builds there.
+
+So **never run `subgraph-build` or `graph build --network` in this tree.** Those
+fill `address` and `startBlock` from `networks.json` and write them back into
+the SOURCE manifest, not only into `build/` — a stub does not stay stubbed in a
+tree that runs `build`. Without `networks.json` the build fails outright, and
+`test/subgraph/SubgraphManifest.t.sol` fails on a manifest carrying either
+field. `graph codegen` and `graph test` need neither, and they are all the
+`MetaBoard Subgraph CI` lane runs.
+
+The manifest reads its ABI from this repo's interface artifact, so moving or
+renaming that artifact breaks the subgraph build. `SubgraphManifest.t.sol` pins
+the path to `LibCopyArtifacts.livePath` and the indexed signature to
+`IMetaV1_2.MetaV1_2.selector`, so both break in the `rainix-sol` lane first,
+without docker.
 
 ## Licensing
 

@@ -1,0 +1,27 @@
+type MetaBoard @entity {
+    id: Bytes!
+    address: Bytes!
+    metas: [MetaV1!] @derivedFrom(field: "metaBoard")
+    nextMetaId: BigInt!
+}
+
+type MetaV1 @entity {
+    id: ID!
+    transaction: Transaction!
+
+    metaBoard: MetaBoard!
+
+    sender: Bytes!
+    subject: Bytes!
+
+    metaHash: Bytes!
+    meta: Bytes!
+}
+
+type Transaction @entity(immutable: true) {
+  id: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  from: Bytes!
+}
+

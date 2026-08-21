@@ -1,0 +1,6 @@
+version: '3'
+services:
+  matchstick:
+    image: rainprotocol/matchstick:main
+    volumes:
+      - ..:/matchstick

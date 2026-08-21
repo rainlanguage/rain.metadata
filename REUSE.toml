@@ -12,6 +12,7 @@ path = [
   "Cargo.toml",
   "CLAUDE.md",
   "crates/**/",
+  "subgraph/**/",
   "README.md",
   "flake.lock",
   "flake.nix",

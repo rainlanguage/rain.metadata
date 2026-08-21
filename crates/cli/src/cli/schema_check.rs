@@ -355,10 +355,9 @@ mod tests {
 
     #[test]
     fn deployed_subgraph_drift_is_caught() {
-        // Mirrors the actual divergence between the metaboard subgraph's
-        // schema.graphql (source, now in rain.metadata.deploy) and
-        // crates/metaboard/src/schema/metaboard.graphql (consumer, still
-        // here) at the time this subcommand was added: missing
+        // Mirrors the actual divergence between subgraph/schema.graphql
+        // (source) and crates/metaboard/src/schema/metaboard.graphql
+        // (consumer) at the time this subcommand was added: missing
         // `Transaction` entity and `MetaV1.transaction`, plus `subject`
         // type mismatch (Bytes! vs BigInt!).
         let source = r#"

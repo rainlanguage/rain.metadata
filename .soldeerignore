@@ -14,6 +14,7 @@ CLAUDE.md
 /cache
 /crates
 /dependencies
+/subgraph
 /flake.lock
 /flake.nix
 /foundry.toml
