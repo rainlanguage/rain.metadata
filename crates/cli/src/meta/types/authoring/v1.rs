@@ -354,4 +354,28 @@ mod tests {
         assert_eq!(AuthoringMeta::try_from(item)?, expected);
         Ok(())
     }
+    #[test]
+    fn test_description_rejects_unprintable_chars() {
+        use validator::Validate;
+        // printable ASCII description passes REGEX_RAIN_STRING
+        let item = AuthoringMetaItem {
+            word: "stack".to_string(),
+            operand_parser_offset: 0u8,
+            description: "All printable ASCII is fine.".to_string(),
+        };
+        assert!(item.validate().is_ok());
+
+        // a non-printable control character is rejected, and the rejection
+        // surfaces through abi_encode_validate as ValidationErrors
+        let item = AuthoringMetaItem {
+            word: "stack".to_string(),
+            operand_parser_offset: 0u8,
+            description: "bell \u{7} is not printable".to_string(),
+        };
+        assert!(item.validate().is_err());
+        assert!(matches!(
+            item.abi_encode_validate(),
+            Err(Error::ValidationErrors(_))
+        ));
+    }
 }

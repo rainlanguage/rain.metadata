@@ -960,4 +960,78 @@ mod tests {
         assert_eq!(round[0]["outputs"], serde_json::json!([]));
         Ok(())
     }
+    // constructor, event and error arms each default missing inputs to an
+    // empty vec, independently of the function arm
+    #[test]
+    fn test_deserialize_missing_inputs_default_for_constructor_event_error() -> anyhow::Result<()>
+    {
+        let meta: SolidityAbiMeta =
+            serde_json::from_str(r#"[{"type":"constructor","stateMutability":"nonpayable"}]"#)?;
+        assert_eq!(
+            serde_json::to_value(&meta)?,
+            serde_json::json!([{
+                "inputs": [],
+                "stateMutability": "nonpayable",
+                "type": "constructor"
+            }])
+        );
+
+        let meta: SolidityAbiMeta =
+            serde_json::from_str(r#"[{"type":"event","name":"E","anonymous":false}]"#)?;
+        assert_eq!(
+            serde_json::to_value(&meta)?,
+            serde_json::json!([{
+                "anonymous": false,
+                "inputs": [],
+                "name": "E",
+                "type": "event"
+            }])
+        );
+
+        let meta: SolidityAbiMeta = serde_json::from_str(r#"[{"type":"error","name":"X"}]"#)?;
+        assert_eq!(
+            serde_json::to_value(&meta)?,
+            serde_json::json!([{
+                "inputs": [],
+                "name": "X",
+                "type": "error"
+            }])
+        );
+        Ok(())
+    }
+
+    // an event input whose tuple component itself carries components: the
+    // inner list only survives serialization if
+    // map_item_event_input_component recurses into it
+    #[test]
+    fn test_event_component_nested_components_roundtrip() -> anyhow::Result<()> {
+        let original: serde_json::Value = serde_json::from_str(
+            r#"[{
+                "anonymous": false,
+                "inputs": [
+                    {
+                        "components": [
+                            {
+                                "components": [
+                                    { "internalType": "uint256", "name": "q", "type": "uint256" }
+                                ],
+                                "internalType": "struct T",
+                                "name": "t",
+                                "type": "tuple"
+                            }
+                        ],
+                        "indexed": false,
+                        "internalType": "struct U",
+                        "name": "u",
+                        "type": "tuple"
+                    }
+                ],
+                "name": "E",
+                "type": "event"
+            }]"#,
+        )?;
+        let meta: SolidityAbiMeta = serde_json::from_value(original.clone())?;
+        assert_eq!(serde_json::to_value(&meta)?, original);
+        Ok(())
+    }
 }

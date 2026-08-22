@@ -775,4 +775,33 @@ mod tests {
         assert_eq!(result.words[0].word, "test");
         assert_eq!(result.words[1].description, "description 2");
     }
+    #[tokio::test]
+    async fn test_fetch_for_contract_invalid_cbor_is_meta_error() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        // the metaboard answers with bytes that are not valid cbor, so the
+        // pipeline must surface the cbor_decode failure as MetaError rather
+        // than any other variant
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [metaboard_meta_entry("0x01")] }
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await;
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::MetaError(_) => {}
+            other => panic!("expected MetaError, got {:?}", other),
+        }
+    }
 }
