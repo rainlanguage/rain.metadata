@@ -159,3 +159,228 @@ pub struct ContextCell {
     #[validate]
     pub alias: Option<RainSymbol>,
 }
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::*;
+    use crate::meta::{ContentEncoding, ContentLanguage, ContentType, KnownMagic};
+
+    /// A fully-populated valid InterpreterCallerMeta JSON document.
+    fn valid_json() -> serde_json::Value {
+        serde_json::json!({
+            "name": "Test Caller",
+            "abiName": "TestCaller",
+            "desc": "A caller for tests.",
+            "source": "https://github.com/rainlanguage/rain.metadata",
+            "alias": "test-caller",
+            "methods": [{
+                "name": "Add Order",
+                "abiName": "addOrder",
+                "desc": "Adds an order.",
+                "inputs": [{
+                    "name": "Order",
+                    "abiName": "order",
+                    "desc": "The order.",
+                    "path": "[0]"
+                }],
+                "expressions": [{
+                    "name": "Calculate",
+                    "abiName": "calculateOrder",
+                    "desc": "Calculates.",
+                    "path": "[0].evaluableConfig",
+                    "signedContext": true,
+                    "callerContext": true,
+                    "contextColumns": [{
+                        "name": "Base",
+                        "desc": "Base column.",
+                        "alias": "base",
+                        "cells": [{
+                            "name": "Sender",
+                            "desc": "The sender.",
+                            "alias": "sender"
+                        }]
+                    }]
+                }]
+            }]
+        })
+    }
+
+    fn parse(v: &serde_json::Value) -> Result<InterpreterCallerMeta, Error> {
+        InterpreterCallerMeta::try_from(serde_json::to_vec(v).unwrap())
+    }
+
+    /// Omitted optional fields parse and take their documented defaults:
+    /// empty desc/source, no alias, both context flags false, no context
+    /// columns, no cells.
+    #[test]
+    fn test_serde_defaults() {
+        let v = serde_json::json!({
+            "name": "Test Caller",
+            "abiName": "TestCaller",
+            "methods": [{
+                "name": "Add Order",
+                "abiName": "addOrder",
+                "inputs": [{
+                    "name": "Order",
+                    "abiName": "order",
+                    "path": "[0]"
+                }],
+                "expressions": [
+                    {
+                        "name": "Calculate",
+                        "abiName": "calculateOrder",
+                        "path": "[0].evaluableConfig",
+                        "contextColumns": [{
+                            "name": "Base"
+                        }]
+                    },
+                    {
+                        "name": "Handle",
+                        "abiName": "handleOrder",
+                        "path": "[1].evaluableConfig"
+                    }
+                ]
+            }]
+        });
+        let parsed = parse(&v).unwrap();
+        assert_eq!(parsed.desc.value, "");
+        assert_eq!(parsed.source.value, "");
+        assert!(parsed.alias.is_none());
+        let method = &parsed.methods[0];
+        assert_eq!(method.desc.value, "");
+        assert_eq!(method.inputs[0].desc.value, "");
+        let expression = &method.expressions[0];
+        assert_eq!(expression.desc.value, "");
+        assert!(!expression.signed_context);
+        assert!(!expression.caller_context);
+        let column = &expression.context_columns[0];
+        assert_eq!(column.desc.value, "");
+        assert!(column.alias.is_none());
+        assert!(column.cells.is_empty());
+        assert!(method.expressions[1].context_columns.is_empty());
+    }
+
+    /// Invalid nested values fail validation at every depth of the
+    /// #[validate] chain: methods -> inputs and
+    /// methods -> expressions -> context_columns -> cells.
+    #[test]
+    fn test_nested_validate_chain() {
+        // Baseline sanity: the valid document parses and validates.
+        assert!(parse(&valid_json()).is_ok());
+
+        // A RainTitle must not begin with a space: " x" is invalid at
+        // any depth.
+        for pointer in [
+            "/methods/0/name",
+            "/methods/0/inputs/0/name",
+            "/methods/0/expressions/0/name",
+            "/methods/0/expressions/0/contextColumns/0/name",
+            "/methods/0/expressions/0/contextColumns/0/cells/0/name",
+        ] {
+            let mut v = valid_json();
+            *v.pointer_mut(pointer).unwrap() = serde_json::Value::String(" x".to_string());
+            let err = parse(&v).unwrap_err();
+            assert!(
+                matches!(err, Error::ValidationErrors(_)),
+                "expected validation error for {pointer}, got {err:?}"
+            );
+        }
+    }
+
+    /// methods and inputs require at least one element; context_columns
+    /// allows at most u8::MAX (255) elements.
+    #[test]
+    fn test_length_constraints() {
+        let mut v = valid_json();
+        *v.pointer_mut("/methods").unwrap() = serde_json::json!([]);
+        assert!(matches!(
+            parse(&v).unwrap_err(),
+            Error::ValidationErrors(_)
+        ));
+
+        let mut v = valid_json();
+        *v.pointer_mut("/methods/0/inputs").unwrap() = serde_json::json!([]);
+        assert!(matches!(
+            parse(&v).unwrap_err(),
+            Error::ValidationErrors(_)
+        ));
+
+        let column = serde_json::json!({ "name": "Col" });
+        let mut v = valid_json();
+        *v.pointer_mut("/methods/0/expressions/0/contextColumns")
+            .unwrap() = serde_json::Value::Array(vec![column.clone(); 255]);
+        assert!(parse(&v).is_ok());
+
+        let mut v = valid_json();
+        *v.pointer_mut("/methods/0/expressions/0/contextColumns")
+            .unwrap() = serde_json::Value::Array(vec![column; 256]);
+        assert!(matches!(
+            parse(&v).unwrap_err(),
+            Error::ValidationErrors(_)
+        ));
+    }
+
+    /// TryFrom<Vec<u8>> and TryFrom<&[u8]> validate after parsing:
+    /// syntactically-valid JSON with semantically-invalid values errors,
+    /// and valid documents round-trip with their values intact.
+    #[test]
+    fn test_try_from_bytes_validates() {
+        let mut invalid = valid_json();
+        *invalid.pointer_mut("/name").unwrap() = serde_json::Value::String(" x".to_string());
+        let bytes = serde_json::to_vec(&invalid).unwrap();
+
+        let err = InterpreterCallerMeta::try_from(bytes.clone()).unwrap_err();
+        assert!(matches!(err, Error::ValidationErrors(_)));
+        let err = InterpreterCallerMeta::try_from(bytes.as_slice()).unwrap_err();
+        assert!(matches!(err, Error::ValidationErrors(_)));
+
+        let valid_bytes = serde_json::to_vec(&valid_json()).unwrap();
+        let ok = InterpreterCallerMeta::try_from(valid_bytes.clone()).unwrap();
+        assert_eq!(ok.name.value, "Test Caller");
+        assert_eq!(ok.abi_name.value, "TestCaller");
+        let ok = InterpreterCallerMeta::try_from(valid_bytes.as_slice()).unwrap();
+        assert_eq!(ok.methods[0].abi_name.value, "addOrder");
+    }
+
+    /// TryFrom<RainMetaDocumentV1Item> unpacks the payload per the item's
+    /// content encoding before parsing.
+    #[test]
+    fn test_try_from_meta_item_unpacks_encoding() {
+        let json_bytes = serde_json::to_vec(&valid_json()).unwrap();
+        let item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(ContentEncoding::Deflate.encode(&json_bytes)),
+            magic: KnownMagic::InterpreterCallerMetaV1,
+            content_type: ContentType::Json,
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::En,
+            schema: None,
+        };
+        let parsed = InterpreterCallerMeta::try_from(item).unwrap();
+        assert_eq!(parsed.name.value, "Test Caller");
+        assert_eq!(parsed.methods.len(), 1);
+    }
+
+    /// Unknown fields are rejected.
+    #[test]
+    fn test_deny_unknown_fields() {
+        let mut v = valid_json();
+        v.as_object_mut()
+            .unwrap()
+            .insert("unknownField".to_string(), serde_json::json!(1));
+        let err = parse(&v).unwrap_err();
+        assert!(matches!(err, Error::SerdeJsonError(_)));
+    }
+
+    /// Field names are camelCase on the wire; the snake_case spelling is
+    /// an unknown field.
+    #[test]
+    fn test_camel_case_wire_format() {
+        assert!(parse(&valid_json()).is_ok());
+
+        let mut v = valid_json();
+        let obj = v.as_object_mut().unwrap();
+        let abi = obj.remove("abiName").unwrap();
+        obj.insert("abi_name".to_string(), abi);
+        assert!(parse(&v).is_err());
+    }
+}
