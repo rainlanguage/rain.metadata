@@ -963,8 +963,7 @@ mod tests {
     // constructor, event and error arms each default missing inputs to an
     // empty vec, independently of the function arm
     #[test]
-    fn test_deserialize_missing_inputs_default_for_constructor_event_error() -> anyhow::Result<()>
-    {
+    fn test_deserialize_missing_inputs_default_for_constructor_event_error() -> anyhow::Result<()> {
         let meta: SolidityAbiMeta =
             serde_json::from_str(r#"[{"type":"constructor","stateMutability":"nonpayable"}]"#)?;
         assert_eq!(
