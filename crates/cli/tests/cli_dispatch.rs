@@ -59,6 +59,14 @@ fn test_dispatch_schema_show() {
     // An unsupported schema is a hard error, not empty output.
     let out = run(&["schema", "show", "dotrain-v1"]);
     assert!(!out.status.success());
+
+    // Each supported meta returns its OWN schema: op-v1 is OpMeta, not any
+    // other schema the match could be rewired to.
+    let out = run(&["schema", "show", "op-v1"]);
+    assert!(out.status.success());
+    let schema: serde_json::Value =
+        serde_json::from_str(&stdout_utf8(&out)).expect("schema show op-v1 did not print JSON");
+    assert_eq!(schema["title"].as_str(), Some("OpMeta."));
 }
 
 /// `validate` routes to `validate::validate`: a meta that normalizes is exit
@@ -197,6 +205,37 @@ fn test_dispatch_solc_artifact() {
     ]);
     assert!(out.status.success());
     assert_eq!(stdout_utf8(&out), r#""0x61""#);
+
+    // bytecode is its own component, distinct from deployedBytecode.
+    let out = run(&[
+        "solc",
+        "artifact",
+        "-c",
+        "bytecode",
+        "-i",
+        artifact.to_str().unwrap(),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(stdout_utf8(&out), r#""0x60""#);
+
+    // -o writes the component to the file INSTEAD of stdout.
+    let out_path = dir.path().join("component.json");
+    let out = run(&[
+        "solc",
+        "artifact",
+        "-c",
+        "abi",
+        "-i",
+        artifact.to_str().unwrap(),
+        "-o",
+        out_path.to_str().unwrap(),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(stdout_utf8(&out), "");
+    assert_eq!(
+        std::fs::read_to_string(&out_path).unwrap(),
+        r#"[{"type":"fallback"}]"#
+    );
 }
 
 /// `subgraph` routes to `subgraph::dispatch`: `all` prints all 9 known URLs,
@@ -220,6 +259,27 @@ fn test_dispatch_subgraph() {
 
     let out = run(&["subgraph", "chain", "2"]);
     assert!(!out.status.success());
+
+    // chain 1 is exactly the 3 ethereum endpoints, in declaration order.
+    let out = run(&["subgraph", "chain", "1"]);
+    assert!(out.status.success());
+    let expected_eth = "\
+https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-ethereum
+https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-np-eth
+https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-npe2-eth
+";
+    assert_eq!(stdout_utf8(&out), expected_eth);
+
+    // chain 80001 is exactly the 3 mumbai endpoints, not an error and not
+    // another network's set.
+    let out = run(&["subgraph", "chain", "80001"]);
+    assert!(out.status.success());
+    let expected_mumbai = "\
+https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry
+https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-np
+https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-npe2
+";
+    assert_eq!(stdout_utf8(&out), expected_mumbai);
 }
 
 /// `generate` routes to `generate::generate`: dotrain source content becomes
