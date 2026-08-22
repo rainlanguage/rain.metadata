@@ -1469,4 +1469,342 @@ mod tests {
 
         Ok(())
     }
+
+    fn plain_item(magic: KnownMagic, payload: Vec<u8>) -> RainMetaDocumentV1Item {
+        RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(payload),
+            magic,
+            content_type: ContentType::None,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        }
+    }
+
+    /// Handwritten canonical cbor for {0: h'01', 1: DotrainV1 magic}, written
+    /// out byte by byte from the cbor spec, independent of cbor_encode.
+    fn handwritten_map() -> Vec<u8> {
+        vec![
+            0xa2, // map(2)
+            0x00, // key 0
+            0x41, 0x01, // bytes(1) 0x01
+            0x01, // key 1
+            0x1b, 0xff, 0xda, 0xc2, 0xf2, 0xf3, 0x7b, 0xe8, 0x94, // u64 DotrainV1
+        ]
+    }
+
+    /// hash(false) is keccak256 of the bare cbor map and hash(true) is
+    /// keccak256 of the rain meta document prefix followed by the same map,
+    /// pinned against independently handwritten bytes.
+    #[test]
+    fn test_hash_bare_vs_document() -> Result<(), Error> {
+        let map_bytes = handwritten_map();
+        let mut doc_bytes: Vec<u8> = vec![0xff, 0x0a, 0x89, 0xc6, 0x74, 0xee, 0x78, 0x74];
+        doc_bytes.extend_from_slice(&map_bytes);
+
+        let item = plain_item(KnownMagic::DotrainV1, vec![0x01]);
+        assert_eq!(item.hash(false)?, keccak256(&map_bytes).0);
+        assert_eq!(item.hash(true)?, keccak256(&doc_bytes).0);
+        assert_ne!(item.hash(false)?, item.hash(true)?);
+        Ok(())
+    }
+
+    /// Empty input and a bare document prefix with no items are corrupt metas.
+    #[test]
+    fn test_cbor_decode_empty_is_corrupt() {
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&[]),
+            Err(Error::CorruptMeta)
+        ));
+        let prefix = KnownMagic::RainMetaDocumentV1.to_prefix_bytes();
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&prefix),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
+    /// A valid map followed by truncated trailing bytes must not decode: the
+    /// data does not end exactly at the last complete item.
+    #[test]
+    fn test_cbor_decode_trailing_truncated_is_corrupt() {
+        let mut bytes = handwritten_map();
+        bytes.push(0x1b); // u64 header with all 8 payload bytes missing
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
+    /// A valid map followed by a byte that is not valid cbor surfaces the
+    /// serde cbor error.
+    #[test]
+    fn test_cbor_decode_trailing_garbage_errors() {
+        let mut bytes = handwritten_map();
+        bytes.push(0xff); // lone break byte
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// A map without the mandatory payload key 0 must not decode.
+    #[test]
+    fn test_cbor_decode_missing_payload_errors() {
+        let mut bytes: Vec<u8> = vec![0xa1, 0x01, 0x1b]; // {1: DotrainV1}
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// A map without the mandatory magic key 1 must not decode.
+    #[test]
+    fn test_cbor_decode_missing_magic_errors() {
+        let bytes: Vec<u8> = vec![0xa1, 0x00, 0x41, 0x01]; // {0: h'01'}
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// A map carrying an unknown magic number value must not decode.
+    #[test]
+    fn test_cbor_decode_unknown_magic_errors() {
+        let mut bytes: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        bytes.extend_from_slice(&0xdeadbeefdeadbeefu64.to_be_bytes());
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// unpack decodes the payload according to the content encoding.
+    #[test]
+    fn test_unpack_decodes_content_encoding() -> Result<(), Error> {
+        let content = b"unpack me via deflate".to_vec();
+        let packed = ContentEncoding::Deflate.encode(&content);
+        assert_ne!(packed, content);
+        let mut item = plain_item(KnownMagic::DotrainV1, packed);
+        item.content_encoding = ContentEncoding::Deflate;
+        assert_eq!(item.unpack()?, content);
+
+        let item = plain_item(KnownMagic::DotrainV1, content.clone());
+        assert_eq!(item.unpack()?, content);
+        Ok(())
+    }
+
+    /// The 13 meta magics unpack; the document magic and the Oa magics are
+    /// rejected with UnsupportedMeta.
+    #[test]
+    fn test_unpack_into_whitelist() {
+        use strum::IntoEnumIterator;
+        let supported = [
+            KnownMagic::OpMetaV1,
+            KnownMagic::DotrainV1,
+            KnownMagic::RainlangV1,
+            KnownMagic::SolidityAbiV2,
+            KnownMagic::AuthoringMetaV1,
+            KnownMagic::AuthoringMetaV2,
+            KnownMagic::AddressList,
+            KnownMagic::InterpreterCallerMetaV1,
+            KnownMagic::ExpressionDeployerV2BytecodeV1,
+            KnownMagic::DotrainSourceV1,
+            KnownMagic::OrderBuilderStateV1,
+            KnownMagic::RainlangSourceV1,
+            KnownMagic::RaindexSignedContextOracleV1,
+        ];
+        for magic in supported {
+            let unpacked: Vec<u8> = plain_item(magic, vec![0x61]).unpack_into().unwrap();
+            assert_eq!(unpacked, vec![0x61], "{:?}", magic);
+        }
+        let unsupported = [
+            KnownMagic::RainMetaDocumentV1,
+            KnownMagic::OaSchema,
+            KnownMagic::OaHashList,
+            KnownMagic::OaStructure,
+            KnownMagic::OaTokenImage,
+            KnownMagic::OaTokenCredentialLinks,
+        ];
+        for magic in unsupported {
+            let result: Result<Vec<u8>, Error> = plain_item(magic, vec![0x61]).unpack_into();
+            assert!(matches!(result, Err(Error::UnsupportedMeta)), "{:?}", magic);
+        }
+        // together the two lists cover every variant
+        assert_eq!(
+            supported.len() + unsupported.len(),
+            KnownMagic::iter().count()
+        );
+    }
+
+    /// Invalid utf8 payloads error when unpacking into String rather than
+    /// being replaced lossily.
+    #[test]
+    fn test_try_into_string_invalid_utf8_errors() {
+        let item = plain_item(KnownMagic::DotrainV1, vec![0xff, 0xfe]);
+        let result: Result<String, Error> = item.try_into();
+        assert!(matches!(result, Err(Error::FromUtf8Error(_))));
+    }
+
+    /// Unpacking into Vec<u8> decodes the content encoding first.
+    #[test]
+    fn test_try_into_vec_decodes_encoding() -> Result<(), Error> {
+        let content = b"raw bytecode bytes \x00\x01\x02".to_vec();
+        let packed = ContentEncoding::Deflate.encode(&content);
+        let mut item = plain_item(KnownMagic::ExpressionDeployerV2BytecodeV1, packed.clone());
+        item.content_encoding = ContentEncoding::Deflate;
+        let unpacked: Vec<u8> = item.try_into()?;
+        assert_eq!(unpacked, content);
+        assert_ne!(unpacked, packed);
+        Ok(())
+    }
+
+    /// Deflate encode produces a zlib stream (RFC1950 CMF byte 0x78) that is
+    /// actually compressed and roundtrips through decode.
+    #[test]
+    fn test_content_encoding_deflate_roundtrip() -> Result<(), Error> {
+        let content = b"hello rain deflate fixture hello rain deflate fixture".to_vec();
+        let encoded = ContentEncoding::Deflate.encode(&content);
+        assert_ne!(encoded, content);
+        assert_eq!(encoded[0], 0x78);
+        assert_eq!(ContentEncoding::Deflate.decode(&encoded)?, content);
+        Ok(())
+    }
+
+    /// None and Identity pass data through unchanged on encode and decode.
+    #[test]
+    fn test_content_encoding_passthrough() -> Result<(), Error> {
+        let data = vec![0x00, 0xff, 0x10];
+        for encoding in [ContentEncoding::None, ContentEncoding::Identity] {
+            assert_eq!(encoding.encode(&data), data, "{:?}", encoding);
+            assert_eq!(encoding.decode(&data)?, data, "{:?}", encoding);
+        }
+        Ok(())
+    }
+
+    /// Decode accepts a zlib stream and falls back to a raw deflate stream.
+    /// Fixtures generated out of band from "hello rain deflate fixture".
+    #[test]
+    fn test_content_encoding_decode_fixtures() -> Result<(), Error> {
+        let content = b"hello rain deflate fixture".to_vec();
+        let zlib: Vec<u8> = vec![
+            120, 156, 203, 72, 205, 201, 201, 87, 40, 74, 204, 204, 83, 72, 73, 77, 203, 73, 44,
+            73, 85, 72, 203, 172, 40, 41, 45, 74, 5, 0, 132, 64, 9, 251,
+        ];
+        let raw: Vec<u8> = vec![
+            203, 72, 205, 201, 201, 87, 40, 74, 204, 204, 83, 72, 73, 77, 203, 73, 44, 73, 85, 72,
+            203, 172, 40, 41, 45, 74, 5, 0,
+        ];
+        assert_eq!(ContentEncoding::Deflate.decode(&zlib)?, content);
+        assert_eq!(ContentEncoding::Deflate.decode(&raw)?, content);
+        Ok(())
+    }
+
+    /// Data that is neither a zlib stream nor a raw deflate stream errors
+    /// with InflateError instead of returning bytes.
+    #[test]
+    fn test_content_encoding_decode_garbage_errors() {
+        let garbage = [0xffu8, 0xff, 0xff, 0xff];
+        assert!(matches!(
+            ContentEncoding::Deflate.decode(&garbage),
+            Err(Error::InflateError(_))
+        ));
+    }
+
+    /// The CLI-facing strum names for the content headers are kebab-case.
+    #[test]
+    fn test_content_headers_strum_names() {
+        use std::str::FromStr;
+        assert_eq!(
+            ContentEncoding::from_str("deflate").unwrap(),
+            ContentEncoding::Deflate
+        );
+        assert_eq!(
+            ContentEncoding::from_str("identity").unwrap(),
+            ContentEncoding::Identity
+        );
+        assert_eq!(
+            ContentEncoding::from_str("none").unwrap(),
+            ContentEncoding::None
+        );
+        assert_eq!(ContentEncoding::Deflate.to_string(), "deflate");
+        assert_eq!(
+            ContentType::from_str("octet-stream").unwrap(),
+            ContentType::OctetStream
+        );
+        assert_eq!(ContentType::from_str("json").unwrap(), ContentType::Json);
+        assert_eq!(ContentType::Json.to_string(), "json");
+        assert_eq!(
+            ContentLanguage::from_str("en").unwrap(),
+            ContentLanguage::En
+        );
+    }
+
+    /// Every documented meta magic maps to its KnownMeta while the document
+    /// magic and the Oa magics are unsupported.
+    #[test]
+    fn test_known_meta_try_from_magic() {
+        let cases: [(KnownMagic, KnownMeta); 13] = [
+            (KnownMagic::OpMetaV1, KnownMeta::OpV1),
+            (KnownMagic::DotrainV1, KnownMeta::DotrainV1),
+            (KnownMagic::RainlangV1, KnownMeta::RainlangV1),
+            (KnownMagic::SolidityAbiV2, KnownMeta::SolidityAbiV2),
+            (KnownMagic::AuthoringMetaV1, KnownMeta::AuthoringMetaV1),
+            (KnownMagic::AuthoringMetaV2, KnownMeta::AuthoringMetaV2),
+            (KnownMagic::AddressList, KnownMeta::AddressList),
+            (
+                KnownMagic::InterpreterCallerMetaV1,
+                KnownMeta::InterpreterCallerMetaV1,
+            ),
+            (
+                KnownMagic::ExpressionDeployerV2BytecodeV1,
+                KnownMeta::ExpressionDeployerV2BytecodeV1,
+            ),
+            (KnownMagic::RainlangSourceV1, KnownMeta::RainlangSourceV1),
+            (KnownMagic::DotrainSourceV1, KnownMeta::DotrainSourceV1),
+            (
+                KnownMagic::OrderBuilderStateV1,
+                KnownMeta::OrderBuilderStateV1,
+            ),
+            (
+                KnownMagic::RaindexSignedContextOracleV1,
+                KnownMeta::RaindexSignedContextOracleV1,
+            ),
+        ];
+        for (magic, meta) in cases {
+            assert_eq!(KnownMeta::try_from(magic).unwrap(), meta, "{:?}", magic);
+        }
+        for magic in [
+            KnownMagic::RainMetaDocumentV1,
+            KnownMagic::OaSchema,
+            KnownMagic::OaHashList,
+            KnownMagic::OaStructure,
+            KnownMagic::OaTokenImage,
+            KnownMagic::OaTokenCredentialLinks,
+        ] {
+            assert!(
+                matches!(KnownMeta::try_from(magic), Err(Error::UnsupportedMeta)),
+                "{:?}",
+                magic
+            );
+        }
+    }
+
+    /// KnownMeta parses from and displays as the kebab-case names used by the
+    /// CLI (validate --meta, build, schema show).
+    #[test]
+    fn test_known_meta_strum_parse_display() {
+        use std::str::FromStr;
+        assert_eq!(KnownMeta::from_str("op-v1").unwrap(), KnownMeta::OpV1);
+        assert_eq!(
+            KnownMeta::from_str("solidity-abi-v2").unwrap(),
+            KnownMeta::SolidityAbiV2
+        );
+        assert_eq!(
+            KnownMeta::from_str("interpreter-caller-meta-v1").unwrap(),
+            KnownMeta::InterpreterCallerMetaV1
+        );
+        assert_eq!(KnownMeta::SolidityAbiV2.to_string(), "solidity-abi-v2");
+        assert_eq!(KnownMeta::OpV1.to_string(), "op-v1");
+    }
 }
