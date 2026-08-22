@@ -293,17 +293,11 @@ mod tests {
     fn test_length_constraints() {
         let mut v = valid_json();
         *v.pointer_mut("/methods").unwrap() = serde_json::json!([]);
-        assert!(matches!(
-            parse(&v).unwrap_err(),
-            Error::ValidationErrors(_)
-        ));
+        assert!(matches!(parse(&v).unwrap_err(), Error::ValidationErrors(_)));
 
         let mut v = valid_json();
         *v.pointer_mut("/methods/0/inputs").unwrap() = serde_json::json!([]);
-        assert!(matches!(
-            parse(&v).unwrap_err(),
-            Error::ValidationErrors(_)
-        ));
+        assert!(matches!(parse(&v).unwrap_err(), Error::ValidationErrors(_)));
 
         let column = serde_json::json!({ "name": "Col" });
         let mut v = valid_json();
@@ -314,10 +308,7 @@ mod tests {
         let mut v = valid_json();
         *v.pointer_mut("/methods/0/expressions/0/contextColumns")
             .unwrap() = serde_json::Value::Array(vec![column; 256]);
-        assert!(matches!(
-            parse(&v).unwrap_err(),
-            Error::ValidationErrors(_)
-        ));
+        assert!(matches!(parse(&v).unwrap_err(), Error::ValidationErrors(_)));
     }
 
     /// TryFrom<Vec<u8>> and TryFrom<&[u8]> validate after parsing:

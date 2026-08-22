@@ -106,7 +106,10 @@ fn schema_check_prints_verified_entity_count() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(stdout, "schema check ok: 2 entities verified against source\n");
+    assert_eq!(
+        stdout,
+        "schema check ok: 2 entities verified against source\n"
+    );
 }
 
 /// `generate source` reads the dotrain content from stdin when no input

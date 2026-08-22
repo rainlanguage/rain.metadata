@@ -354,9 +354,12 @@ mod tests {
     fn test_build_arity_guards() {
         let b = parse_build(&[
             "build",
-            "-i", "does-not-exist.json",
-            "-m", "solidity-abi-v2",
-            "-m", "solidity-abi-v2",
+            "-i",
+            "does-not-exist.json",
+            "-m",
+            "solidity-abi-v2",
+            "-m",
+            "solidity-abi-v2",
         ]);
         assert_eq!(
             build(b).unwrap_err().to_string(),
@@ -365,10 +368,14 @@ mod tests {
 
         let b = parse_build(&[
             "build",
-            "-i", "does-not-exist.json",
-            "-m", "solidity-abi-v2",
-            "-t", "json",
-            "-t", "json",
+            "-i",
+            "does-not-exist.json",
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-t",
+            "json",
         ]);
         assert_eq!(
             build(b).unwrap_err().to_string(),
@@ -377,11 +384,16 @@ mod tests {
 
         let b = parse_build(&[
             "build",
-            "-i", "does-not-exist.json",
-            "-m", "solidity-abi-v2",
-            "-t", "json",
-            "-e", "identity",
-            "-e", "identity",
+            "-i",
+            "does-not-exist.json",
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-e",
+            "identity",
+            "-e",
+            "identity",
         ]);
         assert_eq!(
             build(b).unwrap_err().to_string(),
@@ -390,12 +402,18 @@ mod tests {
 
         let b = parse_build(&[
             "build",
-            "-i", "does-not-exist.json",
-            "-m", "solidity-abi-v2",
-            "-t", "json",
-            "-e", "identity",
-            "-l", "en",
-            "-l", "en",
+            "-i",
+            "does-not-exist.json",
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-e",
+            "identity",
+            "-l",
+            "en",
+            "-l",
+            "en",
         ]);
         assert_eq!(
             build(b).unwrap_err().to_string(),
@@ -428,25 +446,38 @@ mod tests {
 
         let b = parse_build(&[
             "build",
-            "-i", &input_path,
-            "-m", "solidity-abi-v2",
-            "-t", "json",
-            "-e", "identity",
-            "-l", "en",
-            "-o", &output_path,
+            "-i",
+            &input_path,
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-e",
+            "identity",
+            "-l",
+            "en",
+            "-o",
+            &output_path,
         ]);
         build(b)?;
         assert_eq!(std::fs::read(output.path())?, expected);
 
         let b = parse_build(&[
             "build",
-            "-i", &input_path,
-            "-m", "solidity-abi-v2",
-            "-t", "json",
-            "-e", "identity",
-            "-l", "en",
-            "-o", &output_path,
-            "-E", "hex",
+            "-i",
+            &input_path,
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-e",
+            "identity",
+            "-l",
+            "en",
+            "-o",
+            &output_path,
+            "-E",
+            "hex",
         ]);
         build(b)?;
         assert_eq!(
