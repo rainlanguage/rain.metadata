@@ -651,4 +651,313 @@ mod tests {
         ));
         Ok(())
     }
+
+    #[test]
+    fn test_from_artifact_extracts_abi_key() -> anyhow::Result<()> {
+        let artifact = serde_json::json!({
+            "abi": [{
+                "inputs": [],
+                "name": "f",
+                "outputs": [],
+                "stateMutability": "view",
+                "type": "function"
+            }],
+            "bytecode": { "object": "0x" }
+        });
+        let meta = SolidityAbiMeta::from_artifact(serde_json::to_vec(&artifact)?.as_slice())?;
+        assert_eq!(meta.0.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&meta)?,
+            artifact["abi"],
+            "from_artifact must surface exactly the artifact's abi section"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_try_from_bytes_rejects_invalid_json() {
+        let garbage = b"definitely not json".to_vec();
+        assert!(matches!(
+            SolidityAbiMeta::try_from(garbage.clone()),
+            Err(Error::SerdeJsonError(_))
+        ));
+        assert!(matches!(
+            SolidityAbiMeta::try_from(garbage.as_slice()),
+            Err(Error::SerdeJsonError(_))
+        ));
+    }
+
+    #[test]
+    fn test_try_from_item_unpacks_content_encoding() -> anyhow::Result<()> {
+        use serde_bytes::ByteBuf;
+        use crate::meta::{
+            ContentEncoding, ContentLanguage, ContentType, KnownMagic, RainMetaDocumentV1Item,
+        };
+        let abi = serde_json::json!([{
+            "inputs": [],
+            "name": "f",
+            "outputs": [],
+            "stateMutability": "view",
+            "type": "function"
+        }]);
+        let abi_bytes = serde_json::to_vec(&abi)?;
+        let deflated = ContentEncoding::Deflate.encode(&abi_bytes);
+        assert_ne!(deflated, abi_bytes);
+        let item = RainMetaDocumentV1Item {
+            payload: ByteBuf::from(deflated),
+            magic: KnownMagic::SolidityAbiV2,
+            content_type: ContentType::Json,
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let meta = SolidityAbiMeta::try_from(item.clone())?;
+        assert_eq!(serde_json::to_value(&meta)?, abi);
+        let json_abi = JsonAbi::try_from(item)?;
+        assert_eq!(json_abi.functions().count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialize_all_item_kinds_roundtrip() -> anyhow::Result<()> {
+        // every item kind the serializers support, including nested tuple
+        // components on fn/event/error inputs; committed interface abis only
+        // exercise function and event without components.
+        let abi = serde_json::json!([
+            {
+                "inputs": [{
+                    "components": [{
+                        "internalType": "uint256",
+                        "name": "amount",
+                        "type": "uint256"
+                    }],
+                    "internalType": "struct Order",
+                    "name": "order",
+                    "type": "tuple"
+                }],
+                "name": "takeOrder",
+                "outputs": [],
+                "stateMutability": "payable",
+                "type": "function"
+            },
+            {
+                "inputs": [{
+                    "internalType": "address",
+                    "name": "owner",
+                    "type": "address"
+                }],
+                "stateMutability": "nonpayable",
+                "type": "constructor"
+            },
+            { "stateMutability": "payable", "type": "receive" },
+            { "stateMutability": "nonpayable", "type": "fallback" },
+            {
+                "anonymous": false,
+                "inputs": [{
+                    "components": [{
+                        "internalType": "uint8",
+                        "name": "kind",
+                        "type": "uint8"
+                    }],
+                    "indexed": false,
+                    "internalType": "struct Info",
+                    "name": "info",
+                    "type": "tuple"
+                }],
+                "name": "Traded",
+                "type": "event"
+            },
+            {
+                "inputs": [{
+                    "components": [{
+                        "internalType": "bytes32",
+                        "name": "id",
+                        "type": "bytes32"
+                    }],
+                    "internalType": "struct Ctx",
+                    "name": "ctx",
+                    "type": "tuple"
+                }],
+                "name": "BadOrder",
+                "type": "error"
+            }
+        ]);
+        let meta: SolidityAbiMeta = serde_json::from_value(abi.clone())?;
+        assert_eq!(serde_json::to_value(&meta)?, abi);
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialize_fn_exact_field_order_and_component_skipping() -> anyhow::Result<()> {
+        let abi = serde_json::json!([{
+            "inputs": [{
+                "internalType": "uint256",
+                "name": "a",
+                "type": "uint256"
+            }],
+            "name": "f",
+            "outputs": [],
+            "stateMutability": "view",
+            "type": "function"
+        }]);
+        let meta: SolidityAbiMeta = serde_json::from_value(abi)?;
+        // exact serialized text: solc artifact field order, camelCase
+        // stateMutability, and NO components key when components is None.
+        assert_eq!(
+            serde_json::to_string(&meta)?,
+            "[{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"a\",\"type\":\"uint256\"}],\"name\":\"f\",\"outputs\":[],\"stateMutability\":\"view\",\"type\":\"function\"}]"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_rejects_indexed_on_fn_io() {
+        let abi = serde_json::json!([{
+            "inputs": [{
+                "indexed": true,
+                "internalType": "uint256",
+                "name": "a",
+                "type": "uint256"
+            }],
+            "name": "f",
+            "outputs": [],
+            "stateMutability": "view",
+            "type": "function"
+        }]);
+        let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi);
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("indexed found on fn io"),
+            "unexpected message: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn test_deserialize_requires_indexed_on_event_input() {
+        let abi = serde_json::json!([{
+            "anonymous": false,
+            "inputs": [{
+                "internalType": "uint256",
+                "name": "a",
+                "type": "uint256"
+            }],
+            "name": "E",
+            "type": "event"
+        }]);
+        let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi);
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("indexed missing on event input"),
+            "unexpected message: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn test_deserialize_rejects_indexed_on_event_component() {
+        let abi = serde_json::json!([{
+            "anonymous": false,
+            "inputs": [{
+                "components": [{
+                    "indexed": true,
+                    "internalType": "uint8",
+                    "name": "kind",
+                    "type": "uint8"
+                }],
+                "indexed": false,
+                "internalType": "struct Info",
+                "name": "info",
+                "type": "tuple"
+            }],
+            "name": "E",
+            "type": "event"
+        }]);
+        let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi);
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("indexed found on event component"),
+            "unexpected message: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn test_deserialize_rejects_indexed_on_error_input() {
+        let abi = serde_json::json!([{
+            "inputs": [{
+                "indexed": true,
+                "internalType": "uint256",
+                "name": "a",
+                "type": "uint256"
+            }],
+            "name": "Bad",
+            "type": "error"
+        }]);
+        let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi);
+        assert!(result.unwrap_err().to_string().contains("indexed found"),);
+    }
+
+    #[test]
+    fn test_deserialize_missing_required_fields_error_messages() {
+        let cases: Vec<(serde_json::Value, &str)> = vec![
+            (
+                serde_json::json!([{"inputs": [], "outputs": [], "stateMutability": "view", "type": "function"}]),
+                "function missing name",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "outputs": [], "name": "f", "type": "function"}]),
+                "function missing mutability",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "type": "constructor"}]),
+                "constructor missing mutability",
+            ),
+            (
+                serde_json::json!([{"type": "receive"}]),
+                "receive missing mutability",
+            ),
+            (
+                serde_json::json!([{"type": "fallback"}]),
+                "fallback missing mutability",
+            ),
+            (
+                serde_json::json!([{"anonymous": false, "inputs": [], "type": "event"}]),
+                "event missing name",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "name": "E", "type": "event"}]),
+                "event missing anonymous",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "type": "error"}]),
+                "error missing name",
+            ),
+        ];
+        for (abi, expected_message) in cases {
+            let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi.clone());
+            let message = result.unwrap_err().to_string();
+            assert!(
+                message.contains(expected_message),
+                "abi {} produced {:?} instead of {:?}",
+                abi,
+                message,
+                expected_message
+            );
+        }
+    }
+
+    #[test]
+    fn test_deserialize_missing_inputs_outputs_default_to_empty() -> anyhow::Result<()> {
+        let abi = serde_json::json!([{
+            "name": "f",
+            "stateMutability": "view",
+            "type": "function"
+        }]);
+        let meta: SolidityAbiMeta = serde_json::from_value(abi)?;
+        let round = serde_json::to_value(&meta)?;
+        assert_eq!(round[0]["inputs"], serde_json::json!([]));
+        assert_eq!(round[0]["outputs"], serde_json::json!([]));
+        Ok(())
+    }
 }

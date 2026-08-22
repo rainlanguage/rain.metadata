@@ -226,4 +226,132 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_item_encode_decode_roundtrip_offset_and_word_bytes() -> Result<(), Error> {
+        let item = AuthoringMetaItem {
+            word: "stack".to_string(),
+            operand_parser_offset: 16u8,
+            description: "some description.".to_string(),
+        };
+        let encoded = item.abi_encode()?;
+        // ABI layout for a single dynamic (bytes32, uint8, string) value: one
+        // indirection word (offset 0x20), then the tuple body whose first
+        // word carries the word left-aligned and zero padded and whose second
+        // word carries the uint8 in its last byte.
+        assert_eq!(&encoded[0..31], &[0u8; 31][..]);
+        assert_eq!(encoded[31], 0x20u8);
+        assert_eq!(&encoded[32..37], &b"stack"[..]);
+        assert_eq!(&encoded[37..64], &[0u8; 27][..]);
+        assert_eq!(&encoded[64..95], &[0u8; 31][..]);
+        assert_eq!(encoded[95], 16u8);
+        let decoded = AuthoringMetaItem::abi_decode(&encoded)?;
+        assert_eq!(decoded, item);
+        Ok(())
+    }
+
+    #[test]
+    fn test_item_abi_encode_validate_rejects_invalid_word() {
+        let item = AuthoringMetaItem {
+            // printable ASCII (passes RAIN_STRING) but not lower-kebab-case
+            // (fails RAIN_SYMBOL), so word validation specifically must fire.
+            word: "Bad Word".to_string(),
+            operand_parser_offset: 0u8,
+            description: "fine description.".to_string(),
+        };
+        // encoding itself works, so any failure below is validation
+        assert!(item.abi_encode().is_ok());
+        assert!(matches!(
+            item.abi_encode_validate(),
+            Err(Error::ValidationErrors(_))
+        ));
+    }
+
+    #[test]
+    fn test_item_abi_decode_validate_rejects_invalid_word() {
+        let item = AuthoringMetaItem {
+            word: "Bad Word".to_string(),
+            operand_parser_offset: 0u8,
+            description: "fine description.".to_string(),
+        };
+        let encoded = item.abi_encode().unwrap();
+        // plain decode accepts the bytes
+        assert_eq!(AuthoringMetaItem::abi_decode(&encoded).unwrap(), item);
+        // validating decode rejects them
+        assert!(matches!(
+            AuthoringMetaItem::abi_decode_validate(&encoded),
+            Err(Error::ValidationErrors(_))
+        ));
+    }
+
+    #[test]
+    fn test_array_validate_rejects_and_annotates_offending_index() {
+        let am = AuthoringMeta(vec![
+            AuthoringMetaItem {
+                word: "stack".to_string(),
+                operand_parser_offset: 0u8,
+                description: "fine description.".to_string(),
+            },
+            AuthoringMetaItem {
+                word: "Bad Word".to_string(),
+                operand_parser_offset: 0u8,
+                description: "fine description.".to_string(),
+            },
+        ]);
+        match am.abi_encode_validate() {
+            Err(Error::ValidationErrors(v)) => {
+                let errors = v.errors();
+                assert!(errors.contains_key("at index 1"));
+                assert!(!errors.contains_key("at index 0"));
+            }
+            other => panic!("expected ValidationErrors, got {:?}", other.err()),
+        }
+    }
+
+    #[test]
+    fn test_try_from_bytes_json_fallback() -> Result<(), Error> {
+        let json_bytes =
+            br#"[{"word":"stack","description":"a description.","operandParserOffset":16}]"#
+                .to_vec();
+        let expected = AuthoringMeta(vec![AuthoringMetaItem {
+            word: "stack".to_string(),
+            operand_parser_offset: 16u8,
+            description: "a description.".to_string(),
+        }]);
+        // json bytes resolve through the serde_json fallback arm
+        let from_vec = AuthoringMeta::try_from(json_bytes.clone())?;
+        assert_eq!(from_vec, expected);
+        let from_slice = AuthoringMeta::try_from(json_bytes.as_slice())?;
+        assert_eq!(from_slice, expected);
+        // abi encoded bytes resolve through the abi_decode arm
+        let encoded = expected.abi_encode()?;
+        assert_eq!(AuthoringMeta::try_from(encoded)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_try_from_meta_item_unpacks_content_encoding() -> Result<(), Error> {
+        use crate::meta::{
+            ContentEncoding, ContentLanguage, ContentType, KnownMagic, RainMetaDocumentV1Item,
+        };
+        let expected = AuthoringMeta(vec![AuthoringMetaItem {
+            word: "stack".to_string(),
+            operand_parser_offset: 16u8,
+            description: "a description.".to_string(),
+        }]);
+        let encoded = expected.abi_encode_validate()?;
+        let deflated = ContentEncoding::Deflate.encode(&encoded);
+        assert_ne!(deflated, encoded);
+        let item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(deflated),
+            magic: KnownMagic::AuthoringMetaV1,
+            content_type: ContentType::Cbor,
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        // TryFrom must unpack (inflate) the payload before decoding
+        assert_eq!(AuthoringMeta::try_from(item)?, expected);
+        Ok(())
+    }
 }
