@@ -150,7 +150,11 @@ mod tests {
             content_language: ContentLanguage::None,
             schema: None,
         };
-        assert!(RaindexSignedContextOracleV1::find_in_items(&[item]).is_err());
+        // The failure must be the utf8 decode error itself, propagated.
+        match RaindexSignedContextOracleV1::find_in_items(&[item]) {
+            Err(Error::FromUtf8Error(_)) => {}
+            other => panic!("Expected Err(FromUtf8Error), got {:?}", other),
+        }
     }
 
     #[test]
@@ -168,7 +172,10 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_url() {
-        assert!(RaindexSignedContextOracleV1::parse("not a url").is_err());
+        match RaindexSignedContextOracleV1::parse("not a url") {
+            Err(Error::InvalidUrl(_)) => {}
+            other => panic!("Expected Err(InvalidUrl), got {:?}", other),
+        }
     }
 
     #[test]
@@ -186,7 +193,10 @@ mod tests {
             content_language: ContentLanguage::None,
             schema: None,
         };
-        assert!(RaindexSignedContextOracleV1::try_from(item).is_err());
+        match RaindexSignedContextOracleV1::try_from(item) {
+            Err(Error::UnsupportedMeta) => {}
+            other => panic!("Expected Err(UnsupportedMeta), got {:?}", other),
+        }
     }
 
     #[test]
@@ -196,5 +206,53 @@ mod tests {
         let parsed = oracle.parsed_url().unwrap();
         assert_eq!(parsed.host_str(), Some("example.com"));
         assert_eq!(parsed.path(), "/feed");
+    }
+
+    #[test]
+    fn test_to_meta_item_fields() {
+        let url = "https://oracle.example.com/prices/eth-usd";
+        let oracle = RaindexSignedContextOracleV1::parse(url).unwrap();
+        let item = oracle.to_meta_item();
+        // Payload is the raw utf8 bytes of the URL; every envelope field is
+        // the None variant.
+        assert_eq!(item.payload.as_ref(), url.as_bytes());
+        assert_eq!(item.magic, KnownMagic::RaindexSignedContextOracleV1);
+        assert_eq!(item.content_type, ContentType::None);
+        assert_eq!(item.content_encoding, ContentEncoding::None);
+        assert_eq!(item.content_language, ContentLanguage::None);
+        assert!(item.schema.is_none());
+    }
+
+    #[test]
+    fn test_try_from_unpacks_content_encoding() {
+        // TryFrom must unpack() the payload (honouring content_encoding),
+        // not read the raw bytes.
+        let url = "https://oracle.example.com/prices/eth-usd";
+        let item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(ContentEncoding::Deflate.encode(url.as_bytes())),
+            magic: KnownMagic::RaindexSignedContextOracleV1,
+            content_type: ContentType::None,
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let oracle = RaindexSignedContextOracleV1::try_from(item).unwrap();
+        assert_eq!(oracle.url(), url);
+    }
+
+    #[test]
+    fn test_try_from_rejects_non_url_payload() {
+        let item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(b"not a url".to_vec()),
+            magic: KnownMagic::RaindexSignedContextOracleV1,
+            content_type: ContentType::None,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        match RaindexSignedContextOracleV1::try_from(item) {
+            Err(Error::InvalidUrl(_)) => {}
+            other => panic!("Expected Err(InvalidUrl), got {:?}", other),
+        }
     }
 }
