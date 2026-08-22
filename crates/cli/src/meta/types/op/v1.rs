@@ -287,8 +287,8 @@ mod tests {
     // with out-of-bounds ends (e.g. (0, 16)): the hand-rolled
     // ValidationErrors::merge_all call currently drops the per-end
     // BitInteger results, so (0, 16) validates Ok today. Pinning either
-    // outcome is wrong while that is unresolved — see the audit issue on
-    // merge_all misuse in this file.
+    // outcome is wrong while that is unresolved — see
+    // rainlanguage/rain.metadata#173.
 
     #[test]
     fn test_operand_arg_range_exact_is_valid() {
@@ -325,7 +325,7 @@ mod tests {
         // under the "output" key), so a Computed output with an
         // out-of-bounds range or non-ASCII computation validates Ok today.
         // Pinning either outcome is wrong while that is unresolved — see
-        // the audit issue on merge_all misuse in this file.
+        // rainlanguage/rain.metadata#173.
     }
 
     #[test]
@@ -358,8 +358,8 @@ mod tests {
         // An out-of-order range fails BitIntegerRange's own order check,
         // which must propagate through Input.bits' nested #[validate].
         // (The per-end bounds check, e.g. bits [0,16], is currently
-        // dropped by merge_all misuse — see the audit issue — so only the
-        // order violation is pinned here.)
+        // dropped by merge_all misuse — see rainlanguage/rain.metadata#173 —
+        // so only the order violation is pinned here.)
         assert!(
             OpMeta::try_from(br#"{"name":"add","inputs":[{"bits":[16,0]}]}"#.to_vec()).is_err()
         );
