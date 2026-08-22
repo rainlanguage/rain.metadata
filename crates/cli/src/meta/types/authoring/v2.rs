@@ -404,12 +404,12 @@ mod tests {
                 let FetchAuthoringMetaV2WordError {
                     contract_address,
                     rpcs,
-                    metaboard_url,
+                    metaboard_url: err_metaboard_url,
                     error,
                 } = error;
                 assert_eq!(contract_address, Address::from([0u8; 20]));
                 assert_eq!(rpcs, vec![rpc_url.to_string()]);
-                assert_eq!(metaboard_url, metaboard_url.to_string());
+                assert_eq!(err_metaboard_url, metaboard_url.to_string());
                 match error {
                     AuthoringMetaV2Error::HasNoWords => {}
                     _ => panic!("Unexpected error: {:?}", error),
