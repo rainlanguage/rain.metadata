@@ -301,10 +301,7 @@ mod tests {
             (KnownMagic::AddressList, "ffb2637608c09e38"),
             (KnownMagic::DotrainSourceV1, "ffa15ef0fc437099"),
             (KnownMagic::OrderBuilderStateV1, "ffda7b2fb167c286"),
-            (
-                KnownMagic::RaindexSignedContextOracleV1,
-                "ff7a1507ba4419ca",
-            ),
+            (KnownMagic::RaindexSignedContextOracleV1, "ff7a1507ba4419ca"),
             (KnownMagic::OaSchema, "ffa8e8a9b9cf4a31"),
             (KnownMagic::OaHashList, "ff9fae3cc645f463"),
             (KnownMagic::OaStructure, "ffc47a6299e8a911"),
@@ -314,12 +311,7 @@ mod tests {
         // every variant is pinned exactly once
         assert_eq!(expected.len(), KnownMagic::iter().count());
         for (magic, hex_str) in expected {
-            assert_eq!(
-                hex::encode(magic.to_prefix_bytes()),
-                hex_str,
-                "{:?}",
-                magic
-            );
+            assert_eq!(hex::encode(magic.to_prefix_bytes()), hex_str, "{:?}", magic);
         }
     }
 
@@ -387,7 +379,10 @@ mod tests {
             (KnownMagic::OaHashList, "oa-hash-list"),
             (KnownMagic::OaStructure, "oa-structure"),
             (KnownMagic::OaTokenImage, "oa-token-image"),
-            (KnownMagic::OaTokenCredentialLinks, "oa-token-credential-links"),
+            (
+                KnownMagic::OaTokenCredentialLinks,
+                "oa-token-credential-links",
+            ),
         ];
         for (magic, name) in cases {
             assert_eq!(magic.to_string(), name, "{:?}", magic);
