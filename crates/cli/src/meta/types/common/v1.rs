@@ -105,7 +105,7 @@ mod test {
 
         // invalids
         for i in [
-            "", "♥", "-", " ", "A", "A0", "a ", "0", "_", "0a", "0A", "\n", "\t", "\r",
+            "", "♥", "-", " ", "A", "A0", "a ", "0", "_", "0a", "0A", "\n", "\t", "\r", "aA",
         ] {
             assert!(
                 RainSymbol {
@@ -137,7 +137,7 @@ mod test {
         }
 
         // invalids
-        for i in ["", " ", " a", "a ", "♥", "\n", "\t", "\r"] {
+        for i in ["", " ", " a", "a ", "♥", "\n", "\t", "\r", "\u{7f}"] {
             assert!(
                 RainTitle {
                     value: i.to_string()
@@ -169,7 +169,7 @@ mod test {
         }
 
         // invalids
-        for i in ["♥", "∴"] {
+        for i in ["♥", "∴", "\u{7f}"] {
             assert!(
                 RainString {
                     value: i.to_string()
@@ -249,6 +249,8 @@ mod test {
             "0x78fd1edb0bdb928db6015990fecafbb964b44692e2d435693062dd4efc6254dd ",
             " 0x78fd1edb0bdb928db6015990fecafbb964b44692e2d435693062dd4efc6254dd",
             "0x78fd1edb0bdb928db6015990fecafbb9 64b44692e2d435693062dd4efc6254dd",
+            "0xgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+            "0X78fd1edb0bdb928db6015990fecafbb964b44692e2d435693062dd4efc6254dd",
         ] {
             assert!(
                 !HASH_PATTERN.is_match(i),
