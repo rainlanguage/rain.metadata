@@ -283,8 +283,7 @@ mod tests {
             listener.local_addr().unwrap().port()
         };
         let url = format!("http://127.0.0.1:{port}/");
-        let result =
-            process_meta_query(Arc::new(Client::new()), &request_body(HASH), &url).await;
+        let result = process_meta_query(Arc::new(Client::new()), &request_body(HASH), &url).await;
         assert!(matches!(result, Err(Error::ReqwestError(_))), "{result:?}");
     }
 
@@ -318,9 +317,7 @@ mod tests {
 
     fn authoring_item() -> RainMetaDocumentV1Item {
         RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from(
-                authoring_meta().abi_encode_validate().unwrap(),
-            ),
+            payload: serde_bytes::ByteBuf::from(authoring_meta().abi_encode_validate().unwrap()),
             magic: KnownMagic::AuthoringMetaV1,
             content_type: ContentType::None,
             content_encoding: ContentEncoding::None,
