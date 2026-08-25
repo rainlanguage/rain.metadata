@@ -33,6 +33,11 @@ contract LibMetaCheckMetaHashedV1_2Test is Test {
     /// the hash of the data matches the expected hash passed to the check.
     function testCheckMetaHashedV1_2BadMagicGoodHash(bytes memory meta) public {
         bytes32 metaHash = keccak256(meta);
+        // The fuzzer CAN produce `meta` that carries the magic prefix — the
+        // magic number sits in the fuzz dictionary — and such meta paired
+        // with its own good hash passes the check rather than reverting, so
+        // the bad magic premise has to be enforced rather than presumed.
+        vm.assume(!LibMeta.isRainMetaV1(meta));
         vm.expectRevert(abi.encodeWithSelector(NotRainMetaV1.selector, meta));
         this.checkMetaHashedV1External(metaHash, meta);
     }

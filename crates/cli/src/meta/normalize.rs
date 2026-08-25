@@ -41,10 +41,11 @@ impl KnownMeta {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
-    use crate::meta::KnownMeta;
     use crate::error::Error;
+    use crate::meta::types::authoring::v1::{AuthoringMeta, AuthoringMetaItem};
+    use crate::meta::KnownMeta;
 
     /// OpV1 normalizes valid metadata to its canonical compact json form.
     #[test]
@@ -111,5 +112,60 @@ mod tests {
                 .unwrap(),
             data
         );
+    }
+
+    fn sample_authoring_meta() -> AuthoringMeta {
+        serde_json::from_str(
+            r#"[{"word":"stack","description":"Copies an existing value from the stack.","operandParserOffset":16}]"#,
+        )
+        .unwrap()
+    }
+
+    /// Valid abi encoded input takes the abi-decode path and is re-encoded
+    /// with validation, byte identically.
+    #[test]
+    fn test_normalize_authoring_meta_v1_abi_path() {
+        let authoring_meta = sample_authoring_meta();
+        let abi = authoring_meta.abi_encode_validate().unwrap();
+        let normalized = KnownMeta::AuthoringMetaV1.normalize(&abi).unwrap();
+        assert_eq!(normalized, abi);
+    }
+
+    /// Abi-decodable input that fails validation must be rejected: the abi
+    /// path re-encodes via abi_encode_validate, not a passthrough.
+    #[test]
+    fn test_normalize_authoring_meta_v1_abi_invalid_rejected() {
+        let invalid = AuthoringMeta(vec![AuthoringMetaItem {
+            word: "NOTKEBAB".to_string(),
+            operand_parser_offset: 0,
+            description: "some description".to_string(),
+        }]);
+        // encode WITHOUT validation so the bytes are decodable but invalid
+        let abi = invalid.abi_encode().unwrap();
+        let result = KnownMeta::AuthoringMetaV1.normalize(&abi);
+        assert!(matches!(result, Err(Error::ValidationErrors(_))));
+    }
+
+    /// Json input falls back to serde parse and is abi encoded with
+    /// validation: output is the abi encoding, not the raw json bytes.
+    #[test]
+    fn test_normalize_authoring_meta_v1_json_fallback() {
+        let json = r#"[{"word":"stack","description":"Copies an existing value from the stack.","operandParserOffset":16}]"#;
+        let expected = sample_authoring_meta().abi_encode_validate().unwrap();
+        let normalized = KnownMeta::AuthoringMetaV1
+            .normalize(json.as_bytes())
+            .unwrap();
+        assert_eq!(normalized, expected);
+        assert_ne!(normalized, json.as_bytes().to_vec());
+    }
+
+    /// Meta types without a structured normal form pass raw bytes through
+    /// unchanged.
+    #[test]
+    fn test_normalize_default_arm_passthrough() {
+        let data = b"some dotrain text".to_vec();
+        assert_eq!(KnownMeta::DotrainV1.normalize(&data).unwrap(), data);
+        let binary = vec![0xffu8, 0x00, 0x01];
+        assert_eq!(KnownMeta::RainlangV1.normalize(&binary).unwrap(), binary);
     }
 }
