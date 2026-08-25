@@ -135,7 +135,7 @@ fn test_dispatch_magic_ls() {
     let stdout = stdout_utf8(&out);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[0], "0xff0a89c674ee7874 rain-meta-document-v1");
-    assert_eq!(lines.len(), 19);
+    assert_eq!(lines.len(), 20);
     for line in &lines {
         assert!(line.starts_with("0xff"), "not a magic line: {}", line);
     }

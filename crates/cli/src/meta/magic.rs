@@ -45,6 +45,8 @@ pub enum KnownMagic {
     /// Payload is raw UTF-8 bytes containing the oracle endpoint URL.
     /// Used in order metadata to tell takers where to GET signed context data.
     RaindexSignedContextOracleV1 = 0xff7a1507ba4419ca,
+    /// Web data v1
+    WebDataV1 = 0xff5dcce9b571ba42,
     /// OffchainAsset schema reference for offchain asset data
     OaSchema = 0xffa8e8a9b9cf4a31,
     /// OffchainAsset IPFS hash list for offchain assets
@@ -88,6 +90,7 @@ impl TryFrom<u64> for KnownMagic {
             v if v == KnownMagic::RaindexSignedContextOracleV1 as u64 => {
                 Ok(KnownMagic::RaindexSignedContextOracleV1)
             }
+            v if v == KnownMagic::WebDataV1 as u64 => Ok(KnownMagic::WebDataV1),
             v if v == KnownMagic::OaSchema as u64 => Ok(KnownMagic::OaSchema),
             v if v == KnownMagic::OaHashList as u64 => Ok(KnownMagic::OaHashList),
             v if v == KnownMagic::OaStructure as u64 => Ok(KnownMagic::OaStructure),
@@ -217,6 +220,14 @@ mod tests {
     }
 
     #[test]
+    fn test_web_data_v1() {
+        let magic_number = KnownMagic::WebDataV1;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ff5dcce9b571ba42");
+    }
+
+    #[test]
     fn test_oa_schema() {
         let magic_number = KnownMagic::OaSchema;
         let magic_number_after_prefix = magic_number.to_prefix_bytes();
@@ -284,7 +295,7 @@ mod tests {
     #[test]
     fn test_all_discriminants_pinned() {
         use strum::IntoEnumIterator;
-        let expected: [(KnownMagic, &str); 19] = [
+        let expected: [(KnownMagic, &str); 20] = [
             (KnownMagic::RainMetaDocumentV1, "ff0a89c674ee7874"),
             (KnownMagic::OpMetaV1, "ffe5282f43e495b4"),
             (KnownMagic::DotrainV1, "ffdac2f2f37be894"),
@@ -302,6 +313,7 @@ mod tests {
             (KnownMagic::DotrainSourceV1, "ffa15ef0fc437099"),
             (KnownMagic::OrderBuilderStateV1, "ffda7b2fb167c286"),
             (KnownMagic::RaindexSignedContextOracleV1, "ff7a1507ba4419ca"),
+            (KnownMagic::WebDataV1, "ff5dcce9b571ba42"),
             (KnownMagic::OaSchema, "ffa8e8a9b9cf4a31"),
             (KnownMagic::OaHashList, "ff9fae3cc645f463"),
             (KnownMagic::OaStructure, "ffc47a6299e8a911"),
@@ -351,7 +363,7 @@ mod tests {
     #[test]
     fn test_strum_kebab_case_parse_display() {
         use std::str::FromStr;
-        let cases: [(KnownMagic, &str); 19] = [
+        let cases: [(KnownMagic, &str); 20] = [
             (KnownMagic::RainMetaDocumentV1, "rain-meta-document-v1"),
             (KnownMagic::OpMetaV1, "op-meta-v1"),
             (KnownMagic::DotrainV1, "dotrain-v1"),
@@ -375,6 +387,7 @@ mod tests {
                 KnownMagic::RaindexSignedContextOracleV1,
                 "raindex-signed-context-oracle-v1",
             ),
+            (KnownMagic::WebDataV1, "web-data-v1"),
             (KnownMagic::OaSchema, "oa-schema"),
             (KnownMagic::OaHashList, "oa-hash-list"),
             (KnownMagic::OaStructure, "oa-structure"),
