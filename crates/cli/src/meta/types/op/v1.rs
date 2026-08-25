@@ -41,17 +41,15 @@ pub struct BitIntegerRange(BitInteger, BitInteger);
 
 impl Validate for BitIntegerRange {
     fn validate(&self) -> Result<(), ValidationErrors> {
-        ValidationErrors::merge_all(
-            if self.0 <= self.1 {
-                Ok(())
-            } else {
-                let mut errors = ValidationErrors::new();
-                errors.add("range", ValidationError::new("Bad bit integer range.\n"));
-                Err(errors)
-            },
-            "range",
-            vec![self.0.validate(), self.1.validate()],
-        )
+        let result = if self.0 <= self.1 {
+            Ok(())
+        } else {
+            let mut errors = ValidationErrors::new();
+            errors.add("range", ValidationError::new("Bad bit integer range.\n"));
+            Err(errors)
+        };
+        let result = ValidationErrors::merge(result, "min", self.0.validate());
+        ValidationErrors::merge(result, "max", self.1.validate())
     }
 }
 
@@ -64,25 +62,22 @@ pub enum OperandArgRange {
 
 impl Validate for OperandArgRange {
     fn validate(&self) -> Result<(), ValidationErrors> {
-        ValidationErrors::merge_all(
-            match self {
-                OperandArgRange::Exact(_) => Ok(()),
-                OperandArgRange::Range(min, max) => {
-                    if min <= max {
-                        Ok(())
-                    } else {
-                        let mut errors = ValidationErrors::new();
-                        errors.add("range", ValidationError::new("Bad operand arg range.\n"));
-                        Err(errors)
-                    }
-                }
-            },
-            "range",
-            match self {
-                OperandArgRange::Exact(exact) => vec![exact.validate()],
-                OperandArgRange::Range(min, max) => vec![min.validate(), max.validate()],
-            },
-        )
+        match self {
+            OperandArgRange::Exact(exact) => {
+                ValidationErrors::merge(Ok(()), "exact", exact.validate())
+            }
+            OperandArgRange::Range(min, max) => {
+                let result = if min <= max {
+                    Ok(())
+                } else {
+                    let mut errors = ValidationErrors::new();
+                    errors.add("range", ValidationError::new("Bad operand arg range.\n"));
+                    Err(errors)
+                };
+                let result = ValidationErrors::merge(result, "min", min.validate());
+                ValidationErrors::merge(result, "max", max.validate())
+            }
+        }
     }
 }
 
@@ -209,16 +204,13 @@ pub enum Output {
 
 impl Validate for Output {
     fn validate(&self) -> Result<(), ValidationErrors> {
-        ValidationErrors::merge_all(
-            Ok(()),
-            "output",
-            match self {
-                Output::Exact(operand) => vec![operand.validate()],
-                Output::Computed(range, computation) => {
-                    vec![range.validate(), computation.validate()]
-                }
-            },
-        )
+        match self {
+            Output::Exact(operand) => ValidationErrors::merge(Ok(()), "exact", operand.validate()),
+            Output::Computed(bits, computation) => {
+                let result = ValidationErrors::merge(Ok(()), "bits", bits.validate());
+                ValidationErrors::merge(result, "computation", computation.validate())
+            }
+        }
     }
 }
 
@@ -283,12 +275,16 @@ mod tests {
         assert!(range(2, 1).validate().is_err());
     }
 
-    // NOTE: no test asserts that BitIntegerRange rejects in-order ranges
-    // with out-of-bounds ends (e.g. (0, 16)): the hand-rolled
-    // ValidationErrors::merge_all call currently drops the per-end
-    // BitInteger results, so (0, 16) validates Ok today. Pinning either
-    // outcome is wrong while that is unresolved — see
-    // rainlanguage/rain.metadata#173.
+    #[test]
+    fn test_bit_integer_range_ends_validated() {
+        let range = |a, b| BitIntegerRange(BitInteger { value: a }, BitInteger { value: b });
+        assert!(range(0, 15).validate().is_ok());
+        assert!(range(0, 16).validate().is_err());
+        assert!(range(16, 16).validate().is_err());
+        assert!(range(255, 255).validate().is_err());
+        // Order error and both end errors must coexist without a key collision.
+        assert!(range(255, 16).validate().is_err());
+    }
 
     #[test]
     fn test_operand_arg_range_exact_is_valid() {
@@ -319,13 +315,26 @@ mod tests {
         assert!(Output::Computed(good_range(), computation("bits * 2"))
             .validate()
             .is_ok());
-        // NOTE: no rejection cases are asserted here. Output::validate
-        // currently drops its sub-validation results (merge_all misuse:
-        // the parent is a literal Ok and child errors are not Struct-kind
-        // under the "output" key), so a Computed output with an
-        // out-of-bounds range or non-ASCII computation validates Ok today.
-        // Pinning either outcome is wrong while that is unresolved — see
-        // rainlanguage/rain.metadata#173.
+    }
+
+    #[test]
+    fn test_output_computed_sub_validation_propagates() {
+        let range = |a, b| BitIntegerRange(BitInteger { value: a }, BitInteger { value: b });
+        let computation = |s: &str| RainString {
+            value: s.to_string(),
+        };
+        assert!(Output::Computed(range(0, 16), computation("bits * 2"))
+            .validate()
+            .is_err());
+        assert!(Output::Computed(range(3, 0), computation("bits * 2"))
+            .validate()
+            .is_err());
+        assert!(Output::Computed(range(0, 3), computation("\u{2665}"))
+            .validate()
+            .is_err());
+        assert!(Output::Computed(range(16, 0), computation("\u{2665}"))
+            .validate()
+            .is_err());
     }
 
     #[test]
@@ -355,14 +364,44 @@ mod tests {
     #[test]
     fn test_opmeta_input_bits_validated() {
         assert!(OpMeta::try_from(br#"{"name":"add","inputs":[{"bits":[0,15]}]}"#.to_vec()).is_ok());
-        // An out-of-order range fails BitIntegerRange's own order check,
-        // which must propagate through Input.bits' nested #[validate].
-        // (The per-end bounds check, e.g. bits [0,16], is currently
-        // dropped by merge_all misuse — see rainlanguage/rain.metadata#173 —
-        // so only the order violation is pinned here.)
         assert!(
             OpMeta::try_from(br#"{"name":"add","inputs":[{"bits":[16,0]}]}"#.to_vec()).is_err()
         );
+        assert!(
+            OpMeta::try_from(br#"{"name":"add","inputs":[{"bits":[0,16]}]}"#.to_vec()).is_err()
+        );
+    }
+
+    #[test]
+    fn test_opmeta_output_bits_validated() {
+        assert!(OpMeta::try_from(
+            br#"{"name":"add","outputs":[{"Computed":[[0,15],"bits + 1"]}]}"#.to_vec()
+        )
+        .is_ok());
+        assert!(OpMeta::try_from(
+            br#"{"name":"add","outputs":[{"Computed":[[0,16],"bits + 1"]}]}"#.to_vec()
+        )
+        .is_err());
+        assert!(OpMeta::try_from(
+            "{\"name\":\"add\",\"outputs\":[{\"Computed\":[[0,15],\"\u{2665}\"]}]}"
+                .as_bytes()
+                .to_vec()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_opmeta_operand_arg_valid_range_validated() {
+        assert!(OpMeta::try_from(
+            br#"{"name":"add","operand":[{"bits":[0,3],"name":"n","valid_range":[{"Range":[1,10]}]}]}"#
+                .to_vec()
+        )
+        .is_ok());
+        assert!(OpMeta::try_from(
+            br#"{"name":"add","operand":[{"bits":[0,3],"name":"n","valid_range":[{"Range":[10,1]}]}]}"#
+                .to_vec()
+        )
+        .is_err());
     }
 
     #[test]
