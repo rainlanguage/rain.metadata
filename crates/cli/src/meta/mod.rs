@@ -789,13 +789,21 @@ impl Store {
         self.get_meta(self.dotrain_cache.get(uri)?)
     }
 
-    /// deletes a dotrain record given a uri
+    /// deletes a dotrain record given a uri, `keep_meta = false` drops the meta
+    /// bytes only when no other dotrain uri still maps to them
     pub fn delete_dotrain(&mut self, uri: &str, keep_meta: bool) {
         if let Some(kv) = self.dotrain_cache.remove_entry(uri) {
             if !keep_meta {
-                self.cache.remove(&kv.1);
+                self.remove_unreferenced_meta(&kv.1);
             }
         };
+    }
+
+    /// call only once `dotrain_cache` no longer maps the dropped uri to `hash`
+    fn remove_unreferenced_meta(&mut self, hash: &[u8]) {
+        if !self.dotrain_cache.values().any(|h| h == hash) {
+            self.cache.remove(hash);
+        }
     }
 
     /// lazilly merges another Store to the current one, avoids duplicates
@@ -861,7 +869,8 @@ impl Store {
     /// stores (or updates in case the URI already exists) the given dotrain text as meta into the store cache
     /// and maps it to the given uri (path), it should be noted that reading the content of the dotrain is not in
     /// the scope of Store and handling and passing on a correct URI (path) for the given text must be handled
-    /// externally by the implementer
+    /// externally by the implementer, `keep_old = false` drops the replaced meta
+    /// bytes only when no other dotrain uri still maps to them
     pub fn set_dotrain(
         &mut self,
         text: &str,
@@ -887,7 +896,7 @@ impl Store {
                 self.cache.insert(new_hash.clone(), bytes);
                 self.dotrain_cache.insert(uri.to_string(), new_hash.clone());
                 if !keep_old {
-                    self.cache.remove(&old_hash);
+                    self.remove_unreferenced_meta(&old_hash);
                 }
                 Ok((new_hash, old_hash))
             }
@@ -2323,6 +2332,42 @@ mod tests {
         store.delete_dotrain("d.rain", true);
         assert_eq!(store.get_dotrain_hash("d.rain"), None);
         assert!(store.get_meta(&hash_again).is_some());
+    }
+
+    /// two uris holding identical text share one cache entry, so dropping one
+    /// of them must leave the other's meta resolvable, and only the last uri
+    /// off the hash takes the meta with it.
+    #[test]
+    fn test_store_dotrain_shared_meta_survives_delete() {
+        let mut store = Store::new();
+        let (hash, _) = store.set_dotrain("same text", "a.rain", false).unwrap();
+        let (hash_b, _) = store.set_dotrain("same text", "b.rain", false).unwrap();
+        assert_eq!(hash_b, hash);
+
+        store.delete_dotrain("a.rain", false);
+        assert_eq!(store.get_dotrain_hash("a.rain"), None);
+        assert_eq!(store.get_dotrain_hash("b.rain"), Some(&hash));
+        assert!(store.get_dotrain_meta("b.rain").is_some());
+
+        store.delete_dotrain("b.rain", false);
+        assert!(store.get_meta(&hash).is_none());
+    }
+
+    /// remapping one uri off a shared hash with keep_old = false must not take
+    /// the meta the other uri still maps to.
+    #[test]
+    fn test_store_set_dotrain_keeps_shared_old_meta() {
+        let mut store = Store::new();
+        let (shared, _) = store.set_dotrain("same text", "a.rain", false).unwrap();
+        store.set_dotrain("same text", "b.rain", false).unwrap();
+
+        let (new_hash, old_hash) = store.set_dotrain("other text", "a.rain", false).unwrap();
+        assert_eq!(old_hash, shared);
+        assert_ne!(new_hash, shared);
+        assert!(store.get_dotrain_meta("b.rain").is_some());
+
+        store.set_dotrain("other text", "b.rain", false).unwrap();
+        assert!(store.get_meta(&shared).is_none());
     }
 
     /// merge keeps existing meta cache, deployer cache and dotrain entries,
