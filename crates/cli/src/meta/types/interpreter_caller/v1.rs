@@ -159,3 +159,117 @@ pub struct ContextCell {
     #[validate]
     pub alias: Option<RainSymbol>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn base_json() -> serde_json::Value {
+        json!({
+            "name": "Test Caller",
+            "abiName": "TestCaller",
+            "methods": [{
+                "name": "Add Order",
+                "abiName": "addOrder",
+                "inputs": [{
+                    "name": "Config",
+                    "abiName": "config",
+                    "path": "[7].inputs[0]"
+                }],
+                "expressions": [{
+                    "name": "Calculate",
+                    "abiName": "calculateIO",
+                    "path": "[7].expressions[0]",
+                    "contextColumns": [{
+                        "name": "Base",
+                        "cells": [{ "name": "Cell" }]
+                    }]
+                }]
+            }]
+        })
+    }
+
+    fn try_parse(value: &serde_json::Value) -> Result<InterpreterCallerMeta, Error> {
+        InterpreterCallerMeta::try_from(serde_json::to_vec(value).unwrap())
+    }
+
+    #[test]
+    fn test_base_fixture_is_valid() {
+        let meta = try_parse(&base_json()).unwrap();
+        assert_eq!(meta.name.value, "Test Caller");
+        assert_eq!(meta.abi_name.value, "TestCaller");
+        assert_eq!(meta.methods.len(), 1);
+        assert_eq!(meta.methods[0].inputs.len(), 1);
+        assert_eq!(meta.methods[0].expressions[0].context_columns.len(), 1);
+    }
+
+    #[test]
+    fn test_deny_unknown_fields_top_level() {
+        let mut v = base_json();
+        v["unknownField"] = json!(1);
+        assert!(matches!(try_parse(&v), Err(Error::SerdeJsonError(_))));
+    }
+
+    #[test]
+    fn test_deny_unknown_fields_method() {
+        let mut v = base_json();
+        v["methods"][0]["unknownField"] = json!(1);
+        assert!(matches!(try_parse(&v), Err(Error::SerdeJsonError(_))));
+    }
+
+    #[test]
+    fn test_deny_unknown_fields_method_input() {
+        let mut v = base_json();
+        v["methods"][0]["inputs"][0]["unknownField"] = json!(1);
+        assert!(matches!(try_parse(&v), Err(Error::SerdeJsonError(_))));
+    }
+
+    #[test]
+    fn test_deny_unknown_fields_expression() {
+        let mut v = base_json();
+        v["methods"][0]["expressions"][0]["unknownField"] = json!(1);
+        assert!(matches!(try_parse(&v), Err(Error::SerdeJsonError(_))));
+    }
+
+    #[test]
+    fn test_deny_unknown_fields_context_column() {
+        let mut v = base_json();
+        v["methods"][0]["expressions"][0]["contextColumns"][0]["unknownField"] = json!(1);
+        assert!(matches!(try_parse(&v), Err(Error::SerdeJsonError(_))));
+    }
+
+    #[test]
+    fn test_deny_unknown_fields_context_cell() {
+        let mut v = base_json();
+        v["methods"][0]["expressions"][0]["contextColumns"][0]["cells"][0]["unknownField"] =
+            json!(1);
+        assert!(matches!(try_parse(&v), Err(Error::SerdeJsonError(_))));
+    }
+
+    #[test]
+    fn test_methods_min_length_one() {
+        let mut v = base_json();
+        v["methods"] = json!([]);
+        assert!(matches!(try_parse(&v), Err(Error::ValidationErrors(_))));
+    }
+
+    #[test]
+    fn test_method_inputs_min_length_one() {
+        let mut v = base_json();
+        v["methods"][0]["inputs"] = json!([]);
+        assert!(matches!(try_parse(&v), Err(Error::ValidationErrors(_))));
+    }
+
+    #[test]
+    fn test_context_columns_max_255() {
+        let column = json!({ "name": "Base" });
+        let mut v = base_json();
+        v["methods"][0]["expressions"][0]["contextColumns"] =
+            serde_json::Value::Array(vec![column.clone(); 255]);
+        assert!(try_parse(&v).is_ok());
+        v["methods"][0]["expressions"][0]["contextColumns"] =
+            serde_json::Value::Array(vec![column; 256]);
+        assert!(matches!(try_parse(&v), Err(Error::ValidationErrors(_))));
+    }
+}

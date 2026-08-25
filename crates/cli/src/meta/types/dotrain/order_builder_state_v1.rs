@@ -402,4 +402,37 @@ mod tests {
             _ => panic!("Expected SerdeCborError"),
         }
     }
+
+    #[test]
+    fn test_extract_from_meta_nested_rain_document() {
+        // A decoded item whose magic is RainMetaDocumentV1 carries a complete
+        // prefixed document as payload; extract_from_meta must recurse into
+        // it and surface the instance found inside.
+        let original_instance = create_test_instance();
+        let inner_item: RainMetaDocumentV1Item = original_instance.clone().try_into().unwrap();
+        let inner_doc_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![inner_item],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
+
+        let outer_item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(inner_doc_bytes),
+            magic: KnownMagic::RainMetaDocumentV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let outer_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![outer_item],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
+
+        let extracted = OrderBuilderStateV1::extract_from_meta(&outer_bytes)
+            .unwrap()
+            .unwrap();
+        assert_eq!(extracted, original_instance);
+    }
 }
