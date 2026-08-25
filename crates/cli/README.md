@@ -49,7 +49,6 @@ building the binary.
       magic     command related to rain magic numbers
       build     command for building rain meta
       solc      command related to solc artifacts
-      subgraph  command related to subgraphs
       help      Print this message or the help of the given subcommand(s)
 
     Options:
@@ -115,14 +114,14 @@ be later accessed easily by language server and compiler.
 use rain_meta::meta::Store;
 use std::collections::HashMap;
 
-// to instatiate with default rain subgraphs included
-let mut store = Store::default();
+// to instatiate an empty store
+let mut store = Store::new();
 
 // add a new subgraph endpoint url to the subgraph list
 store.add_subgraphs(&vec!["subgraph-url"]);
 
 // update the store with another Store (merges the stores)
-store.merge(&Store::default());
+store.merge(&other_store);
 
 // hash of a meta to search and store
 let hash = "0x56ffc3fc82109c33f1e1544157a70144fc15e7c6e9ae9c65a636fd165b1bc51c";

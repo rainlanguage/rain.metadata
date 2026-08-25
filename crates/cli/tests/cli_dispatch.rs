@@ -1,6 +1,6 @@
 #![cfg(not(target_family = "wasm"))]
 
-//! End-to-end coverage for the 8 `cli::dispatch` subcommand arms, driven
+//! End-to-end coverage for the 7 `cli::dispatch` subcommand arms, driven
 //! through the compiled `rain-metadata` binary so each arm's routing is
 //! observable as process output and exit status rather than as an in-process
 //! call. Every assertion is on a concrete value (exact lines, exact JSON,
@@ -238,48 +238,27 @@ fn test_dispatch_solc_artifact() {
     );
 }
 
-/// `subgraph` routes to `subgraph::dispatch`: `all` prints all 9 known URLs,
-/// `chain` prints the 3 URLs of a supported chain and hard-errors on an
-/// unsupported one.
+/// The `subgraph` subcommand is retired: it only ever listed endpoints on the
+/// decommissioned Graph hosted service. `clap` rejects it as an unknown
+/// subcommand rather than printing anything.
 #[test]
-fn test_dispatch_subgraph() {
-    let out = run(&["subgraph", "all"]);
-    assert!(out.status.success());
-    let stdout = stdout_utf8(&out);
-    assert_eq!(stdout.lines().count(), 9);
-    assert!(stdout.contains(
-        "https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-ethereum"
-    ));
-
-    let out = run(&["subgraph", "chain", "137"]);
-    assert!(out.status.success());
-    let stdout = stdout_utf8(&out);
-    assert_eq!(stdout.lines().count(), 3);
-    assert!(stdout.contains("interpreter-registry-polygon"));
-
-    let out = run(&["subgraph", "chain", "2"]);
-    assert!(!out.status.success());
-
-    // chain 1 is exactly the 3 ethereum endpoints, in declaration order.
-    let out = run(&["subgraph", "chain", "1"]);
-    assert!(out.status.success());
-    let expected_eth = "\
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-ethereum
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-np-eth
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-npe2-eth
-";
-    assert_eq!(stdout_utf8(&out), expected_eth);
-
-    // chain 80001 is exactly the 3 mumbai endpoints, not an error and not
-    // another network's set.
-    let out = run(&["subgraph", "chain", "80001"]);
-    assert!(out.status.success());
-    let expected_mumbai = "\
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-np
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-npe2
-";
-    assert_eq!(stdout_utf8(&out), expected_mumbai);
+fn test_dispatch_subgraph_is_retired() {
+    for args in [
+        vec!["subgraph"],
+        vec!["subgraph", "all"],
+        vec!["subgraph", "chain", "1"],
+    ] {
+        let out = run(&args);
+        assert!(!out.status.success(), "{args:?} still routes somewhere");
+        assert_eq!(stdout_utf8(&out), "");
+    }
+    let help = stdout_utf8(&run(&["help"]));
+    assert!(
+        !help
+            .lines()
+            .any(|line| line.trim_start().starts_with("subgraph ")),
+        "{help}"
+    );
 }
 
 /// `generate` routes to `generate::generate`: dotrain source content becomes

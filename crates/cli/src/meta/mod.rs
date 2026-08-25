@@ -1,5 +1,4 @@
 use super::error::Error;
-use super::subgraph::KnownSubgraphs;
 use alloy::primitives::{hex, keccak256};
 use futures::future;
 use graphql_client::GraphQLQuery;
@@ -397,6 +396,10 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
 
 /// searches for a meta matching the given hash in given subgraphs urls
 pub async fn search(hash: &str, subgraphs: &Vec<String>) -> Result<query::MetaResponse, Error> {
+    // select_ok panics on an empty iterator.
+    if subgraphs.is_empty() {
+        return Err(Error::NoRecordFound);
+    }
     let request_body = query::MetaQuery::build_query(query::meta_query::Variables {
         hash: Some(hash.to_ascii_lowercase()),
     });
@@ -419,6 +422,10 @@ pub async fn search_deployer(
     hash: &str,
     subgraphs: &Vec<String>,
 ) -> Result<DeployerResponse, Error> {
+    // select_ok panics on an empty iterator.
+    if subgraphs.is_empty() {
+        return Err(Error::NoRecordFound);
+    }
     let request_body = query::DeployerQuery::build_query(query::deployer_query::Variables {
         hash: Some(hash.to_ascii_lowercase()),
     });
@@ -531,11 +538,8 @@ impl NPE2Deployer {
 /// use rain_metadata::Store;
 /// use std::collections::HashMap;
 ///
-/// // to instantiate without any default subgraphs
+/// // to instantiate an empty store
 /// let mut store = Store::new();
-///
-/// // to instantiate with default rain subgraphs included
-/// let mut store = Store::default();
 ///
 /// // or to instantiate with initial values
 /// let mut store = Store::create(
@@ -543,7 +547,6 @@ impl NPE2Deployer {
 ///     &HashMap::new(),
 ///     &HashMap::new(),
 ///     &HashMap::new(),
-///     true,
 /// );
 ///
 /// // add a new subgraph endpoint url to the subgraph list
@@ -587,13 +590,7 @@ pub struct Store {
 
 impl Default for Store {
     fn default() -> Self {
-        Store {
-            cache: HashMap::new(),
-            dotrain_cache: HashMap::new(),
-            deployer_cache: HashMap::new(),
-            subgraphs: KnownSubgraphs::NPE2.map(|url| url.to_string()).to_vec(),
-            deployer_hash_map: HashMap::new(),
-        }
+        Store::new()
     }
 }
 
@@ -617,14 +614,8 @@ impl Store {
         cache: &HashMap<Vec<u8>, Vec<u8>>,
         deployer_cache: &HashMap<Vec<u8>, NPE2Deployer>,
         dotrain_cache: &HashMap<String, Vec<u8>>,
-        include_rain_subgraphs: bool,
     ) -> Store {
-        let mut store;
-        if include_rain_subgraphs {
-            store = Store::default();
-        } else {
-            store = Store::new();
-        }
+        let mut store = Store::new();
         store.add_subgraphs(subgraphs);
         for (hash, bytes) in cache {
             store.update_with(hash, bytes);
@@ -2052,18 +2043,35 @@ mod tests {
         }
     }
 
-    /// Store::default() carries the known NPE2 subgraphs; Store::new() starts
-    /// with none.
+    /// No constructor seeds a subgraph the caller did not supply.
     #[test]
-    fn test_store_default_vs_new_subgraphs() {
-        assert_eq!(
-            Store::default().subgraphs(),
-            &KnownSubgraphs::NPE2.map(|url| url.to_string()).to_vec()
-        );
+    fn test_store_constructors_seed_no_subgraphs() {
         assert!(Store::new().subgraphs().is_empty());
+        assert!(Store::default().subgraphs().is_empty());
+        assert!(
+            Store::create(&vec![], &HashMap::new(), &HashMap::new(), &HashMap::new(),)
+                .subgraphs()
+                .is_empty()
+        );
     }
 
-    /// create() honors include_rain_subgraphs, validates cache entries via
+    /// A store with no subgraphs reports a miss rather than panicking in
+    /// select_ok.
+    #[tokio::test]
+    async fn test_store_no_subgraphs_lookups_are_a_miss() {
+        assert!(matches!(
+            search("0x00", &vec![]).await,
+            Err(Error::NoRecordFound)
+        ));
+        assert!(matches!(
+            search_deployer("0x00", &vec![]).await,
+            Err(Error::NoRecordFound)
+        ));
+        assert!(Store::default().update(&[0u8; 32]).await.is_none());
+        assert!(Store::default().search_deployer(&[0u8; 32]).await.is_none());
+    }
+
+    /// create() takes only the given subgraphs, validates cache entries via
     /// the keccak gate, and keeps a dotrain uri only when its hash is present
     /// in the cache.
     #[test]
@@ -2087,15 +2095,12 @@ mod tests {
             &cache,
             &deployer_cache,
             &dotrain_cache,
-            true,
         );
 
-        for sg in KnownSubgraphs::NPE2 {
-            assert!(store.subgraphs().contains(&sg.to_string()));
-        }
-        assert!(store
-            .subgraphs()
-            .contains(&"https://example.com/custom-sg".to_string()));
+        assert_eq!(
+            store.subgraphs(),
+            &vec!["https://example.com/custom-sg".to_string()]
+        );
         assert_eq!(store.get_meta(&good_hash), Some(&doc));
         assert_eq!(store.get_meta(&bad_hash), None);
         assert_eq!(store.get_deployer(&deployer_key), Some(&deployer));
