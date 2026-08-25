@@ -111,12 +111,48 @@ impl AuthoringMetaV2 {
         Ok(AuthoringMetaV2 { words })
     }
 
+    /// Reads the meta hash the contract is described by over a single RPC.
+    ///
+    /// # Arguments
+    ///
+    /// * `contract_address` - The address of the contract.
+    /// * `rpc` - The RPC URL to read over.
+    ///
+    /// # Returns
+    ///
+    /// The meta hash if successful, or an AuthoringMetaV2Error if an error occurs.
+    async fn fetch_metahash(
+        contract_address: Address,
+        rpc: &str,
+    ) -> Result<[u8; 32], AuthoringMetaV2Error> {
+        let provider = ProviderBuilder::new().connect_http(rpc.parse()?);
+
+        // an RPC that cannot answer the erc165 probe is indistinguishable here
+        // from a contract that has no words, so both land on HasNoWords
+        if !implements_i_described_by_meta_v1(&provider, contract_address).await {
+            return Err(AuthoringMetaV2Error::HasNoWords);
+        }
+
+        let call = IDescribedByMetaV1::describedByMetaV1Call {};
+        let tx = TransactionRequest::default()
+            .to(contract_address)
+            .input(call.abi_encode().into());
+        let bytes = provider.call(tx).await?;
+        let FixedBytes(metahash) =
+            IDescribedByMetaV1::describedByMetaV1Call::abi_decode_returns(&bytes)?;
+
+        Ok(metahash)
+    }
+
     /// Fetches the authoring meta for a contract that implements IDescribedByMetaV1
     /// from the metaboard.
     ///
     /// # Arguments
     ///
     /// * `contract_address` - The address of the contract.
+    /// * `rpcs` - The RPC URLs, tried in order until one yields the meta hash.
+    ///   When none does, the failure of the last one tried is reported.
+    /// * `metaboard_url` - The metaboard subgraph URL to query for the meta.
     ///
     /// # Returns
     ///
@@ -126,96 +162,45 @@ impl AuthoringMetaV2 {
         rpcs: Vec<String>,
         metaboard_url: String,
     ) -> Result<Self, FetchAuthoringMetaV2WordError> {
-        // build a read provider over the first RPC
-        let url = rpcs
-            .first()
-            .cloned()
-            .ok_or_else(|| FetchAuthoringMetaV2WordError {
-                contract_address,
-                rpcs: rpcs.clone(),
-                metaboard_url: metaboard_url.clone(),
-                error: AuthoringMetaV2Error::NoRpcs,
-            })?
-            .parse()
-            .map_err(|error: url::ParseError| FetchAuthoringMetaV2WordError {
-                contract_address,
-                rpcs: rpcs.clone(),
-                metaboard_url: metaboard_url.clone(),
-                error: error.into(),
-            })?;
-        let provider = ProviderBuilder::new().connect_http(url);
-
-        // return "has no words" error if the contract does not implement IDescribeByMetaV2 interface
-        if !implements_i_described_by_meta_v1(&provider, contract_address).await {
-            return Err(FetchAuthoringMetaV2WordError {
-                contract_address,
-                rpcs: rpcs.clone(),
-                metaboard_url: metaboard_url.clone(),
-                error: AuthoringMetaV2Error::HasNoWords,
-            });
-        }
-
-        let call = IDescribedByMetaV1::describedByMetaV1Call {};
-        let tx = TransactionRequest::default()
-            .to(contract_address)
-            .input(call.abi_encode().into());
-        let bytes = provider
-            .call(tx)
-            .await
-            .map_err(|error| FetchAuthoringMetaV2WordError {
-                contract_address,
-                rpcs: rpcs.clone(),
-                metaboard_url: metaboard_url.clone(),
-                error: error.into(),
-            })?;
-        let FixedBytes(metahash) = IDescribedByMetaV1::describedByMetaV1Call::abi_decode_returns(
-            &bytes,
-        )
-        .map_err(|error| FetchAuthoringMetaV2WordError {
+        let wrap_error = |error: AuthoringMetaV2Error| FetchAuthoringMetaV2WordError {
             contract_address,
             rpcs: rpcs.clone(),
             metaboard_url: metaboard_url.clone(),
-            error: error.into(),
-        })?;
+            error,
+        };
+
+        let mut metahash = None;
+        let mut rpc_error = AuthoringMetaV2Error::NoRpcs;
+        for rpc in &rpcs {
+            match Self::fetch_metahash(contract_address, rpc).await {
+                Ok(hash) => {
+                    metahash = Some(hash);
+                    break;
+                }
+                Err(error) => rpc_error = error,
+            }
+        }
+        let Some(metahash) = metahash else {
+            return Err(wrap_error(rpc_error));
+        };
 
         // query the metaboard for the metas
-        let subgraph_client = MetaboardSubgraphClient::new(metaboard_url.parse().map_err(
-            |error: url::ParseError| FetchAuthoringMetaV2WordError {
-                contract_address,
-                rpcs: rpcs.clone(),
-                metaboard_url: metaboard_url.clone(),
-                error: error.into(),
-            },
-        )?);
+        let subgraph_client = MetaboardSubgraphClient::new(
+            metaboard_url
+                .parse()
+                .map_err(|error: url::ParseError| wrap_error(error.into()))?,
+        );
 
         let metas = subgraph_client
             .get_metabytes_by_hash(&metahash)
             .await
-            .map_err(|error| FetchAuthoringMetaV2WordError {
-                contract_address,
-                rpcs: rpcs.clone(),
-                metaboard_url: metaboard_url.clone(),
-                error: error.into(),
-            })?;
+            .map_err(|error| wrap_error(error.into()))?;
 
-        let meta = RainMetaDocumentV1Item::cbor_decode(metas[0].as_slice()).map_err(|error| {
-            FetchAuthoringMetaV2WordError {
-                contract_address,
-                rpcs: rpcs.clone(),
-                metaboard_url: metaboard_url.clone(),
-                error: error.into(),
-            }
-        })?[0]
+        let meta = RainMetaDocumentV1Item::cbor_decode(metas[0].as_slice())
+            .map_err(|error| wrap_error(error.into()))?[0]
             .clone()
             .try_into()
-            .map_err(
-                |error: AuthoringMetaV2Error| FetchAuthoringMetaV2WordError {
-                    contract_address,
-                    rpcs,
-                    metaboard_url,
-                    error,
-                },
-            )?;
+            .map_err(wrap_error)?;
 
         Ok(meta)
     }
@@ -503,6 +488,24 @@ mod tests {
             content_type: ContentType::None,
         };
         format!("0x{}", encode(item.cbor_encode().unwrap()))
+    }
+
+    /// Mocks a metaboard answering `metahash` with the three word authoring meta.
+    fn mock_metaboard_words(metaboard_server: &MockServer, metahash: [u8; 32]) {
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/").body_contains(encode(metahash));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [metaboard_meta_entry(&authoring_meta_v2_cbor_hex())] }
+            }));
+        });
+    }
+
+    /// Mocks an RPC that fails every request at the transport level.
+    fn mock_dead_rpc(rpc_server: &MockServer) -> httpmock::Mock<'_> {
+        rpc_server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(500).body("rpc is down");
+        })
     }
 
     #[tokio::test]
@@ -802,6 +805,97 @@ mod tests {
         match error.error {
             AuthoringMetaV2Error::MetaError(_) => {}
             other => panic!("expected MetaError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_falls_over_to_a_later_rpc() {
+        let hash = [1u8; 32];
+        let dead_rpc_server = MockServer::start_async().await;
+        let dead_rpc = mock_dead_rpc(&dead_rpc_server);
+        let live_rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&live_rpc_server, hash);
+        let metaboard_server = MockServer::start_async().await;
+        mock_metaboard_words(&metaboard_server, hash);
+
+        let meta = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![dead_rpc_server.url("/"), live_rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await
+        .unwrap();
+
+        assert!(dead_rpc.hits() > 0);
+        assert_eq!(meta.words.len(), 3);
+        assert_eq!(meta.words[0].word, "test");
+        assert_eq!(meta.words[2].description, "description 3");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_falls_over_an_unparseable_rpc_url() {
+        let hash = [1u8; 32];
+        let live_rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&live_rpc_server, hash);
+        let metaboard_server = MockServer::start_async().await;
+        mock_metaboard_words(&metaboard_server, hash);
+
+        let meta = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec!["not a url".to_string(), live_rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(meta.words.len(), 3);
+        assert_eq!(meta.words[1].description, "description 2");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_stops_at_the_first_rpc_that_answers() {
+        let hash = [1u8; 32];
+        let live_rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&live_rpc_server, hash);
+        let unused_rpc_server = MockServer::start_async().await;
+        let unused_rpc = mock_dead_rpc(&unused_rpc_server);
+        let metaboard_server = MockServer::start_async().await;
+        mock_metaboard_words(&metaboard_server, hash);
+
+        let meta = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![live_rpc_server.url("/"), unused_rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(unused_rpc.hits(), 0);
+        assert_eq!(meta.words.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_all_rpcs_failing_reports_the_last_failure() {
+        let dead_rpc_server = MockServer::start_async().await;
+        let dead_rpc = mock_dead_rpc(&dead_rpc_server);
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([7u8; 20]),
+            vec![dead_rpc_server.url("/"), "not a url".to_string()],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+
+        let error = result.unwrap_err();
+        assert!(dead_rpc.hits() > 0);
+        assert_eq!(
+            error.rpcs,
+            vec![dead_rpc_server.url("/"), "not a url".to_string()]
+        );
+        // the last rpc tried is the unparseable one, so its error is the reported one
+        match error.error {
+            AuthoringMetaV2Error::UrlParseError(_) => {}
+            other => panic!("expected UrlParseError, got {:?}", other),
         }
     }
 }
