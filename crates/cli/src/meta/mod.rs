@@ -397,6 +397,10 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
 
 /// searches for a meta matching the given hash in given subgraphs urls
 pub async fn search(hash: &str, subgraphs: &Vec<String>) -> Result<query::MetaResponse, Error> {
+    // future::select_ok panics on an empty iterator.
+    if subgraphs.is_empty() {
+        return Err(Error::NoRecordFound);
+    }
     let request_body = query::MetaQuery::build_query(query::meta_query::Variables {
         hash: Some(hash.to_ascii_lowercase()),
     });
@@ -419,6 +423,10 @@ pub async fn search_deployer(
     hash: &str,
     subgraphs: &Vec<String>,
 ) -> Result<DeployerResponse, Error> {
+    // future::select_ok panics on an empty iterator.
+    if subgraphs.is_empty() {
+        return Err(Error::NoRecordFound);
+    }
     let request_body = query::DeployerQuery::build_query(query::deployer_query::Variables {
         hash: Some(hash.to_ascii_lowercase()),
     });
@@ -1979,6 +1987,22 @@ mod tests {
         assert_eq!(response.meta_bytes, doc);
     }
 
+    /// An empty subgraph list has nothing to fan out to, so both searches
+    /// report a miss rather than reaching futures::select_ok, which panics on
+    /// an empty iterator.
+    #[tokio::test]
+    async fn test_search_empty_subgraphs_is_a_miss() {
+        let hash = format!("0x{}", "33".repeat(32));
+        assert!(matches!(
+            search(&hash, &vec![]).await,
+            Err(Error::NoRecordFound)
+        ));
+        assert!(matches!(
+            search_deployer(&hash, &vec![]).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
     /// When the erc165 probe answers false or errors, the result is false
     /// WITHOUT making the IDescribedByMetaV1 supportsInterface call: a queued
     /// "true" response must never be consumed.
@@ -2421,6 +2445,20 @@ mod tests {
         let hash = keccak256(&bytes).0.to_vec();
         assert!(cached_store.update_with(&hash, &bytes).is_some());
         assert_eq!(cached_store.update_check(&hash).await, Some(&bytes));
+    }
+
+    /// Store::new() starts with no subgraphs, so every uncached lookup that
+    /// reaches the network on it resolves to None instead of panicking.
+    #[tokio::test]
+    async fn test_store_no_subgraphs_lookups_return_none() {
+        let hash = [0u8; 32];
+        let mut store = Store::new();
+        assert!(store.update(&hash).await.is_none());
+        assert!(store.update_check(&hash).await.is_none());
+        assert!(store.search_deployer(&hash).await.is_none());
+        assert!(store.search_deployer_check(&hash).await.is_none());
+        assert!(store.cache().is_empty());
+        assert!(store.deployer_cache().is_empty());
     }
 
     /// update_with enforces keccak(bytes) == hash, leaves an existing entry
