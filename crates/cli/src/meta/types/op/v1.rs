@@ -1,4 +1,10 @@
-use serde::{Serialize, Deserialize};
+use serde::{
+    Serialize, Deserialize, Deserializer,
+    de::{
+        MapAccess, SeqAccess, Visitor,
+        value::{MapAccessDeserializer, SeqAccessDeserializer},
+    },
+};
 use validator::{Validate, ValidationError, ValidationErrors};
 use super::super::{
     super::{RainMetaDocumentV1Item, Error},
@@ -88,9 +94,61 @@ impl Validate for OperandArgRange {
 
 /// # OpMeta.
 /// Opcodes metadata used by Rainlang.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "json-schema", derive(JsonSchema))]
+pub struct OpMeta(pub Vec<OpMetaItem>);
+
+impl<'de> Deserialize<'de> for OpMeta {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct OpMetaVisitor;
+
+        impl<'de> Visitor<'de> for OpMetaVisitor {
+            type Value = OpMeta;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an opcode object or an array of opcode objects")
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                Ok(OpMeta(vec![OpMetaItem::deserialize(
+                    MapAccessDeserializer::new(map),
+                )?]))
+            }
+
+            fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                Ok(OpMeta(Vec::<OpMetaItem>::deserialize(
+                    SeqAccessDeserializer::new(seq),
+                )?))
+            }
+        }
+
+        deserializer.deserialize_any(OpMetaVisitor)
+    }
+}
+
+impl Validate for OpMeta {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        for item in &self.0 {
+            item.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// # OpMetaItem.
+/// Metadata of a single opcode.
 #[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
-pub struct OpMeta {
+pub struct OpMetaItem {
     /// # Name
     /// Primary word used to identify the opcode.
     #[validate]
@@ -332,12 +390,67 @@ mod tests {
     fn test_opmeta_minimal_json_defaults() {
         // Only `name` is required; everything else defaults.
         let meta = OpMeta::try_from(br#"{"name":"add"}"#.to_vec()).unwrap();
-        assert_eq!(meta.name.value, "add");
-        assert_eq!(meta.desc.value, "");
-        assert!(meta.operand.is_empty());
-        assert!(meta.inputs.is_empty());
-        assert!(meta.outputs.is_empty());
-        assert!(meta.aliases.is_empty());
+        let op = &meta.0[0];
+        assert_eq!(op.name.value, "add");
+        assert_eq!(op.desc.value, "");
+        assert!(op.operand.is_empty());
+        assert!(op.inputs.is_empty());
+        assert!(op.outputs.is_empty());
+        assert!(op.aliases.is_empty());
+    }
+
+    /// An op meta v1 document is an array of opcodes: every entry is kept,
+    /// in order.
+    #[test]
+    fn test_opmeta_document_is_an_array_of_opcodes() {
+        let meta = OpMeta::try_from(br#"[{"name":"add"},{"name":"sub"},{"name":"mul"}]"#.to_vec())
+            .unwrap();
+        assert_eq!(
+            meta.0
+                .iter()
+                .map(|op| op.name.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["add", "sub", "mul"]
+        );
+    }
+
+    /// A bare opcode object is a document of one opcode.
+    #[test]
+    fn test_opmeta_document_lifts_single_object() {
+        let meta = OpMeta::try_from(br#"{"name":"add"}"#.to_vec()).unwrap();
+        assert_eq!(meta.0.len(), 1);
+    }
+
+    /// An empty document holds no opcodes rather than erroring.
+    #[test]
+    fn test_opmeta_document_accepts_empty_array() {
+        assert!(OpMeta::try_from(b"[]".to_vec()).unwrap().0.is_empty());
+    }
+
+    /// Every entry of the array is validated, not just the first.
+    #[test]
+    fn test_opmeta_document_validates_every_opcode() {
+        assert!(OpMeta::try_from(br#"[{"name":"add"},{"name":"ok-too"}]"#.to_vec()).is_ok());
+        assert!(OpMeta::try_from(br#"[{"name":"add"},{"name":"NOT-A-SYMBOL"}]"#.to_vec()).is_err());
+    }
+
+    /// Json that is neither an opcode object nor an array of them is not a
+    /// document.
+    #[test]
+    fn test_opmeta_document_rejects_other_json() {
+        assert!(OpMeta::try_from(br#""add""#.to_vec()).is_err());
+        assert!(OpMeta::try_from(b"5".to_vec()).is_err());
+        assert!(OpMeta::try_from(b"null".to_vec()).is_err());
+    }
+
+    /// A document serializes back as an array whichever shape it was read
+    /// from.
+    #[test]
+    fn test_opmeta_document_serializes_as_array() {
+        let meta = OpMeta(vec![]);
+        assert_eq!(serde_json::to_string(&meta).unwrap(), "[]");
+        let meta = OpMeta::try_from(br#"{"name":"add"}"#.to_vec()).unwrap();
+        assert!(serde_json::to_string(&meta).unwrap().starts_with("[{"));
     }
 
     #[test]
@@ -385,7 +498,7 @@ mod tests {
             br#"{"name":"add","inputs":[{"parameters":[{"name":"lhs"}]}]}"#.to_vec(),
         )
         .unwrap();
-        assert!(!meta.inputs[0].parameters[0].spread);
+        assert!(!meta.0[0].inputs[0].parameters[0].spread);
     }
 
     #[test]
@@ -402,6 +515,6 @@ mod tests {
             schema: None,
         };
         let meta = OpMeta::try_from(item).unwrap();
-        assert_eq!(meta.name.value, "add");
+        assert_eq!(meta.0[0].name.value, "add");
     }
 }

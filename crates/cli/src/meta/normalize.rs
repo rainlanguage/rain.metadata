@@ -47,24 +47,44 @@ mod tests {
     use crate::meta::types::authoring::v1::{AuthoringMeta, AuthoringMetaItem};
     use crate::meta::KnownMeta;
 
-    /// OpV1 normalizes valid metadata to its canonical compact json form.
+    /// OpV1 normalizes valid metadata to its canonical compact json form:
+    /// an array of opcodes, so a bare opcode object becomes an array of one.
     #[test]
     fn test_normalize_op_v1_canonicalizes() {
         let spaced = b"{  \"name\" : \"add\" ,\n  \"desc\" : \"adds numbers\" }";
         let normalized = KnownMeta::OpV1.normalize(spaced).unwrap();
         assert_eq!(
             String::from_utf8(normalized).unwrap(),
-            r#"{"name":"add","desc":"adds numbers","operand":[],"inputs":[],"outputs":[],"aliases":[]}"#
+            r#"[{"name":"add","desc":"adds numbers","operand":[],"inputs":[],"outputs":[],"aliases":[]}]"#
+        );
+    }
+
+    /// OpV1 accepts an array of opcodes, which is what an op meta v1
+    /// document is, keeping every opcode in order.
+    #[test]
+    fn test_normalize_op_v1_accepts_array_of_opcodes() {
+        let normalized = KnownMeta::OpV1
+            .normalize(br#"[{"name":"add"},{"name":"sub"}]"#)
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(normalized).unwrap(),
+            r#"[{"name":"add","desc":"","operand":[],"inputs":[],"outputs":[],"aliases":[]},{"name":"sub","desc":"","operand":[],"inputs":[],"outputs":[],"aliases":[]}]"#
         );
     }
 
     /// OpV1 rejects metadata that parses but fails validation: opcode names
-    /// must be lower-kebab-case rain symbols.
+    /// must be lower-kebab-case rain symbols, at every position of the
+    /// array.
     #[test]
     fn test_normalize_op_v1_rejects_invalid_symbol() {
         let invalid = br#"{"name":"NOT_A_RAIN_SYMBOL"}"#;
         assert!(matches!(
             KnownMeta::OpV1.normalize(invalid),
+            Err(Error::ValidationErrors(_))
+        ));
+        let invalid_second = br#"[{"name":"add"},{"name":"NOT_A_RAIN_SYMBOL"}]"#;
+        assert!(matches!(
+            KnownMeta::OpV1.normalize(invalid_second),
             Err(Error::ValidationErrors(_))
         ));
     }
