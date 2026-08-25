@@ -142,6 +142,7 @@ pub struct ContextColumn {
     #[validate]
     pub alias: Option<RainSymbol>,
     #[serde(default)]
+    #[validate(length(max = "u8::MAX"))]
     #[validate]
     pub cells: Vec<ContextCell>,
 }
@@ -313,8 +314,8 @@ mod tests {
         }
     }
 
-    /// methods and inputs require at least one element; context_columns
-    /// allows at most u8::MAX (255) elements.
+    /// methods and inputs require at least one element; both context matrix
+    /// axes, context_columns and cells, allow at most u8::MAX (255) elements.
     #[test]
     fn test_length_constraints() {
         let mut v = valid_json();
@@ -334,6 +335,17 @@ mod tests {
         let mut v = valid_json();
         *v.pointer_mut("/methods/0/expressions/0/contextColumns")
             .unwrap() = serde_json::Value::Array(vec![column; 256]);
+        assert!(matches!(parse(&v).unwrap_err(), Error::ValidationErrors(_)));
+
+        let cell = serde_json::json!({ "name": "Cell" });
+        let mut v = valid_json();
+        *v.pointer_mut("/methods/0/expressions/0/contextColumns/0/cells")
+            .unwrap() = serde_json::Value::Array(vec![cell.clone(); 255]);
+        assert!(parse(&v).is_ok());
+
+        let mut v = valid_json();
+        *v.pointer_mut("/methods/0/expressions/0/contextColumns/0/cells")
+            .unwrap() = serde_json::Value::Array(vec![cell; 256]);
         assert!(matches!(parse(&v).unwrap_err(), Error::ValidationErrors(_)));
     }
 
