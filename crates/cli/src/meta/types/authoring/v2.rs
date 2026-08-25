@@ -198,26 +198,35 @@ impl AuthoringMetaV2 {
                 error: error.into(),
             })?;
 
-        let meta = RainMetaDocumentV1Item::cbor_decode(metas[0].as_slice()).map_err(|error| {
-            FetchAuthoringMetaV2WordError {
-                contract_address,
-                rpcs: rpcs.clone(),
-                metaboard_url: metaboard_url.clone(),
-                error: error.into(),
+        // the metaboard returns every meta carrying this hash in an order the
+        // query does not pin down, and each one is a cbor sequence, so scan all
+        // of them for an authoring meta before giving up, reporting the first
+        // failure encountered if none is found
+        let mut first_error: Option<AuthoringMetaV2Error> = None;
+        for meta_bytes in &metas {
+            let items = match RainMetaDocumentV1Item::cbor_decode(meta_bytes.as_slice()) {
+                Ok(items) => items,
+                Err(error) => {
+                    first_error.get_or_insert(error.into());
+                    continue;
+                }
+            };
+            for item in items {
+                match AuthoringMetaV2::try_from(item) {
+                    Ok(meta) => return Ok(meta),
+                    Err(error) => {
+                        first_error.get_or_insert(error);
+                    }
+                }
             }
-        })?[0]
-            .clone()
-            .try_into()
-            .map_err(
-                |error: AuthoringMetaV2Error| FetchAuthoringMetaV2WordError {
-                    contract_address,
-                    rpcs,
-                    metaboard_url,
-                    error,
-                },
-            )?;
+        }
 
-        Ok(meta)
+        Err(FetchAuthoringMetaV2WordError {
+            contract_address,
+            rpcs,
+            metaboard_url,
+            error: first_error.unwrap_or(AuthoringMetaV2Error::MetaMagicNumberMismatch),
+        })
     }
 }
 
@@ -490,19 +499,47 @@ mod tests {
         })
     }
 
-    /// cbor encoded RainMetaDocumentV1Item carrying the three word payload
-    /// under the AuthoringMetaV2 magic.
-    fn authoring_meta_v2_cbor_hex() -> String {
-        let payload = decode::<String>(WORDS_PAYLOAD_HEX.into()).unwrap();
-        let item = RainMetaDocumentV1Item {
-            magic: KnownMagic::AuthoringMetaV2,
+    fn document(magic: KnownMagic, payload: Vec<u8>) -> RainMetaDocumentV1Item {
+        RainMetaDocumentV1Item {
+            magic,
             payload: ByteBuf::from(payload),
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
             schema: None,
             content_type: ContentType::None,
-        };
-        format!("0x{}", encode(item.cbor_encode().unwrap()))
+        }
+    }
+
+    /// RainMetaDocumentV1Item carrying the three word payload under the
+    /// AuthoringMetaV2 magic.
+    fn authoring_meta_v2_document() -> RainMetaDocumentV1Item {
+        document(
+            KnownMagic::AuthoringMetaV2,
+            decode::<String>(WORDS_PAYLOAD_HEX.into()).unwrap(),
+        )
+    }
+
+    /// a well formed document under some magic that is not AuthoringMetaV2
+    fn other_magic_document() -> RainMetaDocumentV1Item {
+        document(KnownMagic::AuthoringMetaV1, vec![0u8])
+    }
+
+    fn authoring_meta_v2_cbor_hex() -> String {
+        format!(
+            "0x{}",
+            encode(authoring_meta_v2_document().cbor_encode().unwrap())
+        )
+    }
+
+    /// hex of a cbor sequence of the given documents, as one metaboard meta
+    fn cbor_seq_hex(documents: Vec<RainMetaDocumentV1Item>) -> String {
+        format!(
+            "0x{}",
+            encode(
+                RainMetaDocumentV1Item::cbor_encode_seq(&documents, KnownMagic::RainMetaDocumentV1)
+                    .unwrap()
+            )
+        )
     }
 
     #[tokio::test]
@@ -723,7 +760,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_for_contract_success_decodes_first_meta() {
+    async fn test_fetch_for_contract_success_authoring_meta_first() {
         let hash = [1u8; 32];
         let rpc_server = MockServer::start_async().await;
         mock_described_by_rpc(&rpc_server, hash);
@@ -734,8 +771,6 @@ mod tests {
             then.status(200).json_body_obj(&serde_json::json!({
                 "data": {
                     "metaV1S": [
-                        // the first meta is the authoring meta document and is
-                        // the one that must be decoded
                         metaboard_meta_entry(&authoring_meta_v2_cbor_hex()),
                         // a trailing non-decodable meta must be ignored
                         metaboard_meta_entry("0x00"),
@@ -755,6 +790,135 @@ mod tests {
         assert_eq!(meta.words[0].word, "test");
         assert_eq!(meta.words[0].description, "description 1");
         assert_eq!(meta.words[2].description, "description 3");
+    }
+
+    /// the metaboard does not pin down the order of the metas it returns, so an
+    /// authoring meta behind an entry that does not even cbor decode is still
+    /// found
+    #[tokio::test]
+    async fn test_fetch_for_contract_authoring_meta_after_undecodable_meta() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/").body_contains(encode(hash));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": {
+                    "metaV1S": [
+                        metaboard_meta_entry("0x00"),
+                        metaboard_meta_entry(&authoring_meta_v2_cbor_hex()),
+                    ]
+                }
+            }));
+        });
+
+        let meta = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(meta.words.len(), 3);
+        assert_eq!(meta.words[0].description, "description 1");
+        assert_eq!(meta.words[2].description, "description 3");
+    }
+
+    /// a meta that decodes cleanly but carries no authoring meta does not hide
+    /// an authoring meta in a later meta
+    #[tokio::test]
+    async fn test_fetch_for_contract_authoring_meta_after_other_magic_meta() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/").body_contains(encode(hash));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": {
+                    "metaV1S": [
+                        metaboard_meta_entry(&cbor_seq_hex(vec![other_magic_document()])),
+                        metaboard_meta_entry(&authoring_meta_v2_cbor_hex()),
+                    ]
+                }
+            }));
+        });
+
+        let meta = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(meta.words.len(), 3);
+        assert_eq!(meta.words[2].description, "description 3");
+    }
+
+    /// one meta is a cbor sequence, so an authoring meta that is not the first
+    /// document within it is still found
+    #[tokio::test]
+    async fn test_fetch_for_contract_authoring_meta_is_second_cbor_document() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        let seq = cbor_seq_hex(vec![other_magic_document(), authoring_meta_v2_document()]);
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/").body_contains(encode(hash));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [metaboard_meta_entry(&seq)] }
+            }));
+        });
+
+        let meta = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(meta.words.len(), 3);
+        assert_eq!(meta.words[2].description, "description 3");
+    }
+
+    /// scanning every meta and every document and finding no authoring meta is
+    /// a magic mismatch, not a success
+    #[tokio::test]
+    async fn test_fetch_for_contract_no_authoring_meta_anywhere_is_magic_mismatch() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        let seq = cbor_seq_hex(vec![other_magic_document(), other_magic_document()]);
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/").body_contains(encode(hash));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": {
+                    "metaV1S": [
+                        metaboard_meta_entry(&seq),
+                        metaboard_meta_entry(&cbor_seq_hex(vec![other_magic_document()])),
+                    ]
+                }
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await;
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::MetaMagicNumberMismatch => {}
+            other => panic!("expected MetaMagicNumberMismatch, got {:?}", other),
+        }
     }
 
     #[tokio::test]
