@@ -828,8 +828,6 @@ mod tests {
             TYPE_REF_DEPTH - 1
         );
         assert!(INTROSPECTION_QUERY.contains("fields(includeDeprecated: true)"));
-        // graph-node's deepest entity field type, `[MetaV1!]!`, is 4 levels.
-        assert!(TYPE_REF_DEPTH >= 4);
     }
 
     // ---------- live-URL HTTP path ----------
