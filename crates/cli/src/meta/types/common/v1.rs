@@ -7,7 +7,8 @@ use serde::{Serialize, Deserialize};
 use schemars::JsonSchema;
 
 /// Valid symbols in Rainlang are alpha prefixed alphanumeric kebab case.
-pub static REGEX_RAIN_SYMBOL: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-z][0-9a-z-]*$").unwrap());
+pub static REGEX_RAIN_SYMBOL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-z][0-9a-z]*(-[0-9a-z]+)*$").unwrap());
 
 /// An identifier in solidity has to start with a letter, a dollar-sign or an
 /// sunderscore and may additionally contain numbers after the first symbol.
@@ -91,7 +92,7 @@ mod test {
     #[test]
     fn test_rain_symbol_validate() {
         // valids
-        for i in ["a", "a-", "a-a", "a0"] {
+        for i in ["a", "a0", "a-a", "a-0", "a-b-c"] {
             assert!(
                 RainSymbol {
                     value: i.to_string()
@@ -105,7 +106,8 @@ mod test {
 
         // invalids
         for i in [
-            "", "♥", "-", " ", "A", "A0", "a ", "0", "_", "0a", "0A", "\n", "\t", "\r", "aA",
+            "", "♥", "-", " ", "A", "A0", "a ", "0", "_", "0a", "0A", "\n", "\t", "\r", "aA", "a-",
+            "a--b", "a-A", "a_b", "a-b_c", "a-b c", "a\na",
         ] {
             assert!(
                 RainSymbol {
