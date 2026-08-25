@@ -1,11 +1,32 @@
+use regex::Regex;
 use validator::Validate;
 use alloy::json_abi::JsonAbi;
+use once_cell::sync::Lazy;
 use validator::{ValidationErrors, ValidationError};
-use super::super::super::{RainMetaDocumentV1Item, Error as MetaError};
+use super::super::{
+    super::{RainMetaDocumentV1Item, Error as MetaError},
+    common::v1::REGEX_SOLIDITY_IDENTIFIER,
+};
 use serde::{Serialize, Serializer, Deserialize, Deserializer, de::Error, ser::SerializeStruct};
 
 #[cfg(feature = "json-schema")]
 use schemars::JsonSchema;
+
+/// Bit widths of the ABI's fixed width numeric types: multiples of 8 up to 256.
+const REGEX_ABI_BITS: &str = "8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256";
+
+/// The elementary types an ABI `type` field may name, including the `uint`,
+/// `int`, `fixed` and `ufixed` synonyms, followed by any number of fixed or
+/// dynamic array suffixes.
+///
+/// <https://docs.soliditylang.org/en/latest/abi-spec.html#types>
+pub static REGEX_SOLIDITY_ABI_TYPE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(&format!(
+        r"^(u?int({bits})?|u?fixed(({bits})x([1-9]|[1-7][0-9]|80))?|address|bool|string|bytes([1-9]|[12][0-9]|3[0-2])?|function|tuple)(\[[0-9]*\])*$",
+        bits = REGEX_ABI_BITS
+    ))
+    .unwrap()
+});
 
 /// JSON representation of a Solidity ABI interface. can be switched to ethers ABI struct using TryFrom trait
 ///
@@ -91,8 +112,14 @@ impl TryFrom<JsonAbi> for SolidityAbiMeta {
 #[derive(Validate, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub struct SolidityAbiItemFn {
+    #[validate]
     inputs: Vec<SolidityAbiFnIO>,
+    #[validate(regex(
+        path = "REGEX_SOLIDITY_IDENTIFIER",
+        message = "Must be a valid Solidity identifier.\n"
+    ))]
     name: String,
+    #[validate]
     outputs: Vec<SolidityAbiFnIO>,
     state_mutability: SolidityAbiFnMutability,
 }
@@ -115,6 +142,7 @@ impl Serialize for SolidityAbiItemFn {
 #[derive(Validate, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub struct SolidityAbiItemConstructor {
+    #[validate]
     inputs: Vec<SolidityAbiFnIO>,
     state_mutability: SolidityAbiFnMutability,
 }
@@ -172,7 +200,12 @@ impl Serialize for SolidityAbiItemFallback {
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub struct SolidityAbiItemEvent {
     anonymous: bool,
+    #[validate]
     inputs: Vec<SolidityAbiEventInput>,
+    #[validate(regex(
+        path = "REGEX_SOLIDITY_IDENTIFIER",
+        message = "Must be a valid Solidity identifier.\n"
+    ))]
     name: String,
 }
 
@@ -193,7 +226,12 @@ impl Serialize for SolidityAbiItemEvent {
 #[derive(Validate, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 pub struct SolidityAbiItemError {
+    #[validate]
     inputs: Vec<SolidityAbiErrorInput>,
+    #[validate(regex(
+        path = "REGEX_SOLIDITY_IDENTIFIER",
+        message = "Must be a valid Solidity identifier.\n"
+    ))]
     name: String,
 }
 
@@ -267,10 +305,15 @@ pub enum SolidityAbiFnMutability {
 #[serde(rename_all = "camelCase")]
 pub struct SolidityAbiFnIO {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate]
     components: Option<Vec<SolidityAbiFnIO>>,
     internal_type: String,
     name: String,
     #[serde(rename = "type")]
+    #[validate(regex(
+        path = "REGEX_SOLIDITY_ABI_TYPE",
+        message = "Must be a Solidity ABI type.\n"
+    ))]
     typ: String,
 }
 
@@ -279,10 +322,15 @@ pub struct SolidityAbiFnIO {
 #[serde(rename_all = "camelCase")]
 pub struct SolidityAbiErrorInput {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate]
     components: Option<Vec<SolidityAbiErrorInput>>,
     internal_type: String,
     name: String,
     #[serde(rename = "type")]
+    #[validate(regex(
+        path = "REGEX_SOLIDITY_ABI_TYPE",
+        message = "Must be a Solidity ABI type.\n"
+    ))]
     typ: String,
 }
 
@@ -291,11 +339,16 @@ pub struct SolidityAbiErrorInput {
 #[serde(rename_all = "camelCase")]
 pub struct SolidityAbiEventInput {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate]
     components: Option<Vec<SolidityAbiEventInputComponent>>,
     indexed: bool,
     internal_type: String,
     name: String,
     #[serde(rename = "type")]
+    #[validate(regex(
+        path = "REGEX_SOLIDITY_ABI_TYPE",
+        message = "Must be a Solidity ABI type.\n"
+    ))]
     typ: String,
 }
 
@@ -304,10 +357,15 @@ pub struct SolidityAbiEventInput {
 #[serde(rename_all = "camelCase")]
 pub struct SolidityAbiEventInputComponent {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate]
     components: Option<Vec<SolidityAbiEventInputComponent>>,
     internal_type: String,
     name: String,
     #[serde(rename = "type")]
+    #[validate(regex(
+        path = "REGEX_SOLIDITY_ABI_TYPE",
+        message = "Must be a Solidity ABI type.\n"
+    ))]
     typ: String,
 }
 
@@ -541,8 +599,9 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use std::path::PathBuf;
+    use validator::Validate;
     use alloy::json_abi::JsonAbi;
-    use super::SolidityAbiMeta;
+    use super::{SolidityAbiMeta, REGEX_SOLIDITY_ABI_TYPE};
     use crate::error::Error;
 
     // Committed deterministic abi subset written by CopyArtifacts.sol.
@@ -586,6 +645,7 @@ mod tests {
 
             let solidity_abi_meta: SolidityAbiMeta =
                 serde_json::from_value(original_json_abi.clone())?;
+            solidity_abi_meta.validate()?;
             assert_eq!(original_json_abi, serde_json::to_value(&solidity_abi_meta)?);
 
             // since alloy JsonAbi doesn't keep the original order of abi items, we need to check item by item
@@ -1031,6 +1091,191 @@ mod tests {
         )?;
         let meta: SolidityAbiMeta = serde_json::from_value(original.clone())?;
         assert_eq!(serde_json::to_value(&meta)?, original);
+        Ok(())
+    }
+
+    #[test]
+    fn test_solidity_abi_type_regex() {
+        for valid in [
+            "uint256",
+            "int8",
+            "uint",
+            "int",
+            "address",
+            "bool",
+            "string",
+            "bytes",
+            "bytes1",
+            "bytes32",
+            "function",
+            "tuple",
+            "fixed",
+            "ufixed128x18",
+            "uint256[]",
+            "tuple[2]",
+            "bytes32[2][]",
+            "uint8[][3]",
+        ] {
+            assert!(
+                REGEX_SOLIDITY_ABI_TYPE.is_match(valid),
+                "type '{}' considered invalid.",
+                valid
+            );
+        }
+
+        for invalid in [
+            "",
+            "uint7",
+            "uint264",
+            "int0",
+            "bytes0",
+            "bytes33",
+            "ufixed128x81",
+            "struct Order",
+            "contract IERC20",
+            "address payable",
+            "Uint256",
+            "uint256 ",
+            "uint256[",
+            "uint256[a]",
+            "notatype",
+        ] {
+            assert!(
+                !REGEX_SOLIDITY_ABI_TYPE.is_match(invalid),
+                "type '{}' considered valid.",
+                invalid
+            );
+        }
+    }
+
+    /// An abi that parses but names an item something that is not a solidity
+    /// identifier is rejected by both byte TryFrom impls, and the error names
+    /// the index of the offending item.
+    #[test]
+    fn test_try_from_bytes_rejects_invalid_item_name() {
+        let abi = br#"[{"inputs":[],"name":"ok","outputs":[],"stateMutability":"view","type":"function"},{"inputs":[],"name":"not an identifier","outputs":[],"stateMutability":"view","type":"function"}]"#;
+        serde_json::from_slice::<SolidityAbiMeta>(abi).expect("abi must parse before it validates");
+
+        for result in [
+            SolidityAbiMeta::try_from(abi.to_vec()),
+            SolidityAbiMeta::try_from(abi.as_slice()),
+        ] {
+            match result.unwrap_err() {
+                Error::ValidationErrors(errors) => {
+                    assert!(errors.errors().contains_key("name"));
+                    assert!(errors.errors().contains_key("at index 1"));
+                    assert!(!errors.errors().contains_key("at index 0"));
+                }
+                e => panic!("unexpected error: {:?}", e),
+            }
+        }
+    }
+
+    /// Every name an item kind carries is held to the solidity identifier
+    /// grammar, an empty name included.
+    #[test]
+    fn test_validate_rejects_invalid_item_names() {
+        for abi in [
+            r#"[{"inputs":[],"name":"","outputs":[],"stateMutability":"view","type":"function"}]"#,
+            r#"[{"inputs":[],"name":"0f","outputs":[],"stateMutability":"view","type":"function"}]"#,
+            r#"[{"anonymous":false,"inputs":[],"name":"","type":"event"}]"#,
+            r#"[{"anonymous":false,"inputs":[],"name":"E-vent","type":"event"}]"#,
+            r#"[{"inputs":[],"name":"","type":"error"}]"#,
+            r#"[{"inputs":[],"name":"Bad Order","type":"error"}]"#,
+        ] {
+            let meta: SolidityAbiMeta = serde_json::from_str(abi).unwrap();
+            assert!(meta.validate().is_err(), "accepted: {}", abi);
+        }
+    }
+
+    /// Io types are held to the abi type grammar wherever an io can appear,
+    /// tuple components included: without nested validation none of these are
+    /// reached.
+    #[test]
+    fn test_validate_rejects_invalid_io_types() {
+        for abi in [
+            // function input
+            r#"[{"inputs":[{"internalType":"x","name":"a","type":"notatype"}],"name":"f","outputs":[],"stateMutability":"view","type":"function"}]"#,
+            // function output
+            r#"[{"inputs":[],"name":"f","outputs":[{"internalType":"x","name":"","type":"notatype"}],"stateMutability":"view","type":"function"}]"#,
+            // constructor input
+            r#"[{"inputs":[{"internalType":"x","name":"a","type":"notatype"}],"stateMutability":"nonpayable","type":"constructor"}]"#,
+            // event input
+            r#"[{"anonymous":false,"inputs":[{"indexed":false,"internalType":"x","name":"a","type":"notatype"}],"name":"E","type":"event"}]"#,
+            // error input
+            r#"[{"inputs":[{"internalType":"x","name":"a","type":"notatype"}],"name":"Bad","type":"error"}]"#,
+            // function input tuple component
+            r#"[{"inputs":[{"components":[{"internalType":"x","name":"a","type":"notatype"}],"internalType":"struct S","name":"s","type":"tuple"}],"name":"f","outputs":[],"stateMutability":"view","type":"function"}]"#,
+            // event input tuple component
+            r#"[{"anonymous":false,"inputs":[{"components":[{"internalType":"x","name":"a","type":"notatype"}],"indexed":false,"internalType":"struct S","name":"s","type":"tuple"}],"name":"E","type":"event"}]"#,
+            // event input tuple component of a tuple component
+            r#"[{"anonymous":false,"inputs":[{"components":[{"components":[{"internalType":"x","name":"a","type":"notatype"}],"internalType":"struct T","name":"t","type":"tuple"}],"indexed":false,"internalType":"struct S","name":"s","type":"tuple"}],"name":"E","type":"event"}]"#,
+            // error input tuple component
+            r#"[{"inputs":[{"components":[{"internalType":"x","name":"a","type":"notatype"}],"internalType":"struct S","name":"s","type":"tuple"}],"name":"Bad","type":"error"}]"#,
+        ] {
+            let meta: SolidityAbiMeta = serde_json::from_str(abi).unwrap();
+            assert!(meta.validate().is_err(), "accepted: {}", abi);
+        }
+    }
+
+    /// The shapes solc emits validate: unnamed ios, array and tuple types,
+    /// nested components, and the receive/fallback items that carry nothing to
+    /// validate.
+    #[test]
+    fn test_validate_accepts_solc_shapes() -> anyhow::Result<()> {
+        let abi = serde_json::json!([
+            {
+                "inputs": [{
+                    "components": [{
+                        "components": [{
+                            "internalType": "uint256[2]",
+                            "name": "amounts",
+                            "type": "uint256[2]"
+                        }],
+                        "internalType": "struct Inner[]",
+                        "name": "inner",
+                        "type": "tuple[]"
+                    }],
+                    "internalType": "struct Order",
+                    "name": "order",
+                    "type": "tuple"
+                }],
+                "name": "takeOrder2",
+                "outputs": [{
+                    "internalType": "contract IERC20",
+                    "name": "",
+                    "type": "address"
+                }],
+                "stateMutability": "payable",
+                "type": "function"
+            },
+            { "inputs": [], "stateMutability": "nonpayable", "type": "constructor" },
+            { "stateMutability": "payable", "type": "receive" },
+            { "stateMutability": "nonpayable", "type": "fallback" },
+            {
+                "anonymous": false,
+                "inputs": [{
+                    "indexed": true,
+                    "internalType": "bytes32",
+                    "name": "subject",
+                    "type": "bytes32"
+                }],
+                "name": "MetaV1_2",
+                "type": "event"
+            },
+            {
+                "inputs": [{
+                    "internalType": "enum Kind",
+                    "name": "kind",
+                    "type": "uint8"
+                }],
+                "name": "BadOrder",
+                "type": "error"
+            }
+        ]);
+        let meta: SolidityAbiMeta = serde_json::from_value(abi.clone())?;
+        meta.validate()?;
+        assert_eq!(SolidityAbiMeta::try_from(serde_json::to_vec(&abi)?)?, meta);
         Ok(())
     }
 }
