@@ -175,9 +175,14 @@ mod tests {
 
         let hash = [1u8; 32];
 
-        // Mock a successful response
+        // Mock a successful response. body_contains pins the wire shape: the
+        // hash must be sent 0x-prefixed and the query must filter on the
+        // metaHash field (rendering verified against cynic's output).
         server.mock(|when, then| {
-            when.method(POST).path("/").body_contains(encode(hash)); // You need to tailor this to the actual body sent
+            when.method(POST)
+                .path("/")
+                .body_contains(format!("0x{}", encode(hash)))
+                .body_contains("where: {metaHash: $metahash}");
             then.status(200).json_body_obj(&{
                 serde_json::json!({
                     "data": {
@@ -247,7 +252,9 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(MetaboardSubgraphClientError::Empty(_)) => (),
+            Err(MetaboardSubgraphClientError::Empty(metahash)) => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+            }
             _ => panic!("Unexpected result: {:?}", result),
         }
     }
@@ -268,7 +275,7 @@ mod tests {
         server.mock(|when, then| {
             when.method(POST)
                 .path("/")
-                .body_contains("subject")
+                .body_contains("where: {subject: $subject}")
                 .body_contains("0x7b");
             then.status(200).json_body_obj(&{
                 serde_json::json!({
@@ -334,7 +341,7 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(MetaboardSubgraphClientError::Empty(_)) => (),
+            Err(MetaboardSubgraphClientError::Empty(s)) => assert_eq!(s, "0x315"),
             _ => panic!("Unexpected result: {:?}", result),
         }
     }
@@ -344,8 +351,15 @@ mod tests {
         let server = MockServer::start_async().await;
         let url = Url::parse(&server.url("/")).unwrap();
 
+        // body_contains pins the wire shape: the query paginates with
+        // first/skip in that argument order, and the variables carry the
+        // caller's first=10, skip=0 under their own names.
         server.mock(|when, then| {
-            when.method(POST).path("/").body_contains("metaBoards");
+            when.method(POST)
+                .path("/")
+                .body_contains("metaBoards(first: $first, skip: $skip)")
+                .body_contains("\"first\":10")
+                .body_contains("\"skip\":0");
             then.status(200).json_body_obj(&{
                 serde_json::json!({
                     "data": {
@@ -402,5 +416,213 @@ mod tests {
         let result = client.get_metaboard_addresses(Some(5), None).await.unwrap();
 
         assert!(result.is_empty());
+    }
+    //
+    // CynicClient error surface
+    //
+
+    /// A response carrying a graphql errors array is a GraphqlError carrying
+    /// those errors, never silently treated as data.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_graphql_error() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let hash = [7u8; 32];
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&{
+                serde_json::json!({
+                    "data": { "metaV1S": [] },
+                    "errors": [ { "message": "boom" } ]
+                })
+            });
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_hash(&hash).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::RequestErrorByHash {
+                metahash,
+                source: CynicClientError::GraphqlError(errors),
+            }) => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+                assert_eq!(errors.len(), 1);
+                assert_eq!(errors[0].message, "boom");
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+
+    /// A response with null data and no errors never reaches the
+    /// `data.ok_or(Empty)` arm: cynic's `GraphQlResponse` deserializer
+    /// rejects any body without data or errors ("Either data or errors must
+    /// be present in a GraphQL response"), so it surfaces as a Request
+    /// decode error. This pins the deserializer boundary and documents that
+    /// `CynicClientError::Empty` is unreachable from `query` while that
+    /// deserializer holds (see the audit issue on the dead arm).
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_null_data_is_request_decode_error() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let hash = [9u8; 32];
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({ "data": null }));
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_hash(&hash).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::RequestErrorByHash {
+                metahash,
+                source: CynicClientError::Request(e),
+            }) => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+                assert!(e.is_decode(), "expected a decode error: {:?}", e);
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+
+    /// A transport failure surfaces as CynicClientError::Request, not as
+    /// Empty or a graphql error.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_connection_error_is_request() {
+        // Nothing listens here: the connection is refused immediately.
+        let url = Url::parse("http://127.0.0.1:1/").unwrap();
+        let client = MetaboardSubgraphClient::new(url);
+        let hash = [1u8; 32];
+
+        let result = client.get_metabytes_by_hash(&hash).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::RequestErrorByHash {
+                metahash,
+                source: CynicClientError::Request(_),
+            }) => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+
+    /// A meta whose hex payload does not decode is a FromHexError keyed by
+    /// the queried hash, never silently dropped.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_invalid_hex_meta() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let hash = [2u8; 32];
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&{
+                serde_json::json!({
+                    "data": {
+                        "metaV1S": [
+                            {
+                                "meta": "0xzz",
+                                "metaHash": "0x00",
+                                "sender": "0x00",
+                                "id": "0x00",
+                                "metaBoard": { "address": "0x00" },
+                                "subject": "0x00",
+                            }
+                        ]
+                    }
+                })
+            });
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_hash(&hash).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::FromHexError { metahash, .. }) => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+
+    /// Same failure on the subject path: a FromHexError, keyed by the
+    /// offending meta's own hash rather than by the subject.
+    /// NOTE: the exact key text is NOT pinned here because the current
+    /// implementation hex-encodes the UTF-8 bytes of the (already hex) hash
+    /// string; see the audit issue on the double encoding. The variant and a
+    /// non-empty key are the undisputed part of the contract.
+    #[tokio::test]
+    async fn test_get_metabytes_by_subject_invalid_hex_meta() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let subject = Bytes("0x7c".to_string());
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&{
+                serde_json::json!({
+                    "data": {
+                        "metaV1S": [
+                            {
+                                "meta": "0xzz",
+                                "metaHash": "0xabcd",
+                                "sender": "0x00",
+                                "id": "0x00",
+                                "metaBoard": { "address": "0x00" },
+                                "subject": "0x7c",
+                            }
+                        ]
+                    }
+                })
+            });
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_subject(&subject).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::FromHexError { metahash, .. }) => {
+                assert!(!metahash.is_empty());
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+
+    /// A board address that does not parse is an AddressParseError carrying
+    /// the offending string verbatim, never silently defaulted.
+    #[tokio::test]
+    async fn test_get_metaboard_addresses_invalid_address() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("metaBoards");
+            then.status(200).json_body_obj(&{
+                serde_json::json!({
+                    "data": {
+                        "metaBoards": [ { "address": "not-an-address" } ]
+                    }
+                })
+            });
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metaboard_addresses(None, None).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::AddressParseError { address, .. }) => {
+                assert_eq!(address, "not-an-address");
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
     }
 }

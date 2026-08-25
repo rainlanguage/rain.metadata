@@ -105,3 +105,88 @@ impl From<alloy::sol_types::Error> for Error {
         Error::AbiCoderError(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fixed-string Display arms are part of the CLI's user-facing surface:
+    /// pin them exactly.
+    #[test]
+    fn test_display_fixed_strings() {
+        assert_eq!(Error::CorruptMeta.to_string(), "corrupt meta");
+        assert_eq!(Error::UnknownMeta.to_string(), "unknown meta");
+        assert_eq!(Error::UnknownMagic.to_string(), "unknown magic");
+        assert_eq!(Error::UnsupportedMeta.to_string(), "unsupported meta");
+        assert_eq!(Error::InvalidHash.to_string(), "invalid keccak256 hash");
+        assert_eq!(Error::NoRecordFound.to_string(), "found no matching record");
+        assert_eq!(
+            Error::UnsupportedNetwork.to_string(),
+            "no rain subgraph is deployed for this network"
+        );
+        assert_eq!(
+            Error::BiggerThan32Bytes.to_string(),
+            "unexpected input size, must be 32 bytes or less"
+        );
+    }
+
+    /// Formatted wrappers carry the wrapped value in the rendered message.
+    #[test]
+    fn test_display_formatted_wrappers() {
+        assert_eq!(
+            Error::InvalidInput("abc".to_string()).to_string(),
+            "invalid input: abc"
+        );
+        assert_eq!(
+            Error::InvalidUrl("not-a-url".to_string()).to_string(),
+            "invalid URL: not-a-url"
+        );
+        assert_eq!(Error::InflateError("boom".to_string()).to_string(), "boom");
+    }
+
+    /// InvalidMetaMagic renders expected first, actual second.
+    #[test]
+    fn test_display_invalid_meta_magic_field_order() {
+        let err = Error::InvalidMetaMagic(KnownMagic::RainMetaDocumentV1, KnownMagic::OpMetaV1);
+        assert_eq!(
+            err.to_string(),
+            "invalid meta magic: expected RainMetaDocumentV1, got OpMetaV1"
+        );
+    }
+
+    /// From impls must route each source error to its own variant, preserving
+    /// the source (observable through the rendered message).
+    #[test]
+    fn test_from_serde_json_routes_to_serde_json_error() {
+        let src = serde_json::from_str::<serde_json::Value>("{oops").unwrap_err();
+        let msg = src.to_string();
+        let err: Error = src.into();
+        match err {
+            Error::SerdeJsonError(e) => assert_eq!(e.to_string(), msg),
+            other => panic!("wrong variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_utf8_error_routes_to_utf8_error() {
+        // The invalid byte is deliberate: it manufactures the source error.
+        #[allow(invalid_from_utf8)]
+        let src = std::str::from_utf8(&[0xff]).unwrap_err();
+        let err: Error = src.into();
+        match err {
+            Error::Utf8Error(e) => assert_eq!(e, src),
+            other => panic!("wrong variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_from_utf8_error_routes_to_from_utf8_error() {
+        let src = String::from_utf8(vec![0xff]).unwrap_err();
+        let msg = src.to_string();
+        let err: Error = src.into();
+        match err {
+            Error::FromUtf8Error(e) => assert_eq!(e.to_string(), msg),
+            other => panic!("wrong variant: {:?}", other),
+        }
+    }
+}

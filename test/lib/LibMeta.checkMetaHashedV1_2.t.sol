@@ -31,7 +31,23 @@ contract LibMetaCheckMetaHashedV1_2Test is Test {
 
     /// When the data does not have a magic number, it should revert even if
     /// the hash of the data matches the expected hash passed to the check.
+    ///
+    /// The original form asserted the revert for ALL fuzzed `meta`, which is
+    /// wrong whenever `meta` itself begins with the magic number — that is
+    /// good magic and good hash, so no revert (counterexample found by the
+    /// fuzzer: `meta = 0xff0a89c674ee7874`). Magic-prefixed inputs are
+    /// excluded here; the Happy test owns them.
     function testCheckMetaHashedV1_2BadMagicGoodHash(bytes memory meta) public {
+        bool metaHasMagicPrefix = false;
+        if (meta.length >= 8) {
+            uint256 prefix;
+            assembly ("memory-safe") {
+                prefix := shr(192, mload(add(meta, 0x20)))
+            }
+            metaHasMagicPrefix = prefix == uint256(META_MAGIC_NUMBER_V1);
+        }
+        vm.assume(!metaHasMagicPrefix);
+
         bytes32 metaHash = keccak256(meta);
         // The fuzzer CAN produce `meta` that carries the magic prefix — the
         // magic number sits in the fuzz dictionary — and such meta paired

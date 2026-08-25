@@ -14,16 +14,30 @@ contract LibMetaCheckMetaUnhashedV1_2Test is Test {
     /// All data with the magic number prefix will be considered to be rain meta
     /// and all without will not. This test is the same as the above but with
     /// the revert due to the check.
+    ///
+    /// The original form asserted that raw `data` ALWAYS reverts, which is
+    /// wrong whenever the fuzzed `data` itself begins with the magic number
+    /// (counterexample found by the fuzzer: `data = 0xff0a89c674ee7874`), so
+    /// the expectation is split on whether `data` carries the prefix itself.
     function testCheckMetaUnhashedV1_2Fuzz(bytes memory data) public {
         bytes memory meta = abi.encodePacked(META_MAGIC_NUMBER_V1, data);
         LibMeta.checkMetaUnhashedV1(meta);
 
-        // The fuzzer CAN produce `data` that carries the magic prefix — the
-        // magic number sits in the fuzz dictionary — and such data is rain
-        // meta, so the revert below is not the behaviour for it. Same idiom
-        // as `testEmitMetaNotRainMeta`.
-        vm.assume(!LibMeta.isRainMetaV1(data));
-        vm.expectRevert(abi.encodeWithSelector(NotRainMetaV1.selector, data));
-        this.checkMetaUnhashedV1External(data);
+        bool dataHasMagicPrefix = false;
+        if (data.length >= 8) {
+            uint256 prefix;
+            assembly ("memory-safe") {
+                prefix := shr(192, mload(add(data, 0x20)))
+            }
+            dataHasMagicPrefix = prefix == uint256(META_MAGIC_NUMBER_V1);
+        }
+
+        if (dataHasMagicPrefix) {
+            // Data carrying the prefix is rain meta already: no revert.
+            this.checkMetaUnhashedV1External(data);
+        } else {
+            vm.expectRevert(abi.encodeWithSelector(NotRainMetaV1.selector, data));
+            this.checkMetaUnhashedV1External(data);
+        }
     }
 }
