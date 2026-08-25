@@ -1627,8 +1627,8 @@ mod tests {
         Ok(())
     }
 
-    /// The 13 meta magics unpack; the document magic and the Oa magics are
-    /// rejected with UnsupportedMeta.
+    /// The 13 meta magics unpack; the document magic, the web data magic and
+    /// the Oa magics are rejected with UnsupportedMeta.
     #[test]
     fn test_unpack_into_whitelist() {
         use strum::IntoEnumIterator;
@@ -1653,6 +1653,7 @@ mod tests {
         }
         let unsupported = [
             KnownMagic::RainMetaDocumentV1,
+            KnownMagic::WebDataV1,
             KnownMagic::OaSchema,
             KnownMagic::OaHashList,
             KnownMagic::OaStructure,
@@ -1809,6 +1810,7 @@ mod tests {
         }
         for magic in [
             KnownMagic::RainMetaDocumentV1,
+            KnownMagic::WebDataV1,
             KnownMagic::OaSchema,
             KnownMagic::OaHashList,
             KnownMagic::OaStructure,
