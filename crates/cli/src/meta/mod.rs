@@ -790,6 +790,7 @@ impl Store {
     }
 
     /// lazilly merges another Store to the current one, avoids duplicates
+    /// every map keeps the entry this Store already has on a key collision
     pub fn merge(&mut self, other: &Store) {
         self.add_subgraphs(&other.subgraphs);
         for (hash, bytes) in &other.cache {
@@ -802,8 +803,10 @@ impl Store {
                 self.deployer_cache.insert(hash.clone(), deployer.clone());
             }
         }
-        for (hash, tx_hash) in &other.deployer_hash_map {
-            self.deployer_hash_map.insert(hash.clone(), tx_hash.clone());
+        for (tx_hash, hash) in &other.deployer_hash_map {
+            if !self.deployer_hash_map.contains_key(tx_hash) {
+                self.deployer_hash_map.insert(tx_hash.clone(), hash.clone());
+            }
         }
         for (uri, hash) in &other.dotrain_cache {
             if !self.dotrain_cache.contains_key(uri) {
@@ -2382,20 +2385,21 @@ mod tests {
         assert!(store.get_meta(&hash_again).is_some());
     }
 
-    /// merge keeps existing meta cache, deployer cache and dotrain entries,
-    /// while the tx-hash map takes the other store's mappings, and subgraphs
-    /// union.
+    /// merge keeps this store's entry in every map on a key collision, takes
+    /// the keys it does not already hold, and unions the subgraphs.
     #[test]
     fn test_store_merge_semantics() {
         let shared_meta_hash = vec![0x5Au8; 32];
         let deployer_ours = sample_deployer(&shared_meta_hash, b"ours");
         let deployer_theirs = sample_deployer(&shared_meta_hash, b"theirs");
         let shared_tx = vec![0x0Fu8; 32];
+        let their_tx = vec![0x1Eu8; 32];
 
         let mut ours = Store::new();
         let mut theirs = Store::new();
         ours.set_deployer(&[0x01u8; 32], &deployer_ours, Some(&shared_tx));
         theirs.set_deployer(&[0x02u8; 32], &deployer_theirs, Some(&shared_tx));
+        theirs.set_deployer(&[0x02u8; 32], &deployer_theirs, Some(&their_tx));
 
         // same deployer cache key in both stores
         let contested_key = vec![0x03u8; 32];
@@ -2416,8 +2420,10 @@ mod tests {
         assert_eq!(ours.get_meta(&shared_meta_hash), Some(&b"ours".to_vec()));
         // deployer cache: existing entry wins
         assert_eq!(ours.get_deployer(&contested_key), Some(&deployer_a));
-        // tx-hash map: the other store's mapping overwrites
-        assert_eq!(ours.get_deployer(&shared_tx), Some(&deployer_theirs));
+        // tx-hash map: existing mapping wins
+        assert_eq!(ours.get_deployer(&shared_tx), Some(&deployer_ours));
+        // tx-hash map: a mapping only the other store holds is taken
+        assert_eq!(ours.get_deployer(&their_tx), Some(&deployer_theirs));
         // dotrain: existing uri mapping wins
         assert_eq!(ours.get_dotrain_hash("x.rain"), Some(&hash_ours));
         // subgraphs merged
