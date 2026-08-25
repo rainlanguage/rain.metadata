@@ -14,8 +14,9 @@ cbor_metadata = false
 # `script/CopyArtifacts.sol` and its freshness test shell out to `jq` via
 # `vm.ffi` to extract the deterministic subset of the forge artifact, and
 # `test/subgraph/SubgraphManifest.t.sol` shells out to `jq` for that artifact's
-# event signatures and to `yq` to read `subgraph/subgraph.yaml` as parsed YAML
-# rather than as text. Both are on `PATH` in the rainix sol shell.
+# event signatures and for `subgraph/schema.graphql`'s entity types, and to `yq`
+# to read `subgraph/subgraph.yaml` as parsed YAML rather than as text. Both are
+# on `PATH` in the rainix sol shell.
 ffi = true
 
 libs = ["dependencies"]
@@ -24,7 +25,8 @@ libs = ["dependencies"]
 # build output and writes the stable subset for the rust bindings to consume;
 # `test/script/CopyArtifacts.t.sol` reads both back to assert the committed copy
 # is fresh. `test/subgraph/SubgraphManifest.t.sol` needs no entry: it reads the
-# manifest through `yq` over `vm.ffi`, which this list does not gate.
+# manifest through `yq` and the schema through `jq`, both over `vm.ffi`, which
+# this list does not gate.
 fs_permissions = [
   { access = "read", path = "out/" },
   { access = "read-write", path = "crates/bindings/abi/" },
