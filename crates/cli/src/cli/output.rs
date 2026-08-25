@@ -32,3 +32,36 @@ pub fn output(
     }
     Ok(())
 }
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::*;
+
+    /// Binary encoding writes the bytes through unchanged.
+    #[test]
+    fn test_output_binary_writes_exact_bytes_to_file() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        output(
+            &Some(path.clone()),
+            SupportedOutputEncoding::Binary,
+            &[0x00, 0x01, 0xff],
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), vec![0x00, 0x01, 0xff]);
+    }
+
+    /// Hex encoding writes 0x-prefixed lowercase hex.
+    #[test]
+    fn test_output_hex_writes_prefixed_hex_to_file() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        output(
+            &Some(path.clone()),
+            SupportedOutputEncoding::Hex,
+            &[0x00, 0x01, 0xff],
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "0x0001ff");
+    }
+}

@@ -312,4 +312,178 @@ mod tests {
 
         Ok(())
     }
+
+    use clap::Parser;
+    use std::io::Write;
+    use super::{Build, build};
+
+    /// Conversion normalizes the payload for the item's magic and then
+    /// applies the content encoding.
+    #[test]
+    fn test_item_normalize_then_encode() -> anyhow::Result<()> {
+        // "[ ]" normalizes to "[]" for a solidity ABI, then deflates.
+        let build_item = BuildItem {
+            data: "[ ]".as_bytes().to_vec(),
+            magic: KnownMagic::SolidityAbiV2,
+            content_type: ContentType::Json,
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::En,
+        };
+        let meta_document = RainMetaDocumentV1Item::try_from(&build_item)?;
+        assert_eq!(
+            meta_document.payload.as_ref(),
+            ContentEncoding::Deflate.encode("[]".as_bytes())
+        );
+
+        // Un-normalizable data is rejected.
+        let invalid_item = BuildItem {
+            data: "not json".as_bytes().to_vec(),
+            ..build_item
+        };
+        assert!(RainMetaDocumentV1Item::try_from(&invalid_item).is_err());
+        Ok(())
+    }
+
+    fn parse_build(args: &[&str]) -> Build {
+        Build::try_parse_from(args).unwrap()
+    }
+
+    /// Each arity guard fires with its own message, before any file IO:
+    /// the input path never exists and yet the mismatch is what errors.
+    #[test]
+    fn test_build_arity_guards() {
+        let b = parse_build(&[
+            "build",
+            "-i",
+            "does-not-exist.json",
+            "-m",
+            "solidity-abi-v2",
+            "-m",
+            "solidity-abi-v2",
+        ]);
+        assert_eq!(
+            build(b).unwrap_err().to_string(),
+            "1 inputs does not match 2 magic numbers."
+        );
+
+        let b = parse_build(&[
+            "build",
+            "-i",
+            "does-not-exist.json",
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-t",
+            "json",
+        ]);
+        assert_eq!(
+            build(b).unwrap_err().to_string(),
+            "1 inputs does not match 2 content types."
+        );
+
+        let b = parse_build(&[
+            "build",
+            "-i",
+            "does-not-exist.json",
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-e",
+            "identity",
+            "-e",
+            "identity",
+        ]);
+        assert_eq!(
+            build(b).unwrap_err().to_string(),
+            "1 inputs does not match 2 content encodings."
+        );
+
+        let b = parse_build(&[
+            "build",
+            "-i",
+            "does-not-exist.json",
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-e",
+            "identity",
+            "-l",
+            "en",
+            "-l",
+            "en",
+        ]);
+        assert_eq!(
+            build(b).unwrap_err().to_string(),
+            "1 inputs does not match 2 content languages."
+        );
+    }
+
+    /// build() reads each input file, builds the document under the
+    /// global magic and writes it to the output path; the hex output
+    /// encoding is honored.
+    #[test]
+    fn test_build_reads_files_and_encodes_output() -> anyhow::Result<()> {
+        let mut input = tempfile::NamedTempFile::new()?;
+        input.write_all("[ ]".as_bytes())?;
+        let output = tempfile::NamedTempFile::new()?;
+
+        let expected = build_bytes(
+            KnownMagic::RainMetaDocumentV1,
+            vec![BuildItem {
+                data: "[ ]".as_bytes().to_vec(),
+                magic: KnownMagic::SolidityAbiV2,
+                content_type: ContentType::Json,
+                content_encoding: ContentEncoding::Identity,
+                content_language: ContentLanguage::En,
+            }],
+        )?;
+
+        let input_path = input.path().to_str().unwrap().to_string();
+        let output_path = output.path().to_str().unwrap().to_string();
+
+        let b = parse_build(&[
+            "build",
+            "-i",
+            &input_path,
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-e",
+            "identity",
+            "-l",
+            "en",
+            "-o",
+            &output_path,
+        ]);
+        build(b)?;
+        assert_eq!(std::fs::read(output.path())?, expected);
+
+        let b = parse_build(&[
+            "build",
+            "-i",
+            &input_path,
+            "-m",
+            "solidity-abi-v2",
+            "-t",
+            "json",
+            "-e",
+            "identity",
+            "-l",
+            "en",
+            "-o",
+            &output_path,
+            "-E",
+            "hex",
+        ]);
+        build(b)?;
+        assert_eq!(
+            std::fs::read_to_string(output.path())?,
+            alloy::primitives::hex::encode_prefixed(&expected)
+        );
+        Ok(())
+    }
 }

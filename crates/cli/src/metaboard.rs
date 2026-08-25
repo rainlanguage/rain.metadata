@@ -147,6 +147,24 @@ mod tests {
         let meta_bytes_from_field =
             alloy::hex::decode(deployment.meta_bytes.trim_start_matches("0x")).unwrap();
         assert_eq!(decoded.meta.as_ref(), meta_bytes_from_field.as_slice());
+
+        // meta_bytes is a cbor-seq under the rain meta document magic
+        // prefix 0xff0a89c674ee7874.
+        assert!(deployment.meta_bytes.starts_with("0xff0a89c674ee7874"));
+
+        // The subject is the keccak256 of the BARE cbor item map — no
+        // rain-meta-document magic prefix — pinned here against an
+        // independently constructed item.
+        let item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(content.as_bytes().to_vec()),
+            magic: KnownMagic::DotrainSourceV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let expected_subject = alloy::primitives::keccak256(item.cbor_encode().unwrap());
+        assert_eq!(deployment.subject, hex::encode_prefixed(expected_subject));
     }
 
     #[test]

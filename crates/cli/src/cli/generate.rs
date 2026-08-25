@@ -124,7 +124,12 @@ mod tests {
     #[test]
     fn test_read_input_content_nonexistent_file() {
         let result = read_input_content(Some(PathBuf::from("/nonexistent/file.rain")));
-        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Failed to read file '/nonexistent/file.rain'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -144,6 +149,31 @@ mod tests {
         assert!(written_content.contains("0x1234567890abcdef"));
         assert!(written_content.contains("0xdeadbeef"));
         assert!(written_content.contains("0xcafebabe"));
+
+        // The output is pretty-printed with two-space indentation, in
+        // field declaration order.
+        let expected = "{\n  \"subject\": \"0x1234567890abcdef\",\n  \"meta_bytes\": \"0xdeadbeef\",\n  \"calldata\": \"0xcafebabe\"\n}";
+        assert_eq!(written_content, expected);
+    }
+
+    /// write_output creates missing parent directories of the output
+    /// path before writing.
+    #[test]
+    fn test_write_output_creates_parent_dirs() {
+        let deployment_data = DotrainSourceEmitData {
+            subject: "0x01".to_string(),
+            meta_bytes: "0x02".to_string(),
+            calldata: "0x03".to_string(),
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("a").join("b").join("out.json");
+        write_output(&deployment_data, Some(nested.clone())).unwrap();
+
+        let written = fs::read_to_string(&nested).unwrap();
+        assert!(written.contains("0x01"));
+        assert!(written.contains("0x02"));
+        assert!(written.contains("0x03"));
     }
 
     #[test]
