@@ -317,7 +317,7 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
         D: Deserializer<'de>,
     {
         #[derive(Debug, Deserialize)]
-        #[serde(rename_all = "camelCase")]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Intermediate {
             #[serde(rename = "type")]
             typ: IntermediateType,
@@ -340,7 +340,7 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
         }
 
         #[derive(Debug, Deserialize)]
-        #[serde(rename_all = "camelCase")]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct IntermediateIO {
             internal_type: String,
             name: String,
@@ -351,6 +351,13 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
         }
 
         let intermediate = Intermediate::deserialize(deserializer)?;
+
+        fn reject_foreign_fields(kind: &str, fields: &[(&str, bool)]) -> Result<(), String> {
+            match fields.iter().find(|(_, present)| *present) {
+                Some((field, _)) => Err(format!("{} found on {}", field, kind)),
+                None => Ok(()),
+            }
+        }
 
         fn map_item_fn_io(intermediate_io: &IntermediateIO) -> Result<SolidityAbiFnIO, String> {
             if intermediate_io.indexed.is_some() {
@@ -446,6 +453,11 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
 
         match intermediate.typ {
             IntermediateType::Function => {
+                reject_foreign_fields(
+                    "function",
+                    &[("anonymous", intermediate.anonymous.is_some())],
+                )
+                .map_err(D::Error::custom)?;
                 let inputs: Vec<SolidityAbiFnIO> = match intermediate.inputs {
                     Some(is) => {
                         let result: Result<Vec<SolidityAbiFnIO>, String> =
@@ -474,6 +486,15 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
                 }))
             }
             IntermediateType::Constructor => {
+                reject_foreign_fields(
+                    "constructor",
+                    &[
+                        ("name", intermediate.name.is_some()),
+                        ("outputs", intermediate.outputs.is_some()),
+                        ("anonymous", intermediate.anonymous.is_some()),
+                    ],
+                )
+                .map_err(D::Error::custom)?;
                 let inputs: Vec<SolidityAbiFnIO> = match intermediate.inputs {
                     Some(is) => {
                         let result: Result<Vec<SolidityAbiFnIO>, String> =
@@ -489,17 +510,49 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
                         .ok_or(D::Error::custom("constructor missing mutability"))?,
                 }))
             }
-            IntermediateType::Receive => Ok(SolidityAbiItem::Receive(SolidityAbiItemReceive {
-                state_mutability: intermediate
-                    .state_mutability
-                    .ok_or(D::Error::custom("receive missing mutability"))?,
-            })),
-            IntermediateType::Fallback => Ok(SolidityAbiItem::Fallback(SolidityAbiItemFallback {
-                state_mutability: intermediate
-                    .state_mutability
-                    .ok_or(D::Error::custom("fallback missing mutability"))?,
-            })),
+            IntermediateType::Receive => {
+                reject_foreign_fields(
+                    "receive",
+                    &[
+                        ("name", intermediate.name.is_some()),
+                        ("inputs", intermediate.inputs.is_some()),
+                        ("outputs", intermediate.outputs.is_some()),
+                        ("anonymous", intermediate.anonymous.is_some()),
+                    ],
+                )
+                .map_err(D::Error::custom)?;
+                Ok(SolidityAbiItem::Receive(SolidityAbiItemReceive {
+                    state_mutability: intermediate
+                        .state_mutability
+                        .ok_or(D::Error::custom("receive missing mutability"))?,
+                }))
+            }
+            IntermediateType::Fallback => {
+                reject_foreign_fields(
+                    "fallback",
+                    &[
+                        ("name", intermediate.name.is_some()),
+                        ("inputs", intermediate.inputs.is_some()),
+                        ("outputs", intermediate.outputs.is_some()),
+                        ("anonymous", intermediate.anonymous.is_some()),
+                    ],
+                )
+                .map_err(D::Error::custom)?;
+                Ok(SolidityAbiItem::Fallback(SolidityAbiItemFallback {
+                    state_mutability: intermediate
+                        .state_mutability
+                        .ok_or(D::Error::custom("fallback missing mutability"))?,
+                }))
+            }
             IntermediateType::Event => {
+                reject_foreign_fields(
+                    "event",
+                    &[
+                        ("outputs", intermediate.outputs.is_some()),
+                        ("stateMutability", intermediate.state_mutability.is_some()),
+                    ],
+                )
+                .map_err(D::Error::custom)?;
                 let inputs: Vec<SolidityAbiEventInput> = match intermediate.inputs {
                     Some(is) => {
                         let result: Result<Vec<SolidityAbiEventInput>, String> =
@@ -519,6 +572,15 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
                 }))
             }
             IntermediateType::Error => {
+                reject_foreign_fields(
+                    "error",
+                    &[
+                        ("outputs", intermediate.outputs.is_some()),
+                        ("stateMutability", intermediate.state_mutability.is_some()),
+                        ("anonymous", intermediate.anonymous.is_some()),
+                    ],
+                )
+                .map_err(D::Error::custom)?;
                 let inputs: Vec<SolidityAbiErrorInput> = match intermediate.inputs {
                     Some(is) => {
                         let result: Result<Vec<SolidityAbiErrorInput>, String> =
@@ -1032,5 +1094,163 @@ mod tests {
         let meta: SolidityAbiMeta = serde_json::from_value(original.clone())?;
         assert_eq!(serde_json::to_value(&meta)?, original);
         Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_rejects_unknown_item_field() {
+        for extra in ["gas", "payable", "constant", "signature"] {
+            let mut item = serde_json::json!({
+                "inputs": [],
+                "name": "f",
+                "outputs": [],
+                "stateMutability": "view",
+                "type": "function"
+            });
+            item[extra] = serde_json::json!(true);
+            let result: Result<SolidityAbiMeta, _> =
+                serde_json::from_value(serde_json::json!([item]));
+            let message = result.unwrap_err().to_string();
+            assert!(
+                message.contains(&format!("unknown field `{}`", extra)),
+                "unexpected message: {}",
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn test_deserialize_rejects_unknown_io_field() {
+        let abi = serde_json::json!([{
+            "inputs": [{
+                "internalType": "uint256",
+                "name": "a",
+                "type": "uint256",
+                "offset": 0
+            }],
+            "name": "f",
+            "outputs": [],
+            "stateMutability": "view",
+            "type": "function"
+        }]);
+        let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi);
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("unknown field `offset`"),
+            "unexpected message: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn test_deserialize_rejects_unknown_nested_component_field() {
+        let abi = serde_json::json!([{
+            "inputs": [{
+                "components": [{
+                    "internalType": "uint256",
+                    "name": "amount",
+                    "type": "uint256",
+                    "offset": 0
+                }],
+                "internalType": "struct Order",
+                "name": "order",
+                "type": "tuple"
+            }],
+            "name": "takeOrder",
+            "outputs": [],
+            "stateMutability": "payable",
+            "type": "function"
+        }]);
+        let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi);
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("unknown field `offset`"),
+            "unexpected message: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn test_deserialize_rejects_fields_of_another_item_kind() {
+        let cases: Vec<(serde_json::Value, &str)> = vec![
+            (
+                serde_json::json!([{"anonymous": true, "inputs": [], "name": "f", "outputs": [], "stateMutability": "view", "type": "function"}]),
+                "anonymous found on function",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "name": "C", "stateMutability": "nonpayable", "type": "constructor"}]),
+                "name found on constructor",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "outputs": [], "stateMutability": "nonpayable", "type": "constructor"}]),
+                "outputs found on constructor",
+            ),
+            (
+                serde_json::json!([{"anonymous": false, "inputs": [], "stateMutability": "nonpayable", "type": "constructor"}]),
+                "anonymous found on constructor",
+            ),
+            (
+                serde_json::json!([{"name": "r", "stateMutability": "payable", "type": "receive"}]),
+                "name found on receive",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "stateMutability": "payable", "type": "receive"}]),
+                "inputs found on receive",
+            ),
+            (
+                serde_json::json!([{"outputs": [], "stateMutability": "payable", "type": "receive"}]),
+                "outputs found on receive",
+            ),
+            (
+                serde_json::json!([{"anonymous": false, "stateMutability": "payable", "type": "receive"}]),
+                "anonymous found on receive",
+            ),
+            (
+                serde_json::json!([{"name": "fb", "stateMutability": "nonpayable", "type": "fallback"}]),
+                "name found on fallback",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "stateMutability": "nonpayable", "type": "fallback"}]),
+                "inputs found on fallback",
+            ),
+            (
+                serde_json::json!([{"outputs": [], "stateMutability": "nonpayable", "type": "fallback"}]),
+                "outputs found on fallback",
+            ),
+            (
+                serde_json::json!([{"anonymous": false, "stateMutability": "nonpayable", "type": "fallback"}]),
+                "anonymous found on fallback",
+            ),
+            (
+                serde_json::json!([{"anonymous": false, "inputs": [], "name": "E", "outputs": [], "type": "event"}]),
+                "outputs found on event",
+            ),
+            (
+                serde_json::json!([{"anonymous": false, "inputs": [], "name": "E", "stateMutability": "view", "type": "event"}]),
+                "stateMutability found on event",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "name": "X", "outputs": [], "type": "error"}]),
+                "outputs found on error",
+            ),
+            (
+                serde_json::json!([{"inputs": [], "name": "X", "stateMutability": "view", "type": "error"}]),
+                "stateMutability found on error",
+            ),
+            (
+                serde_json::json!([{"anonymous": false, "inputs": [], "name": "X", "type": "error"}]),
+                "anonymous found on error",
+            ),
+        ];
+        for (abi, expected_message) in cases {
+            let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi.clone());
+            let message = result.unwrap_err().to_string();
+            assert!(
+                message.contains(expected_message),
+                "abi {} produced {:?} instead of {:?}",
+                abi,
+                message,
+                expected_message
+            );
+        }
     }
 }
