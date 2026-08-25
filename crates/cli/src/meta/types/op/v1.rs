@@ -147,11 +147,22 @@ impl TryFrom<RainMetaDocumentV1Item> for OpMeta {
     }
 }
 
+/// Computed inputs are discriminated by `bits`, so a computation over the
+/// extracted bits value cannot stand without them.
+fn validate_input_computation(input: &Input) -> Result<(), ValidationError> {
+    if input.computation.is_some() && input.bits.is_none() {
+        Err(ValidationError::new("Input computation requires bits.\n"))
+    } else {
+        Ok(())
+    }
+}
+
 /// # Input
 /// Data type of opcode's inputs that determines the number of inputs an opcode
 /// has and provide information about them.
 #[derive(Validate, Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
+#[validate(schema(function = "validate_input_computation"))]
 pub struct Input {
     /// # Parameters
     /// List of InputParameters, may be empty.
@@ -368,15 +379,39 @@ mod tests {
     #[test]
     fn test_opmeta_input_computation_validated() {
         assert!(OpMeta::try_from(
-            br#"{"name":"add","inputs":[{"computation":"bits + 1"}]}"#.to_vec()
+            br#"{"name":"add","inputs":[{"bits":[0,7],"computation":"bits + 1"}]}"#.to_vec()
         )
         .is_ok());
         assert!(OpMeta::try_from(
-            "{\"name\":\"add\",\"inputs\":[{\"computation\":\"\u{2665}\"}]}"
+            "{\"name\":\"add\",\"inputs\":[{\"bits\":[0,7],\"computation\":\"\u{2665}\"}]}"
                 .as_bytes()
                 .to_vec()
         )
         .is_err());
+    }
+
+    #[test]
+    fn test_opmeta_input_computation_requires_bits() {
+        assert!(OpMeta::try_from(
+            br#"{"name":"add","inputs":[{"computation":"bits + 1"}]}"#.to_vec()
+        )
+        .is_err());
+        assert!(OpMeta::try_from(
+            br#"{"name":"add","inputs":[{"parameters":[{"name":"lhs"}],"computation":"bits + 1"}]}"#
+                .to_vec()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_opmeta_input_parameters_alongside_bits_is_valid() {
+        // The spread shape every dynamic-input opcode ships, e.g.
+        // rainlanguage/rain-metadata examples/op-meta/Add.op.meta.json.
+        assert!(OpMeta::try_from(
+            br#"{"name":"add","inputs":[{"bits":[0,7],"parameters":[{"name":"input","spread":true}]}]}"#
+                .to_vec()
+        )
+        .is_ok());
     }
 
     #[test]
