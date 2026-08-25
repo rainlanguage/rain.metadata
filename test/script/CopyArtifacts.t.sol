@@ -41,28 +41,9 @@ contract CopyArtifactsTest is Test {
         return string(vm.ffi(cmd));
     }
 
-    function _assertCommittedMatches(string memory contractName) internal {
-        bytes memory liveAbi = LibCopyArtifacts.extractStable(vm, contractName);
-        bytes memory committed = bytes(vm.readFile(LibCopyArtifacts.committedPath(contractName)));
-        assertEq(
-            keccak256(liveAbi),
-            keccak256(committed),
-            string.concat(
-                contractName, ": run `forge script script/CopyArtifacts.sol` to update the committed artifact"
-            )
-        );
-    }
-
-    function testArtifactsCommitted() external {
-        string[] memory names = LibCopyArtifacts.contracts();
-        for (uint256 i = 0; i < names.length; i++) {
-            _assertCommittedMatches(names[i]);
-        }
-    }
-
     /// `contracts()` and the committed directory MUST name each other exactly.
     ///
-    /// `testArtifactsCommitted` proves every artifact `contracts()` names is
+    /// The `copy-artifacts` CI job proves every committed artifact is
     /// FRESH, which cannot see a name DROPPED from the list: the committed
     /// copy stays behind as an orphan the copy script no longer maintains,
     /// silently going stale under the rust crate that still compiles against
@@ -108,7 +89,7 @@ contract CopyArtifactsTest is Test {
     /// else, the two bytecode objects reduced to `object` alone, and every
     /// kept value equal to the live artifact's.
     ///
-    /// `testArtifactsCommitted` compares the committed copy against
+    /// The `copy-artifacts` CI job regenerates and compares the committed copy against
     /// `extractStable`, so a filter that drifts — keeping the whole
     /// non-deterministic bytecode object, dropping the `abi` key
     /// `alloy::sol!` reads — regenerates and re-reads its own drift and stays
