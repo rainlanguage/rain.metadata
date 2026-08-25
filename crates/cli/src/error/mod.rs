@@ -14,7 +14,6 @@ pub enum Error {
     NoRecordFound,
     UnsupportedMeta,
     BiggerThan32Bytes,
-    UnsupportedNetwork,
     InflateError(String),
     InvalidInput(String),
     InvalidUrl(String),
@@ -39,9 +38,6 @@ impl std::fmt::Display for Error {
             Error::UnsupportedMeta => f.write_str("unsupported meta"),
             Error::InvalidHash => f.write_str("invalid keccak256 hash"),
             Error::NoRecordFound => f.write_str("found no matching record"),
-            Error::UnsupportedNetwork => {
-                f.write_str("no rain subgraph is deployed for this network")
-            }
             Error::BiggerThan32Bytes => {
                 f.write_str("unexpected input size, must be 32 bytes or less")
             }
@@ -120,10 +116,6 @@ mod tests {
         assert_eq!(Error::UnsupportedMeta.to_string(), "unsupported meta");
         assert_eq!(Error::InvalidHash.to_string(), "invalid keccak256 hash");
         assert_eq!(Error::NoRecordFound.to_string(), "found no matching record");
-        assert_eq!(
-            Error::UnsupportedNetwork.to_string(),
-            "no rain subgraph is deployed for this network"
-        );
         assert_eq!(
             Error::BiggerThan32Bytes.to_string(),
             "unexpected input size, must be 32 bytes or less"
