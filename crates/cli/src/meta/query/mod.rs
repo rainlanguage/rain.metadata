@@ -174,9 +174,207 @@ pub(super) async fn process_deployer_query(
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
-    use crate::meta::{ContentEncoding, ContentLanguage, ContentType};
     use crate::meta::types::authoring::v1::AuthoringMetaItem;
+    use crate::meta::{ContentEncoding, ContentLanguage, ContentType};
+    use httpmock::Method::POST;
+    use httpmock::MockServer;
     use serde_bytes::ByteBuf;
+    use serde_json::json;
+
+    /// A fully populated, valid expressionDeployers entry as the subgraph
+    /// would return it: every hex field decodes and exactly one meta.
+    fn deployer_entry() -> serde_json::Value {
+        json!({
+            "constructorMetaHash": "0x0102",
+            "constructorMeta": "0x0304",
+            "deployTransaction": { "id": "0x0506" },
+            "bytecode": "0x0708",
+            "parser": { "parser": { "deployedBytecode": "0x090a" } },
+            "store": { "store": { "deployedBytecode": "0x0b0c" } },
+            "interpreter": { "interpreter": { "deployedBytecode": "0x0d0e" } },
+            "meta": [ { "__typename": "RainMetaV1", "id": "0x0f10" } ]
+        })
+    }
+
+    async fn run_deployer_query(entry: serde_json::Value) -> Result<DeployerResponse, Error> {
+        let server = MockServer::start_async().await;
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200)
+                .json_body(json!({ "data": { "expressionDeployers": [entry] } }));
+        });
+        let request_body = DeployerQuery::build_query(deployer_query::Variables {
+            hash: Some("0xabcd".to_string()),
+        });
+        let client = Arc::new(Client::new());
+        process_deployer_query(client, &request_body, &server.url("/")).await
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_success_decodes_all_fields() {
+        let res = run_deployer_query(deployer_entry()).await.unwrap();
+        assert_eq!(res.meta_hash, vec![0x01, 0x02]);
+        assert_eq!(res.meta_bytes, vec![0x03, 0x04]);
+        assert_eq!(res.tx_hash, vec![0x05, 0x06]);
+        assert_eq!(res.bytecode, vec![0x07, 0x08]);
+        assert_eq!(res.parser, vec![0x09, 0x0a]);
+        assert_eq!(res.store, vec![0x0b, 0x0c]);
+        assert_eq!(res.interpreter, vec![0x0d, 0x0e]);
+        assert_eq!(res.bytecode_meta_hash, vec![0x0f, 0x10]);
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_null_bytecode_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["bytecode"] = serde_json::Value::Null;
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_null_parser_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["parser"] = serde_json::Value::Null;
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_null_store_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["store"] = serde_json::Value::Null;
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_null_interpreter_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["interpreter"] = serde_json::Value::Null;
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_null_deploy_transaction_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["deployTransaction"] = serde_json::Value::Null;
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_zero_metas_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["meta"] = json!([]);
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_two_metas_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["meta"] = json!([
+            { "__typename": "RainMetaV1", "id": "0x0f10" },
+            { "__typename": "RainMetaV1", "id": "0x1112" }
+        ]);
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_invalid_bytecode_hex_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["bytecode"] = json!("0xZZ");
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_invalid_parser_hex_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["parser"]["parser"]["deployedBytecode"] = json!("0xZZ");
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_invalid_store_hex_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["store"]["store"]["deployedBytecode"] = json!("0xZZ");
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_invalid_interpreter_hex_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["interpreter"]["interpreter"]["deployedBytecode"] = json!("0xZZ");
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_invalid_meta_id_hex_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["meta"][0]["id"] = json!("0xZZ");
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_invalid_tx_id_hex_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["deployTransaction"]["id"] = json!("0xZZ");
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_invalid_constructor_meta_hash_hex_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["constructorMetaHash"] = json!("0xZZ");
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_deployer_query_invalid_constructor_meta_hex_is_no_record_found() {
+        let mut entry = deployer_entry();
+        entry["constructorMeta"] = json!("0xZZ");
+        assert!(matches!(
+            run_deployer_query(entry).await,
+            Err(Error::NoRecordFound)
+        ));
+    }
 
     fn sample_authoring_meta() -> (AuthoringMeta, Vec<u8>) {
         let authoring_meta: AuthoringMeta = serde_json::from_str(

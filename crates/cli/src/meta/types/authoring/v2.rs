@@ -404,17 +404,404 @@ mod tests {
                 let FetchAuthoringMetaV2WordError {
                     contract_address,
                     rpcs,
-                    metaboard_url,
+                    metaboard_url: err_metaboard_url,
                     error,
                 } = error;
                 assert_eq!(contract_address, Address::from([0u8; 20]));
                 assert_eq!(rpcs, vec![rpc_url.to_string()]);
-                assert_eq!(metaboard_url, metaboard_url.to_string());
+                assert_eq!(err_metaboard_url, metaboard_url.to_string());
                 match error {
                     AuthoringMetaV2Error::HasNoWords => {}
                     _ => panic!("Unexpected error: {:?}", error),
                 }
             }
+        }
+    }
+
+    // ---- helpers for fetch_for_contract tests ----
+
+    /// hex payload of an abi encoded AuthoringMetaV2Sol[] with three words
+    /// ("test" with descriptions 1..3), same fixture as the decode tests.
+    static WORDS_PAYLOAD_HEX: &str = "0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000016074657374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000d6465736372697074696f6e20310000000000000000000000000000000000000074657374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000d6465736372697074696f6e20320000000000000000000000000000000000000074657374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000d6465736372697074696f6e203300000000000000000000000000000000000000";
+
+    fn bool_word(b: bool) -> String {
+        let mut s = "0x".to_string();
+        s.push_str(&"0".repeat(63));
+        s.push_str(if b { "1" } else { "0" });
+        s
+    }
+
+    /// Mocks the full JSON-RPC flow implements_i_described_by_meta_v1 walks
+    /// (erc165 check1, check2, interface check) plus the describedByMetaV1
+    /// call returning `metahash`.
+    fn mock_described_by_rpc(rpc_server: &MockServer, metahash: [u8; 32]) {
+        let sel = encode(IDescribedByMetaV1::describedByMetaV1Call::SELECTOR);
+        // erc165 check1: supportsInterface(0x01ffc9a7) -> true
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a701ffc9a7");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(true)
+            }));
+        });
+        // erc165 check2: supportsInterface(0xffffffff) -> false
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a7ffffffff");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(false)
+            }));
+        });
+        // supportsInterface(IDescribedByMetaV1 interface id) -> true
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(format!("01ffc9a7{}", sel));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(true)
+            }));
+        });
+        // describedByMetaV1() -> metahash
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(format!("0x{}\"", sel));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1,
+                "result": format!("0x{}", encode(metahash))
+            }));
+        });
+    }
+
+    fn metaboard_meta_entry(meta_hex: &str) -> serde_json::Value {
+        serde_json::json!({
+            "meta": meta_hex,
+            "metaHash": "0x00",
+            "sender": "0x00",
+            "id": "0x00",
+            "metaBoard": {
+                "id": "0x00",
+                "metas": [],
+                "address": "0x00",
+            },
+            "subject": "0x00",
+        })
+    }
+
+    /// cbor encoded RainMetaDocumentV1Item carrying the three word payload
+    /// under the AuthoringMetaV2 magic.
+    fn authoring_meta_v2_cbor_hex() -> String {
+        let payload = decode::<String>(WORDS_PAYLOAD_HEX.into()).unwrap();
+        let item = RainMetaDocumentV1Item {
+            magic: KnownMagic::AuthoringMetaV2,
+            payload: ByteBuf::from(payload),
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+            content_type: ContentType::None,
+        };
+        format!("0x{}", encode(item.cbor_encode().unwrap()))
+    }
+
+    #[tokio::test]
+    async fn test_abi_decode_full_32_byte_word_kept_whole() {
+        let word = [b'a'; 32];
+        let encoded = AuthoringMetasV2Sol::abi_encode(&vec![AuthoringMetaV2Sol {
+            word: word.into(),
+            description: "full width".to_string(),
+        }]);
+        let decoded = AuthoringMetaV2::abi_decode(&encoded).unwrap();
+        assert_eq!(decoded.words.len(), 1);
+        // no NUL anywhere: the full 32 bytes are the word
+        assert_eq!(decoded.words[0].word, "a".repeat(32));
+        assert_eq!(decoded.words[0].description, "full width");
+    }
+
+    #[tokio::test]
+    async fn test_abi_decode_invalid_utf8_word_is_utf8_error() {
+        let mut word = [0u8; 32];
+        // 0xc3 followed by 0x28 is an invalid utf8 sequence, before any NUL
+        word[0] = 0xc3;
+        word[1] = 0x28;
+        let encoded = AuthoringMetasV2Sol::abi_encode(&vec![AuthoringMetaV2Sol {
+            word: word.into(),
+            description: "bad word bytes".to_string(),
+        }]);
+        let result = AuthoringMetaV2::abi_decode(&encoded);
+        match result {
+            Err(AuthoringMetaV2Error::Utf8Error(_)) => {}
+            other => panic!("expected Utf8Error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_empty_rpcs_is_no_rpcs_error() {
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([7u8; 20]),
+            vec![],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+        let error = result.unwrap_err();
+        assert_eq!(error.contract_address, Address::from([7u8; 20]));
+        assert!(error.rpcs.is_empty());
+        assert_eq!(error.metaboard_url, "http://metaboard.test/");
+        match error.error {
+            AuthoringMetaV2Error::NoRpcs => {}
+            other => panic!("expected NoRpcs, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_invalid_rpc_url_is_url_parse_error() {
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([7u8; 20]),
+            vec!["not a url".to_string()],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+        let error = result.unwrap_err();
+        assert_eq!(error.rpcs, vec!["not a url".to_string()]);
+        match error.error {
+            AuthoringMetaV2Error::UrlParseError(_) => {}
+            other => panic!("expected UrlParseError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_rpc_error_on_describe_call() {
+        let rpc_server = MockServer::start_async().await;
+        let sel = encode(IDescribedByMetaV1::describedByMetaV1Call::SELECTOR);
+        // erc165 detection succeeds
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a701ffc9a7");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(true)
+            }));
+        });
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a7ffffffff");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(false)
+            }));
+        });
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(format!("01ffc9a7{}", sel));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(true)
+            }));
+        });
+        // the describedByMetaV1 call itself errors at the rpc level
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(format!("0x{}\"", sel));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1,
+                "error": { "code": -32000, "message": "boom" }
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::RpcError(_) => {}
+            other => panic!("expected RpcError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_abi_decode_error_on_describe_call() {
+        let rpc_server = MockServer::start_async().await;
+        let sel = encode(IDescribedByMetaV1::describedByMetaV1Call::SELECTOR);
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a701ffc9a7");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(true)
+            }));
+        });
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a7ffffffff");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(false)
+            }));
+        });
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(format!("01ffc9a7{}", sel));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(true)
+            }));
+        });
+        // describedByMetaV1 succeeds at the rpc level but returns bytes that
+        // cannot decode as bytes32
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(format!("0x{}\"", sel));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": "0x"
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::AbiDecodeError(_) => {}
+            other => panic!("expected AbiDecodeError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_invalid_metaboard_url_is_url_parse_error() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            "not a url".to_string(),
+        )
+        .await;
+        let error = result.unwrap_err();
+        assert_eq!(error.metaboard_url, "not a url");
+        match error.error {
+            AuthoringMetaV2Error::UrlParseError(_) => {}
+            other => panic!("expected UrlParseError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_empty_metaboard_response_is_subgraph_error() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [] }
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await;
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::MetaboardSubgraphError(_) => {}
+            other => panic!("expected MetaboardSubgraphError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_success_decodes_first_meta() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/").body_contains(encode(hash));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": {
+                    "metaV1S": [
+                        // the first meta is the authoring meta document and is
+                        // the one that must be decoded
+                        metaboard_meta_entry(&authoring_meta_v2_cbor_hex()),
+                        // a trailing non-decodable meta must be ignored
+                        metaboard_meta_entry("0x00"),
+                    ]
+                }
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await;
+        let meta = result.unwrap();
+        assert_eq!(meta.words.len(), 3);
+        assert_eq!(meta.words[0].word, "test");
+        assert_eq!(meta.words[0].description, "description 1");
+        assert_eq!(meta.words[2].description, "description 3");
+    }
+
+    #[tokio::test]
+    async fn test_try_from_deflate_encoded_item_unpacks() {
+        let payload = decode::<String>(WORDS_PAYLOAD_HEX.into()).unwrap();
+        let deflated = ContentEncoding::Deflate.encode(&payload);
+        assert_ne!(deflated, payload);
+        let item = RainMetaDocumentV1Item {
+            magic: KnownMagic::AuthoringMetaV2,
+            payload: ByteBuf::from(deflated),
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::None,
+            schema: None,
+            content_type: ContentType::None,
+        };
+        let result = AuthoringMetaV2::try_from(item).unwrap();
+        assert_eq!(result.words.len(), 3);
+        assert_eq!(result.words[0].word, "test");
+        assert_eq!(result.words[1].description, "description 2");
+    }
+    #[tokio::test]
+    async fn test_fetch_for_contract_invalid_cbor_is_meta_error() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        // the metaboard answers with bytes that are not valid cbor, so the
+        // pipeline must surface the cbor_decode failure as MetaError rather
+        // than any other variant
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [metaboard_meta_entry("0x01")] }
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await;
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::MetaError(_) => {}
+            other => panic!("expected MetaError, got {:?}", other),
         }
     }
 }
