@@ -447,4 +447,95 @@ mod tests {
         let _ = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
         mock.assert();
     }
+
+    #[test]
+    fn test_hash_known_keccak256_vectors() {
+        // Vectors derived from the Keccak-256 reference values (independent
+        // of this implementation): keccak256("") and keccak256("hello world").
+        // Pins hash() to keccak256 over the exact utf8 bytes of the source.
+        assert_eq!(
+            DotrainSourceV1(String::new()).hash(),
+            "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+                .parse::<B256>()
+                .unwrap()
+        );
+        assert_eq!(
+            DotrainSourceV1("hello world".to_string()).hash(),
+            "0x47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad"
+                .parse::<B256>()
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_takes_first_decoded_item() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+        let subject = [0x42; 32];
+
+        // One meta blob that cbor-decodes to TWO dotrain items: the first
+        // one must win.
+        let first: RainMetaDocumentV1Item = DotrainSourceV1("first".to_string()).into();
+        let second: RainMetaDocumentV1Item = DotrainSourceV1("second".to_string()).into();
+        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![first, second],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
+        let cbor_hex = hex::encode(&cbor_bytes);
+
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("subject");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "metaV1S": [
+                            {
+                                "meta": format!("0x{}", cbor_hex),
+                                "metaHash": "0x1234567890abcdef",
+                                "sender": "0x1234567890123456789012345678901234567890",
+                                "id": "0x123",
+                                "metaBoard": {
+                                    "address": "0x1234567890123456789012345678901234567890"
+                                },
+                                "subject": hex::encode(subject)
+                            }
+                        ]
+                    }
+                }));
+        });
+
+        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.0, "first");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_propagates_non_empty_client_errors() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+
+        // An HTTP-level failure is not "no meta found": it must surface as
+        // Err(MetaboardSubgraphClientError), never Ok(None).
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(500);
+        });
+
+        let result = DotrainSourceV1::fetch_by_subject([0x42; 32], mock_url).await;
+        match result {
+            Err(Error::MetaboardSubgraphClientError(_)) => {}
+            other => panic!(
+                "Expected Err(MetaboardSubgraphClientError), got {:?}",
+                other
+            ),
+        }
+        mock.assert();
+    }
 }
