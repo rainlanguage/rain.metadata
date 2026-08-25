@@ -234,6 +234,19 @@ impl RainMetaDocumentV1Item {
         Ok(bytes)
     }
 
+    /// Indexes 0-1 are MANDATORY per the metadata-v1 spec, which requires any
+    /// item omitting either to be treated as unexpected and dropped/ignored
+    /// rather than failing the document it sits in.
+    fn omits_mandatory_keys(item: &serde_cbor::Value) -> bool {
+        match item {
+            serde_cbor::Value::Map(map) => {
+                !map.contains_key(&serde_cbor::Value::Integer(0))
+                    || !map.contains_key(&serde_cbor::Value::Integer(1))
+            }
+            _ => false,
+        }
+    }
+
     /// method to cbor decode from given bytes
     pub fn cbor_decode(data: &[u8]) -> Result<Vec<RainMetaDocumentV1Item>, Error> {
         let mut track: Vec<usize> = vec![];
@@ -251,10 +264,12 @@ impl RainMetaDocumentV1Item {
         while match serde_cbor::Value::deserialize(&mut deserializer) {
             Ok(cbor_map) => {
                 track.push(deserializer.byte_offset());
-                match serde_cbor::value::from_value(cbor_map) {
-                    Ok(meta) => metas.push(meta),
-                    Err(error) => Err(Error::SerdeCborError(error))?,
-                };
+                if !Self::omits_mandatory_keys(&cbor_map) {
+                    match serde_cbor::value::from_value(cbor_map) {
+                        Ok(meta) => metas.push(meta),
+                        Err(error) => Err(Error::SerdeCborError(error))?,
+                    };
+                }
                 true
             }
             Err(error) => {
@@ -270,11 +285,7 @@ impl RainMetaDocumentV1Item {
             }
         } {}
 
-        if metas.is_empty()
-            || track.is_empty()
-            || track.len() != metas.len()
-            || len != track[track.len() - 1]
-        {
+        if metas.is_empty() || track.is_empty() || len != track[track.len() - 1] {
             Err(Error::CorruptMeta)?
         }
         Ok(metas)
@@ -1580,21 +1591,92 @@ mod tests {
         ));
     }
 
-    /// A map without the mandatory payload key 0 must not decode.
-    #[test]
-    fn test_cbor_decode_missing_payload_errors() {
-        let mut bytes: Vec<u8> = vec![0xa1, 0x01, 0x1b]; // {1: DotrainV1}
+    /// {1: DotrainV1} — a map carrying the magic but no payload key 0.
+    fn missing_payload_map() -> Vec<u8> {
+        let mut bytes: Vec<u8> = vec![0xa1, 0x01, 0x1b];
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        bytes
+    }
+
+    /// {0: h'01'} — a map carrying the payload but no magic key 1.
+    fn missing_magic_map() -> Vec<u8> {
+        vec![0xa1, 0x00, 0x41, 0x01]
+    }
+
+    /// A document whose only item omits the mandatory payload key 0 drops that
+    /// item, leaving nothing to return.
+    #[test]
+    fn test_cbor_decode_missing_payload_only_item_is_corrupt() {
         assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::SerdeCborError(_))
+            RainMetaDocumentV1Item::cbor_decode(&missing_payload_map()),
+            Err(Error::CorruptMeta)
         ));
     }
 
-    /// A map without the mandatory magic key 1 must not decode.
+    /// A document whose only item omits the mandatory magic key 1 drops that
+    /// item, leaving nothing to return.
     #[test]
-    fn test_cbor_decode_missing_magic_errors() {
-        let bytes: Vec<u8> = vec![0xa1, 0x00, 0x41, 0x01]; // {0: h'01'}
+    fn test_cbor_decode_missing_magic_only_item_is_corrupt() {
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&missing_magic_map()),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
+    /// Items omitting a mandatory key are dropped and the rest of the sequence
+    /// still decodes, whether the dropped item leads, sits between two good
+    /// items or trails.
+    #[test]
+    fn test_cbor_decode_drops_items_missing_mandatory_keys() -> Result<(), Error> {
+        let good = handwritten_map();
+        let expected = plain_item(KnownMagic::DotrainV1, vec![0x01]);
+
+        let mut leading = missing_payload_map();
+        leading.extend_from_slice(&good);
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(&leading)?,
+            vec![expected.clone()]
+        );
+
+        let mut trailing = good.clone();
+        trailing.extend_from_slice(&missing_magic_map());
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(&trailing)?,
+            vec![expected.clone()]
+        );
+
+        let mut sandwiched = good.clone();
+        sandwiched.extend_from_slice(&missing_payload_map());
+        sandwiched.extend_from_slice(&good);
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(&sandwiched)?,
+            vec![expected.clone(), expected]
+        );
+
+        Ok(())
+    }
+
+    /// Dropping happens under the rain meta document prefix too, not only on a
+    /// bare cbor sequence.
+    #[test]
+    fn test_cbor_decode_drops_items_under_document_prefix() -> Result<(), Error> {
+        let mut bytes = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        bytes.extend_from_slice(&missing_magic_map());
+        bytes.extend_from_slice(&handwritten_map());
+
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes)?,
+            vec![plain_item(KnownMagic::DotrainV1, vec![0x01])]
+        );
+        Ok(())
+    }
+
+    /// An item carrying both mandatory keys is never dropped: a payload of the
+    /// wrong cbor type is a decode failure, not an unexpected item.
+    #[test]
+    fn test_cbor_decode_mandatory_keys_present_still_type_checked() {
+        let mut bytes: Vec<u8> = vec![0xa2, 0x00, 0x01, 0x01, 0x1b]; // {0: 1, 1: DotrainV1}
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
         assert!(matches!(
             RainMetaDocumentV1Item::cbor_decode(&bytes),
             Err(Error::SerdeCborError(_))
