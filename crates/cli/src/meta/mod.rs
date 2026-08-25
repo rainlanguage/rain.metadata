@@ -746,13 +746,20 @@ impl Store {
     }
 
     /// sets NPE2Deployer record
-    /// skips if the given hash is invalid
+    /// skips the whole write if `hash` is not 32 bytes, the record is corrupt,
+    /// or its `meta_bytes` do not hash to its `meta_hash`
     pub fn set_deployer(
         &mut self,
         hash: &[u8],
         npe2_deployer: &NPE2Deployer,
         tx_hash: Option<&[u8]>,
     ) {
+        if hash.len() != 32
+            || npe2_deployer.is_corrupt()
+            || keccak256(&npe2_deployer.meta_bytes).0 != npe2_deployer.meta_hash.as_slice()
+        {
+            return;
+        }
         self.cache.insert(
             npe2_deployer.meta_hash.clone(),
             npe2_deployer.meta_bytes.clone(),
@@ -1853,6 +1860,10 @@ mod tests {
         }
     }
 
+    fn valid_deployer(meta_bytes: &[u8]) -> NPE2Deployer {
+        sample_deployer(keccak256(meta_bytes).0.as_ref(), meta_bytes)
+    }
+
     fn deployer_json_body(
         meta_hash_hex: &str,
         meta_bytes_hex: &str,
@@ -2063,9 +2074,9 @@ mod tests {
         assert!(Store::new().subgraphs().is_empty());
     }
 
-    /// create() honors include_rain_subgraphs, validates cache entries via
-    /// the keccak gate, and keeps a dotrain uri only when its hash is present
-    /// in the cache.
+    /// create() honors include_rain_subgraphs, validates cache and deployer
+    /// entries via the keccak gate, and keeps a dotrain uri only when its hash
+    /// is present in the cache.
     #[test]
     fn test_store_create_validates_entries() {
         let (_, doc) = sample_authoring_doc();
@@ -2075,9 +2086,12 @@ mod tests {
         cache.insert(good_hash.clone(), doc.clone());
         cache.insert(bad_hash.clone(), b"does not hash to bad_hash".to_vec());
         let mut deployer_cache = HashMap::new();
-        let deployer = sample_deployer(&[0xAA; 32], b"dep-meta");
+        let deployer = valid_deployer(b"dep-meta");
         let deployer_key = vec![0x33u8; 32];
         deployer_cache.insert(deployer_key.clone(), deployer.clone());
+        let lying_deployer = sample_deployer(&[0xAAu8; 32], b"dep-meta");
+        let lying_key = vec![0x55u8; 32];
+        deployer_cache.insert(lying_key.clone(), lying_deployer);
         let mut dotrain_cache = HashMap::new();
         dotrain_cache.insert("a.rain".to_string(), good_hash.clone());
         dotrain_cache.insert("missing.rain".to_string(), vec![0x44u8; 32]);
@@ -2099,6 +2113,8 @@ mod tests {
         assert_eq!(store.get_meta(&good_hash), Some(&doc));
         assert_eq!(store.get_meta(&bad_hash), None);
         assert_eq!(store.get_deployer(&deployer_key), Some(&deployer));
+        assert_eq!(store.get_deployer(&lying_key), None);
+        assert_eq!(store.get_meta(&[0xAAu8; 32]), None);
         assert_eq!(store.get_dotrain_hash("a.rain"), Some(&good_hash));
         assert_eq!(store.get_dotrain_hash("missing.rain"), None);
     }
@@ -2120,7 +2136,7 @@ mod tests {
     #[test]
     fn test_store_get_deployer_lookup_chain() {
         let mut store = Store::new();
-        let deployer = sample_deployer(&[0xAB; 32], b"dep-meta-bytes");
+        let deployer = valid_deployer(b"dep-meta-bytes");
         let key = vec![0x01u8; 32];
         let tx = vec![0x02u8; 32];
         store.set_deployer(&key, &deployer, Some(&tx));
@@ -2131,6 +2147,39 @@ mod tests {
             store.get_meta(&deployer.meta_hash),
             Some(&deployer.meta_bytes)
         );
+    }
+
+    /// set_deployer skips the whole write when the key is not a 32 byte hash,
+    /// when the record is corrupt, or when its meta bytes do not hash to its
+    /// meta hash, so the meta cache cannot be seeded off its content address.
+    #[test]
+    fn test_store_set_deployer_rejects_invalid() {
+        let tx = vec![0xF1u8; 32];
+        let content = b"real".to_vec();
+        let content_hash = keccak256(&content).0.to_vec();
+
+        let mut short_key = Store::new();
+        short_key.set_deployer(&[0x01u8; 31], &valid_deployer(&content), Some(&tx));
+        assert!(short_key.cache().is_empty());
+        assert!(short_key.deployer_cache().is_empty());
+        assert!(short_key.get_deployer(&tx).is_none());
+
+        let mut corrupt = Store::new();
+        let mut record = valid_deployer(&content);
+        record.parser = vec![];
+        corrupt.set_deployer(&[0x02u8; 32], &record, Some(&tx));
+        assert!(corrupt.cache().is_empty());
+        assert!(corrupt.deployer_cache().is_empty());
+        assert!(corrupt.get_deployer(&tx).is_none());
+
+        let mut lying = Store::new();
+        let planted = sample_deployer(&content_hash, b"not real");
+        lying.set_deployer(&[0x03u8; 32], &planted, Some(&tx));
+        assert!(lying.cache().is_empty());
+        assert!(lying.deployer_cache().is_empty());
+        assert!(lying.get_deployer(&tx).is_none());
+        // the rejected write left the content address free for the real bytes
+        assert_eq!(lying.update_with(&content_hash, &content), Some(&content));
     }
 
     /// A successful subgraph search populates the meta cache, the deployer
@@ -2192,7 +2241,7 @@ mod tests {
         use httpmock::prelude::*;
         // cached branches: no subgraphs registered at all
         let mut store = Store::new();
-        let deployer = sample_deployer(&[0xAC; 32], b"cached-meta");
+        let deployer = valid_deployer(b"cached-meta");
         let key = vec![0x11u8; 32];
         let tx = vec![0x22u8; 32];
         store.set_deployer(&key, &deployer, Some(&tx));
@@ -2325,14 +2374,13 @@ mod tests {
         assert!(store.get_meta(&hash_again).is_some());
     }
 
-    /// merge keeps existing meta cache, deployer cache and dotrain entries,
-    /// while the tx-hash map takes the other store's mappings, and subgraphs
-    /// union.
+    /// merge unions the meta cache, keeps existing deployer cache and dotrain
+    /// entries, while the tx-hash map takes the other store's mappings, and
+    /// subgraphs union.
     #[test]
     fn test_store_merge_semantics() {
-        let shared_meta_hash = vec![0x5Au8; 32];
-        let deployer_ours = sample_deployer(&shared_meta_hash, b"ours");
-        let deployer_theirs = sample_deployer(&shared_meta_hash, b"theirs");
+        let deployer_ours = valid_deployer(b"ours");
+        let deployer_theirs = valid_deployer(b"theirs");
         let shared_tx = vec![0x0Fu8; 32];
 
         let mut ours = Store::new();
@@ -2342,8 +2390,8 @@ mod tests {
 
         // same deployer cache key in both stores
         let contested_key = vec![0x03u8; 32];
-        let deployer_a = sample_deployer(&[0x04; 32], b"deployer-a");
-        let deployer_b = sample_deployer(&[0x05; 32], b"deployer-b");
+        let deployer_a = valid_deployer(b"deployer-a");
+        let deployer_b = valid_deployer(b"deployer-b");
         ours.set_deployer(&contested_key, &deployer_a, None);
         theirs.set_deployer(&contested_key, &deployer_b, None);
 
@@ -2355,8 +2403,15 @@ mod tests {
 
         ours.merge(&theirs);
 
-        // meta cache: existing entry wins
-        assert_eq!(ours.get_meta(&shared_meta_hash), Some(&b"ours".to_vec()));
+        // meta cache: the other store's entries are added, ours are kept
+        assert_eq!(
+            ours.get_meta(&deployer_ours.meta_hash),
+            Some(&b"ours".to_vec())
+        );
+        assert_eq!(
+            ours.get_meta(&deployer_theirs.meta_hash),
+            Some(&b"theirs".to_vec())
+        );
         // deployer cache: existing entry wins
         assert_eq!(ours.get_deployer(&contested_key), Some(&deployer_a));
         // tx-hash map: the other store's mapping overwrites
@@ -2438,20 +2493,16 @@ mod tests {
         let hash = keccak256(&bytes).0.to_vec();
         assert_eq!(store.update_with(&hash, &bytes), Some(&bytes));
 
-        // existing entry is returned untouched, not overwritten
+        // existing entry is returned untouched, without re-running the gate
         let mut seeded = Store::new();
         let content = b"real content".to_vec();
         let content_hash = keccak256(&content).0.to_vec();
-        let planted = sample_deployer(&content_hash, b"planted value");
-        seeded.set_deployer(&[0x77u8; 32], &planted, None);
+        seeded.set_deployer(&[0x77u8; 32], &valid_deployer(&content), None);
         assert_eq!(
-            seeded.update_with(&content_hash, &content),
-            Some(&b"planted value".to_vec())
+            seeded.update_with(&content_hash, b"different bytes"),
+            Some(&content)
         );
-        assert_eq!(
-            seeded.get_meta(&content_hash),
-            Some(&b"planted value".to_vec())
-        );
+        assert_eq!(seeded.get_meta(&content_hash), Some(&content));
 
         // prefixed document: inner item stored under keccak of its encoding
         let (_, doc) = sample_authoring_doc();
