@@ -19,7 +19,7 @@ pub struct MetasBySubjectVariables {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Query", variables = "MetasBySubjectVariables")]
 pub struct MetasBySubject {
-    #[arguments(where: { subject: $subject })]
+    #[arguments(where: { subject: $subject }, orderBy: id, orderDirection: asc)]
     pub meta_v1_s: Vec<MetaV1>,
 }
 

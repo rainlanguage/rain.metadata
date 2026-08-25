@@ -30,41 +30,43 @@ impl DotrainSourceV1 {
     pub fn hash(&self) -> B256 {
         keccak256(self.0.as_bytes())
     }
-    /// Fetches the DotrainSourceV1 from the Metaboard by subject
-    /// Returns Ok(Some(DotrainSourceV1)) if found, Ok(None) if not found
+    /// Fetches the DotrainSourceV1 from the Metaboard by subject.
+    /// The metaboard is append-only and its emitters are untrusted, so a
+    /// subject can carry any number of dotrain sources. Returns
+    /// Ok(Some(DotrainSourceV1)) when every one of them is the same source,
+    /// Ok(None) when there is none, and Err(AmbiguousSubject) when they
+    /// disagree, because nothing here can tell which of them the subject names.
     pub async fn fetch_by_subject(
         subject: [u8; 32],
         subgraph_url: Url,
     ) -> Result<Option<Self>, Error> {
         let client = MetaboardSubgraphClient::new(subgraph_url);
         let subject_hex = format!("0x{}", hex::encode(subject));
-        let subject_bytes = Bytes(subject_hex);
+        let subject_bytes = Bytes(subject_hex.clone());
 
-        match client.get_metabytes_by_subject(&subject_bytes).await {
-            Ok(metabytes) => {
-                if metabytes.is_empty() {
-                    return Ok(None);
+        let metabytes = match client.get_metabytes_by_subject(&subject_bytes).await {
+            Ok(metabytes) => metabytes,
+            Err(MetaboardSubgraphClientError::Empty(_)) => return Ok(None),
+            Err(e) => return Err(Error::MetaboardSubgraphClientError(e)),
+        };
+
+        let mut found: Option<Self> = None;
+        for meta_bytes in metabytes {
+            for item in RainMetaDocumentV1Item::cbor_decode(&meta_bytes)? {
+                if item.magic != KnownMagic::DotrainSourceV1 {
+                    continue;
                 }
-                // Try to decode the first meta
-                let decoded_items = RainMetaDocumentV1Item::cbor_decode(&metabytes[0])?;
-
-                if decoded_items.is_empty() {
-                    return Ok(None);
+                let source = DotrainSourceV1::try_from(item)?;
+                if let Some(first) = &found {
+                    if first.0 != source.0 {
+                        return Err(Error::AmbiguousSubject(subject_hex));
+                    }
+                } else {
+                    found = Some(source);
                 }
-
-                // Try to convert to DotrainSourceV1
-                let dotrain_source = DotrainSourceV1::try_from(decoded_items[0].clone())?;
-                Ok(Some(dotrain_source))
-            }
-            Err(MetaboardSubgraphClientError::Empty(_)) => {
-                // No meta found for this subject
-                Ok(None)
-            }
-            Err(e) => {
-                // Convert subgraph client error to our error type
-                Err(Error::MetaboardSubgraphClientError(e))
             }
         }
+        Ok(found)
     }
 }
 
@@ -100,6 +102,46 @@ impl TryFrom<RainMetaDocumentV1Item> for DotrainSourceV1 {
 mod tests {
     use super::*;
     use crate::meta::KnownMagic;
+
+    fn dotrain_meta(sources: &[&str]) -> Vec<u8> {
+        let items: Vec<RainMetaDocumentV1Item> = sources
+            .iter()
+            .map(|source| DotrainSourceV1(source.to_string()).into())
+            .collect();
+        RainMetaDocumentV1Item::cbor_encode_seq(&items, KnownMagic::RainMetaDocumentV1).unwrap()
+    }
+
+    fn other_meta() -> Vec<u8> {
+        RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from("test content"),
+            magic: KnownMagic::AuthoringMetaV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        }
+        .cbor_encode()
+        .unwrap()
+    }
+
+    fn metas_response(metas: &[Vec<u8>], subject: [u8; 32]) -> serde_json::Value {
+        let rows: Vec<serde_json::Value> = metas
+            .iter()
+            .map(|meta| {
+                serde_json::json!({
+                    "meta": hex::encode_prefixed(meta),
+                    "metaHash": "0x1234567890abcdef",
+                    "sender": "0x1234567890123456789012345678901234567890",
+                    "id": "0x123",
+                    "metaBoard": {
+                        "address": "0x1234567890123456789012345678901234567890"
+                    },
+                    "subject": hex::encode(subject)
+                })
+            })
+            .collect();
+        serde_json::json!({ "data": { "metaV1S": rows } })
+    }
 
     #[test]
     fn test_into_document() {
@@ -359,67 +401,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_wrong_magic() {
+    async fn test_fetch_by_subject_only_other_meta_types_is_not_found() {
         use httpmock::prelude::*;
-
-        // Create a mock server
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
-
         let subject = [0x42; 32];
 
-        // Create a document with wrong magic
-        let wrong_document = RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from("test content"),
-            magic: KnownMagic::AuthoringMetaV1, // Wrong magic
-            content_type: ContentType::OctetStream,
-            content_encoding: ContentEncoding::None,
-            content_language: ContentLanguage::None,
-            schema: None,
-        };
-        let wrong_cbor_bytes = wrong_document.cbor_encode().unwrap();
-        let wrong_cbor_hex = hex::encode(&wrong_cbor_bytes);
-
-        // Mock response with wrong magic
         let mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/")
-                .header("content-type", "application/json")
-                .body_contains("subject");
+            when.method(POST).path("/").body_contains("subject");
             then.status(200)
                 .header("content-type", "application/json")
-                .json_body(serde_json::json!({
-                    "data": {
-                        "metaV1S": [
-                            {
-                                "meta": format!("0x{}", wrong_cbor_hex),
-                                "metaHash": "0x1234567890abcdef",
-                                "sender": "0x1234567890123456789012345678901234567890",
-                                "id": "0x123",
-                                "metaBoard": {
-                                    "address": "0x1234567890123456789012345678901234567890"
-                                },
-                                "subject": hex::encode(subject)
-                            }
-                        ]
-                    }
-                }));
+                .json_body(metas_response(&[other_meta()], subject));
         });
 
-        // Test the function
-        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
-
-        // Verify the result is an error (wrong magic)
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            Error::InvalidMetaMagic(expected, actual) => {
-                assert_eq!(expected, KnownMagic::DotrainSourceV1);
-                assert_eq!(actual, KnownMagic::AuthoringMetaV1);
-            }
-            _ => panic!("Expected InvalidMetaMagic error"),
-        }
-
-        // Verify the mock was called
+        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap();
+        assert!(result.is_none());
         mock.assert();
     }
 
@@ -468,50 +466,108 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_takes_first_decoded_item() {
+    async fn test_fetch_by_subject_conflicting_items_is_ambiguous() {
         use httpmock::prelude::*;
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
         let subject = [0x42; 32];
 
-        // One meta blob that cbor-decodes to TWO dotrain items: the first
-        // one must win.
-        let first: RainMetaDocumentV1Item = DotrainSourceV1("first".to_string()).into();
-        let second: RainMetaDocumentV1Item = DotrainSourceV1("second".to_string()).into();
-        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
-            &vec![first, second],
-            KnownMagic::RainMetaDocumentV1,
-        )
-        .unwrap();
-        let cbor_hex = hex::encode(&cbor_bytes);
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("subject");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(metas_response(
+                    &[dotrain_meta(&["first", "second"])],
+                    subject,
+                ));
+        });
+
+        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
+        match result {
+            Err(Error::AmbiguousSubject(s)) => {
+                assert_eq!(s, format!("0x{}", hex::encode(subject)))
+            }
+            other => panic!("Expected Err(AmbiguousSubject), got {:?}", other),
+        }
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_conflicting_metas_is_ambiguous_in_either_order() {
+        use httpmock::prelude::*;
+        let subject = [0x42; 32];
+
+        for rows in [
+            vec![dotrain_meta(&["first"]), dotrain_meta(&["second"])],
+            vec![dotrain_meta(&["second"]), dotrain_meta(&["first"])],
+        ] {
+            let server = MockServer::start();
+            let mock_url = Url::parse(&server.url("/")).unwrap();
+            let mock = server.mock(|when, then| {
+                when.method(POST).path("/").body_contains("subject");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body(metas_response(&rows, subject));
+            });
+
+            let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
+            match result {
+                Err(Error::AmbiguousSubject(s)) => {
+                    assert_eq!(s, format!("0x{}", hex::encode(subject)))
+                }
+                other => panic!("Expected Err(AmbiguousSubject), got {:?}", other),
+            }
+            mock.assert();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_agreeing_metas_yield_the_source() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+        let subject = [0x42; 32];
 
         let mock = server.mock(|when, then| {
             when.method(POST).path("/").body_contains("subject");
             then.status(200)
                 .header("content-type", "application/json")
-                .json_body(serde_json::json!({
-                    "data": {
-                        "metaV1S": [
-                            {
-                                "meta": format!("0x{}", cbor_hex),
-                                "metaHash": "0x1234567890abcdef",
-                                "sender": "0x1234567890123456789012345678901234567890",
-                                "id": "0x123",
-                                "metaBoard": {
-                                    "address": "0x1234567890123456789012345678901234567890"
-                                },
-                                "subject": hex::encode(subject)
-                            }
-                        ]
-                    }
-                }));
+                .json_body(metas_response(
+                    &[dotrain_meta(&["agreed"]), dotrain_meta(&["agreed"])],
+                    subject,
+                ));
         });
 
         let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(result.0, "first");
+        assert_eq!(result.0, "agreed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_ignores_other_meta_types_alongside() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+        let subject = [0x42; 32];
+
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("subject");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(metas_response(
+                    &[other_meta(), dotrain_meta(&["only one"])],
+                    subject,
+                ));
+        });
+
+        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.0, "only one");
         mock.assert();
     }
 
