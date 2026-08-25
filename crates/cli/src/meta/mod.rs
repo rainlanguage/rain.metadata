@@ -234,7 +234,23 @@ impl RainMetaDocumentV1Item {
         Ok(bytes)
     }
 
-    /// method to cbor decode from given bytes
+    /// cbor decodes a rain meta document, discarding data that does not begin
+    /// with the [KnownMagic::RainMetaDocumentV1] magic number as the
+    /// metadata-v1 spec requires of tooling that reads meta. The counterpart of
+    /// solidity `LibMeta.checkMetaUnhashedV1`, and the inverse of
+    /// [Self::cbor_encode_seq] under that magic.
+    pub fn cbor_decode_document(data: &[u8]) -> Result<Vec<RainMetaDocumentV1Item>, Error> {
+        if !data.starts_with(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes()) {
+            return Err(Error::NotRainMetaDocumentV1);
+        }
+        Self::cbor_decode(data)
+    }
+
+    /// cbor decodes a sequence of meta items, treating the rain meta document
+    /// magic number as an optional prefix, so the bare item bytes that
+    /// [Self::hash] identifies a meta by also decode. Callers holding data that
+    /// is only claimed to be a rain meta document want
+    /// [Self::cbor_decode_document].
     pub fn cbor_decode(data: &[u8]) -> Result<Vec<RainMetaDocumentV1Item>, Error> {
         let mut track: Vec<usize> = vec![];
         let mut metas: Vec<RainMetaDocumentV1Item> = vec![];
@@ -902,13 +918,11 @@ impl Store {
     /// if any of the inner items is an authoring meta, stores it in authoring meta cache as well
     /// returns the reference to the authoring bytes if the meta bytes contained any
     fn store_content(&mut self, bytes: &[u8]) {
-        if let Ok(meta_maps) = RainMetaDocumentV1Item::cbor_decode(bytes) {
-            if bytes.starts_with(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes()) {
-                for meta_map in &meta_maps {
-                    if let Ok(encoded_bytes) = meta_map.cbor_encode() {
-                        self.cache
-                            .insert(keccak256(&encoded_bytes).0.to_vec(), encoded_bytes);
-                    }
+        if let Ok(meta_maps) = RainMetaDocumentV1Item::cbor_decode_document(bytes) {
+            for meta_map in &meta_maps {
+                if let Ok(encoded_bytes) = meta_map.cbor_encode() {
+                    self.cache
+                        .insert(keccak256(&encoded_bytes).0.to_vec(), encoded_bytes);
                 }
             }
         }
@@ -1610,6 +1624,52 @@ mod tests {
             RainMetaDocumentV1Item::cbor_decode(&bytes),
             Err(Error::SerdeCborError(_))
         ));
+    }
+
+    /// cbor_decode_document discards data that does not begin with the
+    /// document magic number, and decodes the same items as cbor_decode for
+    /// data that does. cbor_decode itself keeps accepting the bare map, which
+    /// is the byte string hash(false) identifies a meta item by.
+    #[test]
+    fn test_cbor_decode_document_requires_the_document_prefix() {
+        let bare = handwritten_map();
+        let items = RainMetaDocumentV1Item::cbor_decode(&bare).unwrap();
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode_document(&bare),
+            Err(Error::NotRainMetaDocumentV1)
+        ));
+
+        let mut doc: Vec<u8> = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        doc.extend_from_slice(&bare);
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode_document(&doc).unwrap(),
+            items
+        );
+    }
+
+    /// A prefix that is some other known magic number is not the document
+    /// magic number, even though those 8 bytes decode as a cbor item.
+    #[test]
+    fn test_cbor_decode_document_rejects_other_magic_prefix() {
+        let mut bytes: Vec<u8> = KnownMagic::DotrainV1.to_prefix_bytes().to_vec();
+        bytes.extend_from_slice(&handwritten_map());
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode_document(&bytes),
+            Err(Error::NotRainMetaDocumentV1)
+        ));
+    }
+
+    /// Data shorter than the 8 byte magic number cannot be a document, the
+    /// same length guard solidity `LibMeta.isRainMetaV1` opens with.
+    #[test]
+    fn test_cbor_decode_document_rejects_data_shorter_than_the_prefix() {
+        let prefix = KnownMagic::RainMetaDocumentV1.to_prefix_bytes();
+        for len in 0..prefix.len() {
+            assert!(matches!(
+                RainMetaDocumentV1Item::cbor_decode_document(&prefix[..len]),
+                Err(Error::NotRainMetaDocumentV1)
+            ));
+        }
     }
 
     /// unpack decodes the payload according to the content encoding.

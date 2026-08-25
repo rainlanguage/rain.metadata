@@ -15,6 +15,7 @@ pub enum Error {
     UnsupportedMeta,
     BiggerThan32Bytes,
     UnsupportedNetwork,
+    NotRainMetaDocumentV1,
     InflateError(String),
     InvalidInput(String),
     InvalidUrl(String),
@@ -44,6 +45,9 @@ impl std::fmt::Display for Error {
             }
             Error::BiggerThan32Bytes => {
                 f.write_str("unexpected input size, must be 32 bytes or less")
+            }
+            Error::NotRainMetaDocumentV1 => {
+                f.write_str("data does not begin with the rain meta document v1 magic number")
             }
             Error::InvalidInput(v) => write!(f, "invalid input: {}", v),
             Error::InvalidUrl(v) => write!(f, "invalid URL: {}", v),
@@ -127,6 +131,10 @@ mod tests {
         assert_eq!(
             Error::BiggerThan32Bytes.to_string(),
             "unexpected input size, must be 32 bytes or less"
+        );
+        assert_eq!(
+            Error::NotRainMetaDocumentV1.to_string(),
+            "data does not begin with the rain meta document v1 magic number"
         );
     }
 
