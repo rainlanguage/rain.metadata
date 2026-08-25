@@ -50,14 +50,9 @@ pub fn generate_dotrain_source_emit_tx_data(content: &str) -> Result<DotrainSour
     // Validate content
     validate_dotrain_content(content)?;
 
-    // Create DotrainSourceV1
     let dotrain_source = DotrainSourceV1(content.to_string());
-    // Convert to RainMetaDocumentV1Item
+    let subject_hash = dotrain_source.hash();
     let document: RainMetaDocumentV1Item = dotrain_source.into();
-
-    // Hash before moving the document into the sequence to avoid cloning.
-    // Calculate subject hash
-    let subject_hash = document.hash(false)?;
     let documents = vec![document];
 
     // Generate CBOR bytes
@@ -67,7 +62,7 @@ pub fn generate_dotrain_source_emit_tx_data(content: &str) -> Result<DotrainSour
     // Prepare hex-encoded meta first to avoid cloning later
     let meta_bytes_hex = hex::encode_prefixed(&meta_bytes);
     // Generate calldata
-    let calldata = generate_emit_data_calldata(subject_hash.into(), meta_bytes);
+    let calldata = generate_emit_data_calldata(subject_hash, meta_bytes);
 
     Ok(DotrainSourceEmitData {
         subject: hex::encode_prefixed(subject_hash),
@@ -152,19 +147,28 @@ mod tests {
         // prefix 0xff0a89c674ee7874.
         assert!(deployment.meta_bytes.starts_with("0xff0a89c674ee7874"));
 
-        // The subject is the keccak256 of the BARE cbor item map — no
-        // rain-meta-document magic prefix — pinned here against an
-        // independently constructed item.
-        let item = RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from(content.as_bytes().to_vec()),
-            magic: KnownMagic::DotrainSourceV1,
-            content_type: ContentType::OctetStream,
-            content_encoding: ContentEncoding::None,
-            content_language: ContentLanguage::None,
-            schema: None,
-        };
-        let expected_subject = alloy::primitives::keccak256(item.cbor_encode().unwrap());
+        // Pinned against an independently computed digest of the raw source
+        // bytes, not against either hash helper.
+        let expected_subject = alloy::primitives::keccak256(content.as_bytes());
         assert_eq!(deployment.subject, hex::encode_prefixed(expected_subject));
+    }
+
+    #[test]
+    fn test_emit_subject_is_the_fetch_by_subject_key() {
+        // The emitted subject and DotrainSourceV1::hash() — the key
+        // DotrainSourceV1::fetch_by_subject is called with — are one digest,
+        // not two. The cbor item map hash is neither the content hash nor the
+        // hash of the emitted meta bytes, so it must not be the subject.
+        for content in ["x", "#main _ _: int-add(1 2)", "/* c */\n#main _: 1;"] {
+            let deployment = generate_dotrain_source_emit_tx_data(content).unwrap();
+            let source = DotrainSourceV1(content.to_string());
+
+            assert_eq!(deployment.subject, hex::encode_prefixed(source.hash()));
+
+            let document: RainMetaDocumentV1Item = source.into();
+            let item_map_hash = document.hash(false).unwrap();
+            assert_ne!(deployment.subject, hex::encode_prefixed(item_map_hash));
+        }
     }
 
     #[test]

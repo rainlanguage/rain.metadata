@@ -26,7 +26,9 @@ pub struct DotrainSourceV1(pub String);
 impl_wasm_traits!(DotrainSourceV1);
 
 impl DotrainSourceV1 {
-    /// Returns the hash of the dotrain source code
+    /// keccak256 over the raw source bytes. This is the metaboard subject a
+    /// dotrain source is emitted under, so it is also the `fetch_by_subject`
+    /// key for it.
     pub fn hash(&self) -> B256 {
         keccak256(self.0.as_bytes())
     }
