@@ -9,11 +9,14 @@ import {
   newMockEvent,
   clearInBlockStore,
 } from "matchstick-as";
-import { createNewMetaV1Event, CONTRACT_ADDRESS } from "./utils";
-import { Bytes, BigInt, ethereum, Address } from "@graphprotocol/graph-ts";
 import {
-  MetaV1_2,
-} from "../generated/metaboard0/MetaBoard";
+  createNewMetaV1Event,
+  handleNewMetaV1Events,
+  CONTRACT_ADDRESS,
+  OTHER_CONTRACT_ADDRESS,
+} from "./utils";
+import { Bytes, BigInt, ethereum, Address } from "@graphprotocol/graph-ts";
+import { MetaV1_2 } from "../generated/metaboard0/MetaBoard";
 import {
   MetaBoard,
   MetaV1 as MetaV1Entity,
@@ -47,6 +50,7 @@ describe("Test meta event", () => {
     const meta = Bytes.fromHexString(metaString);
 
     const newMetaV1Event = createNewMetaV1Event(
+      CONTRACT_ADDRESS,
       sender,
       subject,
       meta,
@@ -180,6 +184,7 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
   beforeAll(() => {
     const meta = Bytes.fromHexString(metaString);
     const newMetaV1Event = createNewMetaV1Event(
+      CONTRACT_ADDRESS,
       sender,
       subject,
       meta,
@@ -256,5 +261,97 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
       BigInt.fromString(transactionTimestamp.toString()),
     );
     assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
+  });
+});
+
+const firstCounterTransactionHash =
+  "0x1111111111111111111111111111111111111111111111111111111111111111";
+const secondCounterTransactionHash =
+  "0x2222222222222222222222222222222222222222222222222222222222222222";
+const thirdCounterTransactionHash =
+  "0x3333333333333333333333333333333333333333333333333333333333333333";
+
+describe("Test MetaBoard nextMetaId counter", () => {
+  afterEach(() => {
+    clearStore();
+    clearInBlockStore();
+  });
+
+  test("nextMetaId counts one per meta the board has seen", () => {
+    handleNewMetaV1Events([
+      createNewMetaV1Event(
+        CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(metaString),
+        firstCounterTransactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+      createNewMetaV1Event(
+        CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(metaString),
+        secondCounterTransactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+      createNewMetaV1Event(
+        CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(metaString),
+        thirdCounterTransactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+    ]);
+
+    assert.entityCount(ENTITY_TYPE_META_BOARD, 1);
+    assert.entityCount(ENTITY_TYPE_META_V1, 3);
+
+    const board = MetaBoard.load(CONTRACT_ADDRESS) as MetaBoard;
+    assert.bigIntEquals(board.nextMetaId, BigInt.fromI32(3));
+  });
+
+  // Cross-board MetaV1 identity is #206's; this asserts only the counters.
+  test("Each metaboard counts only its own metas", () => {
+    handleNewMetaV1Events([
+      createNewMetaV1Event(
+        CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(metaString),
+        firstCounterTransactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+      createNewMetaV1Event(
+        OTHER_CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(metaString),
+        secondCounterTransactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+      createNewMetaV1Event(
+        CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(metaString),
+        thirdCounterTransactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+    ]);
+
+    assert.entityCount(ENTITY_TYPE_META_BOARD, 2);
+
+    const board = MetaBoard.load(CONTRACT_ADDRESS) as MetaBoard;
+    const otherBoard = MetaBoard.load(OTHER_CONTRACT_ADDRESS) as MetaBoard;
+    assert.bigIntEquals(board.nextMetaId, BigInt.fromI32(2));
+    assert.bigIntEquals(otherBoard.nextMetaId, BigInt.fromI32(1));
   });
 });
