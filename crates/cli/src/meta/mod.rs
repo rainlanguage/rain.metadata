@@ -236,8 +236,8 @@ impl RainMetaDocumentV1Item {
 
     /// method to cbor decode from given bytes
     pub fn cbor_decode(data: &[u8]) -> Result<Vec<RainMetaDocumentV1Item>, Error> {
-        let mut track: Vec<usize> = vec![];
         let mut metas: Vec<RainMetaDocumentV1Item> = vec![];
+        let mut consumed: usize = 0;
         let mut is_rain_document_meta = false;
         let mut len = data.len();
         if data.starts_with(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes()) {
@@ -250,7 +250,7 @@ impl RainMetaDocumentV1Item {
         };
         while match serde_cbor::Value::deserialize(&mut deserializer) {
             Ok(cbor_map) => {
-                track.push(deserializer.byte_offset());
+                consumed = deserializer.byte_offset();
                 match serde_cbor::value::from_value(cbor_map) {
                     Ok(meta) => metas.push(meta),
                     Err(error) => Err(Error::SerdeCborError(error))?,
@@ -259,22 +259,14 @@ impl RainMetaDocumentV1Item {
             }
             Err(error) => {
                 if error.is_eof() {
-                    if error.offset() == len as u64 {
-                        false
-                    } else {
-                        Err(Error::SerdeCborError(error))?
-                    }
+                    false
                 } else {
                     Err(Error::SerdeCborError(error))?
                 }
             }
         } {}
 
-        if metas.is_empty()
-            || track.is_empty()
-            || track.len() != metas.len()
-            || len != track[track.len() - 1]
-        {
+        if metas.is_empty() || len != consumed {
             Err(Error::CorruptMeta)?
         }
         Ok(metas)
@@ -1564,6 +1556,31 @@ mod tests {
         bytes.push(0x1b); // u64 header with all 8 payload bytes missing
         assert!(matches!(
             RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
+    /// Every way an item can run out of bytes is corrupt meta, not a serde
+    /// cbor error: a truncated sole item, a map header promising entries the
+    /// input does not carry, and a truncated item after a complete one.
+    #[test]
+    fn test_cbor_decode_truncated_item_is_corrupt() {
+        let mut sole = handwritten_map();
+        sole.pop();
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&sole),
+            Err(Error::CorruptMeta)
+        ));
+
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&[0xa2, 0x00, 0x41, 0x01]),
+            Err(Error::CorruptMeta)
+        ));
+
+        let mut after_complete = handwritten_map();
+        after_complete.extend_from_slice(&[0xa2, 0x00]);
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&after_complete),
             Err(Error::CorruptMeta)
         ));
     }
