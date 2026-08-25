@@ -821,13 +821,19 @@ impl Store {
         }
     }
 
-    /// updates the meta cache by searching through all subgraphs for the given hash
+    /// updates the meta cache by searching through all subgraphs for the given hash,
+    /// checks the hash to bytes validity as update_with does, so a subgraph answering
+    /// with bytes that do not hash to the requested hash caches nothing
     /// returns the reference to the meta bytes in the cache if it was found
     pub async fn update(&mut self, hash: &[u8]) -> Option<&Vec<u8>> {
         if let Ok(meta) = search(&hex::encode_prefixed(hash), &self.subgraphs).await {
-            self.store_content(&meta.bytes);
-            self.cache.insert(hash.to_vec(), meta.bytes);
-            self.get_meta(hash)
+            if keccak256(&meta.bytes).0 == hash {
+                self.store_content(&meta.bytes);
+                self.cache.insert(hash.to_vec(), meta.bytes);
+                self.get_meta(hash)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -2421,6 +2427,30 @@ mod tests {
         let hash = keccak256(&bytes).0.to_vec();
         assert!(cached_store.update_with(&hash, &bytes).is_some());
         assert_eq!(cached_store.update_check(&hash).await, Some(&bytes));
+    }
+
+    /// update() applies the same keccak gate as update_with to the subgraph
+    /// response, so bytes that do not hash to the requested hash poison
+    /// neither the requested key nor the inner item keys.
+    #[tokio::test]
+    async fn test_store_update_rejects_hash_mismatch() {
+        use httpmock::prelude::*;
+        let (_, doc) = sample_authoring_doc();
+        let requested = keccak256(b"the real content").0.to_vec();
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(json!({
+                "data": {"meta": {"__typename": "RainMetaV1", "rawBytes": hex::encode_prefixed(&doc)}}
+            }));
+        });
+        let mut store = Store::new();
+        store.add_subgraphs(&vec![server.url("/sg")]);
+        assert!(store.update(&requested).await.is_none());
+        assert!(store.get_meta(&requested).is_none());
+        assert!(store.cache().is_empty());
+        // the miss is not cached either, so update_check retries and misses again
+        assert!(store.update_check(&requested).await.is_none());
     }
 
     /// update_with enforces keccak(bytes) == hash, leaves an existing entry
