@@ -20,26 +20,18 @@ fn stdout_utf8(out: &Output) -> String {
     String::from_utf8(out.stdout.clone()).expect("stdout not utf8")
 }
 
-/// `schema ls` routes to `schema::dispatch` and prints every `KnownMeta`
-/// kebab-case identifier, one per line, in declaration order.
+/// `schema ls` routes to `schema::dispatch` and prints the kebab-case
+/// identifier of every `KnownMeta` that has a JSON schema, one per line, in
+/// declaration order.
 #[test]
 fn test_dispatch_schema_ls() {
     let out = run(&["schema", "ls"]);
     assert!(out.status.success());
     let expected = "\
 op-v1
-dotrain-v1
-rainlang-v1
 solidity-abi-v2
 authoring-meta-v1
-authoring-meta-v2
 interpreter-caller-meta-v1
-expression-deployer-v2-bytecode-v1
-rainlang-source-v1
-address-list
-dotrain-source-v1
-order-builder-state-v1
-raindex-signed-context-oracle-v1
 ";
     assert_eq!(stdout_utf8(&out), expected);
 }

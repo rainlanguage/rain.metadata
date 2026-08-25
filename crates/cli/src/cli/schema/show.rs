@@ -1,8 +1,8 @@
 use clap::Parser;
 use std::path::PathBuf;
-use schemars::schema_for;
 use crate::meta::KnownMeta;
 use crate::cli::output::SupportedOutputEncoding;
+use super::json_schema;
 
 #[derive(Parser)]
 pub struct Show {
@@ -22,17 +22,8 @@ pub struct Show {
 }
 
 pub fn show(s: Show) -> anyhow::Result<()> {
-    let schema_json = match s.schema {
-        KnownMeta::OpV1 => schema_for!(crate::meta::types::op::v1::OpMeta),
-        KnownMeta::AuthoringMetaV1 => schema_for!(crate::meta::types::authoring::v1::AuthoringMeta),
-        KnownMeta::SolidityAbiV2 => {
-            schema_for!(crate::meta::types::solidity_abi::v2::SolidityAbiMeta)
-        }
-        KnownMeta::InterpreterCallerMetaV1 => {
-            schema_for!(crate::meta::types::interpreter_caller::v1::InterpreterCallerMeta)
-        }
-        other => return Err(anyhow::anyhow!("Unsupported for {} meta", other)),
-    };
+    let schema_json = json_schema(s.schema)
+        .ok_or_else(|| anyhow::anyhow!("Unsupported for {} meta", s.schema))?;
     let schema_string = if s.pretty_print {
         serde_json::to_string_pretty(&schema_json)?
     } else {
