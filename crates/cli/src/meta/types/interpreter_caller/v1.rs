@@ -85,6 +85,7 @@ pub struct Method {
     #[validate(length(min = 1))]
     #[validate]
     pub inputs: Vec<MethodInput>,
+    #[validate(length(min = 1))]
     #[validate]
     pub expressions: Vec<Expression>,
 }
@@ -313,8 +314,8 @@ mod tests {
         }
     }
 
-    /// methods and inputs require at least one element; context_columns
-    /// allows at most u8::MAX (255) elements.
+    /// methods, inputs and expressions require at least one element;
+    /// context_columns allows at most u8::MAX (255) elements.
     #[test]
     fn test_length_constraints() {
         let mut v = valid_json();
@@ -323,6 +324,10 @@ mod tests {
 
         let mut v = valid_json();
         *v.pointer_mut("/methods/0/inputs").unwrap() = serde_json::json!([]);
+        assert!(matches!(parse(&v).unwrap_err(), Error::ValidationErrors(_)));
+
+        let mut v = valid_json();
+        *v.pointer_mut("/methods/0/expressions").unwrap() = serde_json::json!([]);
         assert!(matches!(parse(&v).unwrap_err(), Error::ValidationErrors(_)));
 
         let column = serde_json::json!({ "name": "Col" });
