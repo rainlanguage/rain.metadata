@@ -234,7 +234,24 @@ impl RainMetaDocumentV1Item {
         Ok(bytes)
     }
 
+    /// reads the magic number under cbor map key 1 without decoding the item,
+    /// returning None when there is no such key or its value is not a u64
+    fn peek_magic(cbor_map: &serde_cbor::Value) -> Option<u64> {
+        match cbor_map {
+            serde_cbor::Value::Map(map) => match map.get(&serde_cbor::Value::Integer(1)) {
+                Some(serde_cbor::Value::Integer(magic)) => u64::try_from(*magic).ok(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// method to cbor decode from given bytes
+    ///
+    /// items carrying a magic number outside [KnownMagic] are dropped and the
+    /// remaining items returned, per the metadata-v1 design goal that tooling
+    /// can drop/ignore meta it does not support. An input whose items are all
+    /// dropped is [Error::UnsupportedMeta], never an empty vec.
     pub fn cbor_decode(data: &[u8]) -> Result<Vec<RainMetaDocumentV1Item>, Error> {
         let mut track: Vec<usize> = vec![];
         let mut metas: Vec<RainMetaDocumentV1Item> = vec![];
@@ -251,10 +268,14 @@ impl RainMetaDocumentV1Item {
         while match serde_cbor::Value::deserialize(&mut deserializer) {
             Ok(cbor_map) => {
                 track.push(deserializer.byte_offset());
-                match serde_cbor::value::from_value(cbor_map) {
-                    Ok(meta) => metas.push(meta),
-                    Err(error) => Err(Error::SerdeCborError(error))?,
-                };
+                let is_unknown_magic = Self::peek_magic(&cbor_map)
+                    .is_some_and(|magic| KnownMagic::try_from(magic).is_err());
+                if !is_unknown_magic {
+                    match serde_cbor::value::from_value(cbor_map) {
+                        Ok(meta) => metas.push(meta),
+                        Err(error) => Err(Error::SerdeCborError(error))?,
+                    };
+                }
                 true
             }
             Err(error) => {
@@ -270,12 +291,11 @@ impl RainMetaDocumentV1Item {
             }
         } {}
 
-        if metas.is_empty()
-            || track.is_empty()
-            || track.len() != metas.len()
-            || len != track[track.len() - 1]
-        {
+        if track.is_empty() || len != track[track.len() - 1] {
             Err(Error::CorruptMeta)?
+        }
+        if metas.is_empty() {
+            Err(Error::UnsupportedMeta)?
         }
         Ok(metas)
     }
@@ -1526,6 +1546,23 @@ mod tests {
         ]
     }
 
+    /// A magic number no rain meta type will ever claim.
+    const UNKNOWN_MAGIC: u64 = 0xdeadbeefdeadbeef;
+
+    /// Handwritten canonical cbor for {0: h'<payload>', 1: <magic>}, written
+    /// out byte by byte from the cbor spec, independent of cbor_encode.
+    fn handwritten_map_for(payload: u8, magic: u64) -> Vec<u8> {
+        let mut bytes: Vec<u8> = vec![
+            0xa2, // map(2)
+            0x00, // key 0
+            0x41, payload, // bytes(1)
+            0x01,    // key 1
+            0x1b,    // u64
+        ];
+        bytes.extend_from_slice(&magic.to_be_bytes());
+        bytes
+    }
+
     /// hash(false) is keccak256 of the bare cbor map and hash(true) is
     /// keccak256 of the rain meta document prefix followed by the same map,
     /// pinned against independently handwritten bytes.
@@ -1601,13 +1638,85 @@ mod tests {
         ));
     }
 
-    /// A map carrying an unknown magic number value must not decode.
+    /// Input whose every item carries an unknown magic number leaves nothing
+    /// to return, so it is unsupported rather than an empty vec.
     #[test]
-    fn test_cbor_decode_unknown_magic_errors() {
-        let mut bytes: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
-        bytes.extend_from_slice(&0xdeadbeefdeadbeefu64.to_be_bytes());
+    fn test_cbor_decode_all_unknown_magic_is_unsupported() {
+        let one = handwritten_map_for(0x01, UNKNOWN_MAGIC);
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&one),
+            Err(Error::UnsupportedMeta)
+        ));
+
+        let mut two = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        two.extend(handwritten_map_for(0x01, UNKNOWN_MAGIC));
+        two.extend(handwritten_map_for(0x02, UNKNOWN_MAGIC + 1));
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&two),
+            Err(Error::UnsupportedMeta)
+        ));
+    }
+
+    /// A document mixing supported metas with an unknown magic decodes to the
+    /// supported items, in order, instead of failing whole.
+    #[test]
+    fn test_cbor_decode_drops_unknown_magic_items() -> Result<(), Error> {
+        let mut bytes = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        bytes.extend(handwritten_map_for(0x01, KnownMagic::DotrainV1 as u64));
+        bytes.extend(handwritten_map_for(0x02, UNKNOWN_MAGIC));
+        bytes.extend(handwritten_map_for(0x03, KnownMagic::RainlangV1 as u64));
+
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes)?,
+            vec![
+                plain_item(KnownMagic::DotrainV1, vec![0x01]),
+                plain_item(KnownMagic::RainlangV1, vec![0x03]),
+            ]
+        );
+        Ok(())
+    }
+
+    /// An unknown magic leading the sequence does not hide what follows it.
+    #[test]
+    fn test_cbor_decode_unknown_magic_first_item() -> Result<(), Error> {
+        let mut bytes = handwritten_map_for(0x02, UNKNOWN_MAGIC);
+        bytes.extend(handwritten_map());
+
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes)?,
+            vec![plain_item(KnownMagic::DotrainV1, vec![0x01])]
+        );
+        Ok(())
+    }
+
+    /// Dropping an unknown item does not excuse trailing bytes that are not a
+    /// complete cbor item.
+    #[test]
+    fn test_cbor_decode_unknown_magic_then_truncated_is_corrupt() {
+        let mut bytes = handwritten_map();
+        bytes.extend(handwritten_map_for(0x02, UNKNOWN_MAGIC));
+        bytes.push(0x1b); // u64 header with all 8 payload bytes missing
         assert!(matches!(
             RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
+    /// Only an unsigned magic value can be recognised as unknown; anything
+    /// else under key 1 is a malformed item, not a droppable one.
+    #[test]
+    fn test_cbor_decode_non_integer_magic_errors() {
+        // {0: h'01', 1: "nope"}
+        let text: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x64, 0x6e, 0x6f, 0x70, 0x65];
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&text),
+            Err(Error::SerdeCborError(_))
+        ));
+
+        // {0: h'01', 1: -1}
+        let negative: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x20];
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&negative),
             Err(Error::SerdeCborError(_))
         ));
     }
