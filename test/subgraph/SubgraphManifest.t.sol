@@ -281,19 +281,20 @@ contract SubgraphManifestTest is Test {
         );
     }
 
-    /// The schema's `@entity` declarations, as JSON: `types` are the entity
-    /// type names, `declarations` is how many lines declare one.
+    /// The schema's entity declarations, as JSON: `types` are the entity type
+    /// names, `declarations` is how many lines declare one.
     ///
     /// A LINE read, which every manifest check here is forbidden from being,
     /// because there is no schema parser to reach for: this lane deliberately
     /// has no node, and `yq` does not speak GraphQL. `declarations` is what
-    /// makes that safe. It counts every non-comment line mentioning `@entity`
-    /// at all, and `schemaEntityTypes` holds `types` to that count, so a schema
-    /// written in a shape this cannot read — a directive on its own line, a
-    /// description carrying the word — fails loudly rather than silently
-    /// reporting fewer entities than the file declares. Comment lines are
-    /// dropped first, since a commented-out declaration is not one, which is
-    /// the same distinction reading the manifest as YAML gets for free.
+    /// makes that safe. It counts every non-comment line carrying the entity
+    /// directive at all, and `schemaEntityTypes` holds `types` to that count,
+    /// so a schema written in a shape this cannot read — the directive on a
+    /// line of its own, a description carrying the word — fails loudly rather
+    /// than silently reporting fewer entities than the file declares. Comment
+    /// lines are dropped first, since a commented-out declaration is not one,
+    /// which is the same distinction reading the manifest as YAML gets for
+    /// free.
     /// @return The `{declarations, types}` object as JSON.
     function schemaEntityJson() internal returns (string memory) {
         string[] memory cmd = new string[](4);
@@ -306,7 +307,7 @@ contract SubgraphManifestTest is Test {
         return string(vm.ffi(cmd));
     }
 
-    /// Every type the schema declares `@entity`.
+    /// Every entity type the schema declares.
     /// @return The entity type names.
     function schemaEntityTypes() internal returns (string[] memory) {
         string memory json = schemaEntityJson();
