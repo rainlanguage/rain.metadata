@@ -425,7 +425,7 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
             intermediate_io: &IntermediateIO,
         ) -> Result<SolidityAbiErrorInput, String> {
             if intermediate_io.indexed.is_some() {
-                return Err("indexed found on fn io".into());
+                return Err("indexed found on error input".into());
             }
 
             let components: Option<Vec<SolidityAbiErrorInput>> = match &intermediate_io.components {
@@ -895,7 +895,12 @@ mod tests {
             "type": "error"
         }]);
         let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi);
-        assert!(result.unwrap_err().to_string().contains("indexed found"),);
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("indexed found on error input"),
+            "unexpected message: {}",
+            message
+        );
     }
 
     #[test]
