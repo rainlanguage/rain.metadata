@@ -43,9 +43,76 @@ impl KnownMeta {
 
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
-    use super::super::KnownMeta;
     use crate::error::Error;
     use crate::meta::types::authoring::v1::{AuthoringMeta, AuthoringMetaItem};
+    use crate::meta::KnownMeta;
+
+    /// OpV1 normalizes valid metadata to its canonical compact json form.
+    #[test]
+    fn test_normalize_op_v1_canonicalizes() {
+        let spaced = b"{  \"name\" : \"add\" ,\n  \"desc\" : \"adds numbers\" }";
+        let normalized = KnownMeta::OpV1.normalize(spaced).unwrap();
+        assert_eq!(
+            String::from_utf8(normalized).unwrap(),
+            r#"{"name":"add","desc":"adds numbers","operand":[],"inputs":[],"outputs":[],"aliases":[]}"#
+        );
+    }
+
+    /// OpV1 rejects metadata that parses but fails validation: opcode names
+    /// must be lower-kebab-case rain symbols.
+    #[test]
+    fn test_normalize_op_v1_rejects_invalid_symbol() {
+        let invalid = br#"{"name":"NOT_A_RAIN_SYMBOL"}"#;
+        assert!(matches!(
+            KnownMeta::OpV1.normalize(invalid),
+            Err(Error::ValidationErrors(_))
+        ));
+    }
+
+    /// SolidityAbiV2 rejects data that is not json and data that is not utf8.
+    #[test]
+    fn test_normalize_solidity_abi_v2_rejects_bad_input() {
+        assert!(matches!(
+            KnownMeta::SolidityAbiV2.normalize(b"not json at all"),
+            Err(Error::SerdeJsonError(_))
+        ));
+        assert!(matches!(
+            KnownMeta::SolidityAbiV2.normalize(&[0xff, 0xfe]),
+            Err(Error::Utf8Error(_))
+        ));
+    }
+
+    /// SolidityAbiV2 normalizes whitespace away to the canonical compact form.
+    #[test]
+    fn test_normalize_solidity_abi_v2_canonicalizes() {
+        assert_eq!(
+            KnownMeta::SolidityAbiV2.normalize(b"[ ]").unwrap(),
+            b"[]".to_vec()
+        );
+    }
+
+    /// InterpreterCallerMetaV1 parses but rejects metadata failing validation:
+    /// at least one method is required.
+    #[test]
+    fn test_normalize_interpreter_caller_rejects_empty_methods() {
+        let invalid = br#"{"name":"Test Caller","abiName":"TestCaller","methods":[]}"#;
+        assert!(matches!(
+            KnownMeta::InterpreterCallerMetaV1.normalize(invalid),
+            Err(Error::ValidationErrors(_))
+        ));
+    }
+
+    /// Meta types with no json schema at this level pass through untouched.
+    #[test]
+    fn test_normalize_passthrough_for_binary_metas() {
+        let data = vec![0x00, 0x01, 0xff];
+        assert_eq!(
+            KnownMeta::ExpressionDeployerV2BytecodeV1
+                .normalize(&data)
+                .unwrap(),
+            data
+        );
+    }
 
     fn sample_authoring_meta() -> AuthoringMeta {
         serde_json::from_str(
