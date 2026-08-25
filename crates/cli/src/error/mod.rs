@@ -18,6 +18,8 @@ pub enum Error {
     InflateError(String),
     InvalidInput(String),
     InvalidUrl(String),
+    CorruptRecord(String),
+    SubgraphError(String),
     Utf8Error(Utf8Error),
     FromUtf8Error(FromUtf8Error),
     ReqwestError(reqwest::Error),
@@ -47,6 +49,8 @@ impl std::fmt::Display for Error {
             }
             Error::InvalidInput(v) => write!(f, "invalid input: {}", v),
             Error::InvalidUrl(v) => write!(f, "invalid URL: {}", v),
+            Error::CorruptRecord(v) => write!(f, "corrupt record: {}", v),
+            Error::SubgraphError(v) => write!(f, "subgraph error: {}", v),
             Error::ReqwestError(v) => write!(f, "{}", v),
             Error::InflateError(v) => write!(f, "{}", v),
             Error::Utf8Error(v) => write!(f, "{}", v),
@@ -142,6 +146,14 @@ mod tests {
             "invalid URL: not-a-url"
         );
         assert_eq!(Error::InflateError("boom".to_string()).to_string(), "boom");
+        assert_eq!(
+            Error::CorruptRecord("bytecode is missing".to_string()).to_string(),
+            "corrupt record: bytecode is missing"
+        );
+        assert_eq!(
+            Error::SubgraphError("boom".to_string()).to_string(),
+            "subgraph error: boom"
+        );
     }
 
     /// InvalidMetaMagic renders expected first, actual second.
