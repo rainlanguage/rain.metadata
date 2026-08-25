@@ -91,7 +91,7 @@ impl TryFrom<RainMetaDocumentV1Item> for DotrainSourceV1 {
                 value.magic,
             ));
         }
-        let content = String::from_utf8(value.payload.to_vec()).map_err(Error::FromUtf8Error)?;
+        let content = String::from_utf8(value.unpack()?).map_err(Error::FromUtf8Error)?;
         Ok(DotrainSourceV1(content))
     }
 }
@@ -537,5 +537,23 @@ mod tests {
             ),
         }
         mock.assert();
+    }
+
+    #[test]
+    fn test_try_from_unpacks_content_encoding() {
+        let dotrain_code = "/* some dotrain code */".to_string();
+        let document_item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(
+                ContentEncoding::Deflate.encode(dotrain_code.as_bytes()),
+            ),
+            magic: KnownMagic::DotrainSourceV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+
+        let dotrain_source = DotrainSourceV1::try_from(document_item).unwrap();
+        assert_eq!(dotrain_source.0, dotrain_code);
     }
 }

@@ -144,8 +144,7 @@ impl TryFrom<RainMetaDocumentV1Item> for OrderBuilderStateV1 {
             ));
         }
 
-        // Deserialize CBOR from payload
-        let instance = serde_cbor::from_slice::<OrderBuilderStateV1>(&value.payload)
+        let instance = serde_cbor::from_slice::<OrderBuilderStateV1>(&value.unpack()?)
             .map_err(Error::SerdeCborError)?;
 
         Ok(instance)
@@ -434,5 +433,22 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(extracted, original_instance);
+    }
+
+    #[test]
+    fn test_try_from_unpacks_content_encoding() {
+        let instance = create_test_instance();
+        let cbor_bytes = serde_cbor::to_vec(&instance).unwrap();
+        let document_item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(ContentEncoding::Deflate.encode(&cbor_bytes)),
+            magic: KnownMagic::OrderBuilderStateV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+
+        let recovered = OrderBuilderStateV1::try_from(document_item).unwrap();
+        assert_eq!(recovered, instance);
     }
 }
