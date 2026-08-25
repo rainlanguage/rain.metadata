@@ -1612,6 +1612,67 @@ mod tests {
         ));
     }
 
+    /// A handwritten item map carrying the rain meta document magic under key
+    /// 1 decodes, so accepting the document magic as an item magic is the
+    /// decoder's own behaviour and not an artefact of this crate's encoder.
+    #[test]
+    fn test_cbor_decode_handwritten_document_magic_item() -> Result<(), Error> {
+        let bytes: Vec<u8> = vec![
+            0xa2, // map(2)
+            0x00, // key 0
+            0x41, 0x01, // bytes(1) 0x01
+            0x01, // key 1
+            0x1b, 0xff, 0x0a, 0x89, 0xc6, 0x74, 0xee, 0x78, 0x74, // u64 RainMetaDocumentV1
+        ];
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes)?,
+            vec![plain_item(KnownMagic::RainMetaDocumentV1, vec![0x01])]
+        );
+        Ok(())
+    }
+
+    /// The document magic as an item's own magic marks a payload that is
+    /// itself a complete rain meta document, which
+    /// `OrderBuilderStateV1::extract_from_meta` recurses into, so the codec
+    /// must carry such an item in both directions and leave its payload byte
+    /// for byte intact.
+    #[test]
+    fn test_document_magic_item_carries_a_nested_document() -> Result<(), Error> {
+        let inner = plain_item(KnownMagic::DotrainV1, vec![0x01]);
+        let inner_doc = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![inner.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )?;
+        let outer = plain_item(KnownMagic::RainMetaDocumentV1, inner_doc.clone());
+        let outer_doc = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![outer.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )?;
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&outer_doc)?;
+        assert_eq!(decoded, vec![outer]);
+        assert_eq!(decoded[0].payload.as_ref(), inner_doc.as_slice());
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(decoded[0].payload.as_ref())?,
+            vec![inner]
+        );
+        Ok(())
+    }
+
+    /// Nesting is not a leaf meta type: the unpack layer rejects the document
+    /// magic so that no payload conversion is ever handed a whole document.
+    #[test]
+    fn test_document_magic_item_is_not_unpackable() {
+        assert!(matches!(
+            KnownMeta::try_from(KnownMagic::RainMetaDocumentV1),
+            Err(Error::UnsupportedMeta)
+        ));
+        assert!(matches!(
+            plain_item(KnownMagic::RainMetaDocumentV1, vec![0x01]).unpack_into::<Vec<u8>>(),
+            Err(Error::UnsupportedMeta)
+        ));
+    }
+
     /// unpack decodes the payload according to the content encoding.
     #[test]
     fn test_unpack_decodes_content_encoding() -> Result<(), Error> {
