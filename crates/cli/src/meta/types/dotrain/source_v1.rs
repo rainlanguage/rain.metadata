@@ -56,7 +56,7 @@ impl DotrainSourceV1 {
                 let dotrain_source = DotrainSourceV1::try_from(decoded_items[0].clone())?;
                 Ok(Some(dotrain_source))
             }
-            Err(MetaboardSubgraphClientError::Empty(_)) => {
+            Err(MetaboardSubgraphClientError::EmptyBySubject { .. }) => {
                 // No meta found for this subject
                 Ok(None)
             }

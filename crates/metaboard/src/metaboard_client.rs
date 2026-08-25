@@ -22,8 +22,10 @@ pub enum MetaboardSubgraphClientError {
         #[source]
         source: CynicClientError,
     },
-    #[error("Subgraph query returned no data for metahash {0}")]
-    Empty(String),
+    #[error("Subgraph query returned no data for metahash {metahash}")]
+    EmptyByHash { metahash: String },
+    #[error("Subgraph query returned no data for subject {subject}")]
+    EmptyBySubject { subject: String },
     #[error("Error decoding metahash {metahash}: {source}")]
     FromHexError {
         metahash: String,
@@ -77,7 +79,7 @@ impl MetaboardSubgraphClient {
             })?;
 
         if data.meta_v1_s.is_empty() {
-            return Err(MetaboardSubgraphClientError::Empty(metahash));
+            return Err(MetaboardSubgraphClientError::EmptyByHash { metahash });
         }
 
         // decode all the metas
@@ -110,7 +112,9 @@ impl MetaboardSubgraphClient {
             })?;
 
         if data.meta_v1_s.is_empty() {
-            return Err(MetaboardSubgraphClientError::Empty(subject.0.clone()));
+            return Err(MetaboardSubgraphClientError::EmptyBySubject {
+                subject: subject.0.clone(),
+            });
         }
 
         // decode all the metas
@@ -250,12 +254,19 @@ mod tests {
 
         let result = client.get_metabytes_by_hash(&hash).await;
 
-        assert!(result.is_err());
-        match result {
-            Err(MetaboardSubgraphClientError::Empty(metahash)) => {
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Subgraph query returned no data for metahash 0x{}",
+                encode(hash)
+            )
+        );
+        match err {
+            MetaboardSubgraphClientError::EmptyByHash { metahash } => {
                 assert_eq!(metahash, format!("0x{}", encode(hash)));
             }
-            _ => panic!("Unexpected result: {:?}", result),
+            other => panic!("Unexpected result: {:?}", other),
         }
     }
 
@@ -339,10 +350,16 @@ mod tests {
 
         let result = client.get_metabytes_by_subject(&subject).await;
 
-        assert!(result.is_err());
-        match result {
-            Err(MetaboardSubgraphClientError::Empty(s)) => assert_eq!(s, "0x315"),
-            _ => panic!("Unexpected result: {:?}", result),
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Subgraph query returned no data for subject 0x315"
+        );
+        match err {
+            MetaboardSubgraphClientError::EmptyBySubject { subject } => {
+                assert_eq!(subject, "0x315")
+            }
+            other => panic!("Unexpected result: {:?}", other),
         }
     }
 
