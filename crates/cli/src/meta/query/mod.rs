@@ -61,9 +61,8 @@ impl DeployerResponse {
             for meta_map in &meta_maps {
                 if meta_map.magic == KnownMagic::AuthoringMetaV1 {
                     if let Ok(v) = meta_map.unpack() {
-                        match AuthoringMeta::abi_decode_validate(&v) {
-                            Ok(am) => return Some(am),
-                            Err(_) => return None,
+                        if let Ok(am) = AuthoringMeta::abi_decode_validate(&v) {
+                            return Some(am);
                         }
                     }
                 }
@@ -356,6 +355,35 @@ mod tests {
         assert!(bad_unpack.unpack().is_err());
         let meta_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
             &vec![bad_unpack, authoring_item()],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
+        assert_eq!(
+            deployer_response_with(meta_bytes).get_authoring_meta(),
+            Some(authoring_meta())
+        );
+    }
+
+    /// An authoring-magic item that unpacks but fails abi decode validation is
+    /// skipped; a later valid authoring meta item is still found.
+    #[test]
+    fn test_get_authoring_meta_skips_invalid_item() {
+        let invalid = AuthoringMeta(vec![AuthoringMetaItem {
+            word: "NOTKEBAB".to_string(),
+            operand_parser_offset: 0,
+            description: "a description".to_string(),
+        }]);
+        let bad_decode = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(invalid.abi_encode().unwrap()),
+            magic: KnownMagic::AuthoringMetaV1,
+            content_type: ContentType::None,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        assert!(AuthoringMeta::abi_decode_validate(&bad_decode.unpack().unwrap()).is_err());
+        let meta_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![bad_decode, authoring_item()],
             KnownMagic::RainMetaDocumentV1,
         )
         .unwrap();
