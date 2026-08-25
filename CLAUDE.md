@@ -32,8 +32,7 @@ means adding it to `LibCopyArtifacts.contracts()` AND
 built interface artifact and `subgraph/schema.graphql` with `jq` and the
 subgraph manifest with `yq` — all over `vm.ffi`, so neither subgraph file needs
 an `fs_permissions` entry, and both binaries have to be on `PATH` in the sol
-shell. Nothing else here shells out or
-touches the filesystem.
+shell. Nothing else here shells out or touches the filesystem.
 
 ## The subgraph is SOURCE only (#149)
 
