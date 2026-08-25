@@ -269,4 +269,137 @@ mod tests {
             assert_eq!(magic_number, from_u64);
         }
     }
+
+    #[test]
+    fn test_address_list() {
+        let magic_number = KnownMagic::AddressList;
+        let magic_number_after_prefix = magic_number.to_prefix_bytes();
+
+        assert_eq!(hex::encode(magic_number_after_prefix), "ffb2637608c09e38");
+    }
+
+    /// Pins every discriminant to its published magic number so no variant can
+    /// silently change value. Values for the documented types come from the
+    /// metadata-v1 spec magic number table.
+    #[test]
+    fn test_all_discriminants_pinned() {
+        use strum::IntoEnumIterator;
+        let expected: [(KnownMagic, &str); 19] = [
+            (KnownMagic::RainMetaDocumentV1, "ff0a89c674ee7874"),
+            (KnownMagic::OpMetaV1, "ffe5282f43e495b4"),
+            (KnownMagic::DotrainV1, "ffdac2f2f37be894"),
+            (KnownMagic::RainlangV1, "ff1c198cec3b48a7"),
+            (KnownMagic::SolidityAbiV2, "ffe5ffb4a3ff2cde"),
+            (KnownMagic::AuthoringMetaV1, "ffe9e3a02ca8e235"),
+            (KnownMagic::AuthoringMetaV2, "ff52fe42f1a05093"),
+            (KnownMagic::InterpreterCallerMetaV1, "ffc21bbf86cc199b"),
+            (
+                KnownMagic::ExpressionDeployerV2BytecodeV1,
+                "ffdb988a8cd04d32",
+            ),
+            (KnownMagic::RainlangSourceV1, "ff13109e41336ff2"),
+            (KnownMagic::AddressList, "ffb2637608c09e38"),
+            (KnownMagic::DotrainSourceV1, "ffa15ef0fc437099"),
+            (KnownMagic::OrderBuilderStateV1, "ffda7b2fb167c286"),
+            (KnownMagic::RaindexSignedContextOracleV1, "ff7a1507ba4419ca"),
+            (KnownMagic::OaSchema, "ffa8e8a9b9cf4a31"),
+            (KnownMagic::OaHashList, "ff9fae3cc645f463"),
+            (KnownMagic::OaStructure, "ffc47a6299e8a911"),
+            (KnownMagic::OaTokenImage, "ff8cd2927c8c86cb"),
+            (KnownMagic::OaTokenCredentialLinks, "ffbc38eb14ad2209"),
+        ];
+        // every variant is pinned exactly once
+        assert_eq!(expected.len(), KnownMagic::iter().count());
+        for (magic, hex_str) in expected {
+            assert_eq!(hex::encode(magic.to_prefix_bytes()), hex_str, "{:?}", magic);
+        }
+    }
+
+    /// Every magic number begins with 0xff so a prefix can never be a valid
+    /// utf-8 sequence, per the metadata-v1 spec.
+    #[test]
+    fn test_all_prefixes_start_with_0xff() {
+        use strum::IntoEnumIterator;
+        for magic in KnownMagic::iter() {
+            assert_eq!(magic.to_prefix_bytes()[0], 0xff, "{:?}", magic);
+        }
+    }
+
+    /// TryFrom<u64> roundtrips every variant back to itself.
+    #[test]
+    fn test_try_from_u64_roundtrip_all() {
+        use strum::IntoEnumIterator;
+        for magic in KnownMagic::iter() {
+            let from_u64 = KnownMagic::try_from(magic as u64).unwrap();
+            assert_eq!(magic, from_u64);
+        }
+    }
+
+    /// Values that are not known magic numbers map to Error::UnknownMagic.
+    #[test]
+    fn test_try_from_u64_unknown_magic() {
+        for unknown in [0u64, 1, 0xdeadbeef, 0xff0a89c674ee7875, u64::MAX] {
+            assert!(matches!(
+                KnownMagic::try_from(unknown),
+                Err(crate::error::Error::UnknownMagic)
+            ));
+        }
+    }
+
+    /// Strum parse/display uses the kebab-case names that the CLI documents,
+    /// e.g. the build command's default global magic "rain-meta-document-v1".
+    #[test]
+    fn test_strum_kebab_case_parse_display() {
+        use std::str::FromStr;
+        let cases: [(KnownMagic, &str); 19] = [
+            (KnownMagic::RainMetaDocumentV1, "rain-meta-document-v1"),
+            (KnownMagic::OpMetaV1, "op-meta-v1"),
+            (KnownMagic::DotrainV1, "dotrain-v1"),
+            (KnownMagic::RainlangV1, "rainlang-v1"),
+            (KnownMagic::SolidityAbiV2, "solidity-abi-v2"),
+            (KnownMagic::AuthoringMetaV1, "authoring-meta-v1"),
+            (KnownMagic::AuthoringMetaV2, "authoring-meta-v2"),
+            (
+                KnownMagic::InterpreterCallerMetaV1,
+                "interpreter-caller-meta-v1",
+            ),
+            (
+                KnownMagic::ExpressionDeployerV2BytecodeV1,
+                "expression-deployer-v2-bytecode-v1",
+            ),
+            (KnownMagic::RainlangSourceV1, "rainlang-source-v1"),
+            (KnownMagic::AddressList, "address-list"),
+            (KnownMagic::DotrainSourceV1, "dotrain-source-v1"),
+            (KnownMagic::OrderBuilderStateV1, "order-builder-state-v1"),
+            (
+                KnownMagic::RaindexSignedContextOracleV1,
+                "raindex-signed-context-oracle-v1",
+            ),
+            (KnownMagic::OaSchema, "oa-schema"),
+            (KnownMagic::OaHashList, "oa-hash-list"),
+            (KnownMagic::OaStructure, "oa-structure"),
+            (KnownMagic::OaTokenImage, "oa-token-image"),
+            (
+                KnownMagic::OaTokenCredentialLinks,
+                "oa-token-credential-links",
+            ),
+        ];
+        for (magic, name) in cases {
+            assert_eq!(magic.to_string(), name, "{:?}", magic);
+            assert_eq!(KnownMagic::from_str(name).unwrap(), magic, "{}", name);
+        }
+    }
+
+    /// Serde serializes to the same kebab-case names and deserializes them
+    /// back.
+    #[test]
+    fn test_serde_kebab_case_roundtrip() {
+        use strum::IntoEnumIterator;
+        for magic in KnownMagic::iter() {
+            let json = serde_json::to_string(&magic).unwrap();
+            assert_eq!(json, format!("\"{}\"", magic), "{:?}", magic);
+            let back: KnownMagic = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, magic);
+        }
+    }
 }

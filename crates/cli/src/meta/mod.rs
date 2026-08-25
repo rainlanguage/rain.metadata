@@ -1469,4 +1469,1024 @@ mod tests {
 
         Ok(())
     }
+
+    fn plain_item(magic: KnownMagic, payload: Vec<u8>) -> RainMetaDocumentV1Item {
+        RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(payload),
+            magic,
+            content_type: ContentType::None,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        }
+    }
+
+    // ---- helpers for the CAS / search tests ----
+
+    fn sample_authoring_doc() -> (AuthoringMeta, Vec<u8>) {
+        let authoring_meta: AuthoringMeta = serde_json::from_str(
+            r#"[{"word":"stack","description":"Copies an existing value from the stack.","operandParserOffset":16}]"#,
+        )
+        .unwrap();
+        let abi = authoring_meta.abi_encode_validate().unwrap();
+        let item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(abi),
+            magic: KnownMagic::AuthoringMetaV1,
+            content_type: ContentType::Cbor,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let doc =
+            RainMetaDocumentV1Item::cbor_encode_seq(&vec![item], KnownMagic::RainMetaDocumentV1)
+                .unwrap();
+        (authoring_meta, doc)
+    }
+
+    fn sample_dotrain_item() -> RainMetaDocumentV1Item {
+        RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from("some dotrain body".as_bytes()),
+            magic: KnownMagic::DotrainV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        }
+    }
+
+    /// Handwritten canonical cbor for {0: h'01', 1: DotrainV1 magic}, written
+    /// out byte by byte from the cbor spec, independent of cbor_encode.
+    fn handwritten_map() -> Vec<u8> {
+        vec![
+            0xa2, // map(2)
+            0x00, // key 0
+            0x41, 0x01, // bytes(1) 0x01
+            0x01, // key 1
+            0x1b, 0xff, 0xda, 0xc2, 0xf2, 0xf3, 0x7b, 0xe8, 0x94, // u64 DotrainV1
+        ]
+    }
+
+    /// hash(false) is keccak256 of the bare cbor map and hash(true) is
+    /// keccak256 of the rain meta document prefix followed by the same map,
+    /// pinned against independently handwritten bytes.
+    #[test]
+    fn test_hash_bare_vs_document() -> Result<(), Error> {
+        let map_bytes = handwritten_map();
+        let mut doc_bytes: Vec<u8> = vec![0xff, 0x0a, 0x89, 0xc6, 0x74, 0xee, 0x78, 0x74];
+        doc_bytes.extend_from_slice(&map_bytes);
+
+        let item = plain_item(KnownMagic::DotrainV1, vec![0x01]);
+        assert_eq!(item.hash(false)?, keccak256(&map_bytes).0);
+        assert_eq!(item.hash(true)?, keccak256(&doc_bytes).0);
+        assert_ne!(item.hash(false)?, item.hash(true)?);
+        Ok(())
+    }
+
+    /// Empty input and a bare document prefix with no items are corrupt metas.
+    #[test]
+    fn test_cbor_decode_empty_is_corrupt() {
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&[]),
+            Err(Error::CorruptMeta)
+        ));
+        let prefix = KnownMagic::RainMetaDocumentV1.to_prefix_bytes();
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&prefix),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
+    /// A valid map followed by truncated trailing bytes must not decode: the
+    /// data does not end exactly at the last complete item.
+    #[test]
+    fn test_cbor_decode_trailing_truncated_is_corrupt() {
+        let mut bytes = handwritten_map();
+        bytes.push(0x1b); // u64 header with all 8 payload bytes missing
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
+    /// A valid map followed by a byte that is not valid cbor surfaces the
+    /// serde cbor error.
+    #[test]
+    fn test_cbor_decode_trailing_garbage_errors() {
+        let mut bytes = handwritten_map();
+        bytes.push(0xff); // lone break byte
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// A map without the mandatory payload key 0 must not decode.
+    #[test]
+    fn test_cbor_decode_missing_payload_errors() {
+        let mut bytes: Vec<u8> = vec![0xa1, 0x01, 0x1b]; // {1: DotrainV1}
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// A map without the mandatory magic key 1 must not decode.
+    #[test]
+    fn test_cbor_decode_missing_magic_errors() {
+        let bytes: Vec<u8> = vec![0xa1, 0x00, 0x41, 0x01]; // {0: h'01'}
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// A map carrying an unknown magic number value must not decode.
+    #[test]
+    fn test_cbor_decode_unknown_magic_errors() {
+        let mut bytes: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        bytes.extend_from_slice(&0xdeadbeefdeadbeefu64.to_be_bytes());
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// unpack decodes the payload according to the content encoding.
+    #[test]
+    fn test_unpack_decodes_content_encoding() -> Result<(), Error> {
+        let content = b"unpack me via deflate".to_vec();
+        let packed = ContentEncoding::Deflate.encode(&content);
+        assert_ne!(packed, content);
+        let mut item = plain_item(KnownMagic::DotrainV1, packed);
+        item.content_encoding = ContentEncoding::Deflate;
+        assert_eq!(item.unpack()?, content);
+
+        let item = plain_item(KnownMagic::DotrainV1, content.clone());
+        assert_eq!(item.unpack()?, content);
+        Ok(())
+    }
+
+    /// The 13 meta magics unpack; the document magic and the Oa magics are
+    /// rejected with UnsupportedMeta.
+    #[test]
+    fn test_unpack_into_whitelist() {
+        use strum::IntoEnumIterator;
+        let supported = [
+            KnownMagic::OpMetaV1,
+            KnownMagic::DotrainV1,
+            KnownMagic::RainlangV1,
+            KnownMagic::SolidityAbiV2,
+            KnownMagic::AuthoringMetaV1,
+            KnownMagic::AuthoringMetaV2,
+            KnownMagic::AddressList,
+            KnownMagic::InterpreterCallerMetaV1,
+            KnownMagic::ExpressionDeployerV2BytecodeV1,
+            KnownMagic::DotrainSourceV1,
+            KnownMagic::OrderBuilderStateV1,
+            KnownMagic::RainlangSourceV1,
+            KnownMagic::RaindexSignedContextOracleV1,
+        ];
+        for magic in supported {
+            let unpacked: Vec<u8> = plain_item(magic, vec![0x61]).unpack_into().unwrap();
+            assert_eq!(unpacked, vec![0x61], "{:?}", magic);
+        }
+        let unsupported = [
+            KnownMagic::RainMetaDocumentV1,
+            KnownMagic::OaSchema,
+            KnownMagic::OaHashList,
+            KnownMagic::OaStructure,
+            KnownMagic::OaTokenImage,
+            KnownMagic::OaTokenCredentialLinks,
+        ];
+        for magic in unsupported {
+            let result: Result<Vec<u8>, Error> = plain_item(magic, vec![0x61]).unpack_into();
+            assert!(matches!(result, Err(Error::UnsupportedMeta)), "{:?}", magic);
+        }
+        // together the two lists cover every variant
+        assert_eq!(
+            supported.len() + unsupported.len(),
+            KnownMagic::iter().count()
+        );
+    }
+
+    /// Invalid utf8 payloads error when unpacking into String rather than
+    /// being replaced lossily.
+    #[test]
+    fn test_try_into_string_invalid_utf8_errors() {
+        let item = plain_item(KnownMagic::DotrainV1, vec![0xff, 0xfe]);
+        let result: Result<String, Error> = item.try_into();
+        assert!(matches!(result, Err(Error::FromUtf8Error(_))));
+    }
+
+    /// Unpacking into Vec<u8> decodes the content encoding first.
+    #[test]
+    fn test_try_into_vec_decodes_encoding() -> Result<(), Error> {
+        let content = b"raw bytecode bytes \x00\x01\x02".to_vec();
+        let packed = ContentEncoding::Deflate.encode(&content);
+        let mut item = plain_item(KnownMagic::ExpressionDeployerV2BytecodeV1, packed.clone());
+        item.content_encoding = ContentEncoding::Deflate;
+        let unpacked: Vec<u8> = item.try_into()?;
+        assert_eq!(unpacked, content);
+        assert_ne!(unpacked, packed);
+        Ok(())
+    }
+
+    /// Deflate encode produces a zlib stream (RFC1950 CMF byte 0x78) that is
+    /// actually compressed and roundtrips through decode.
+    #[test]
+    fn test_content_encoding_deflate_roundtrip() -> Result<(), Error> {
+        let content = b"hello rain deflate fixture hello rain deflate fixture".to_vec();
+        let encoded = ContentEncoding::Deflate.encode(&content);
+        assert_ne!(encoded, content);
+        assert_eq!(encoded[0], 0x78);
+        assert_eq!(ContentEncoding::Deflate.decode(&encoded)?, content);
+        Ok(())
+    }
+
+    /// None and Identity pass data through unchanged on encode and decode.
+    #[test]
+    fn test_content_encoding_passthrough() -> Result<(), Error> {
+        let data = vec![0x00, 0xff, 0x10];
+        for encoding in [ContentEncoding::None, ContentEncoding::Identity] {
+            assert_eq!(encoding.encode(&data), data, "{:?}", encoding);
+            assert_eq!(encoding.decode(&data)?, data, "{:?}", encoding);
+        }
+        Ok(())
+    }
+
+    /// Decode accepts a zlib stream and falls back to a raw deflate stream.
+    /// Fixtures generated out of band from "hello rain deflate fixture".
+    #[test]
+    fn test_content_encoding_decode_fixtures() -> Result<(), Error> {
+        let content = b"hello rain deflate fixture".to_vec();
+        let zlib: Vec<u8> = vec![
+            120, 156, 203, 72, 205, 201, 201, 87, 40, 74, 204, 204, 83, 72, 73, 77, 203, 73, 44,
+            73, 85, 72, 203, 172, 40, 41, 45, 74, 5, 0, 132, 64, 9, 251,
+        ];
+        let raw: Vec<u8> = vec![
+            203, 72, 205, 201, 201, 87, 40, 74, 204, 204, 83, 72, 73, 77, 203, 73, 44, 73, 85, 72,
+            203, 172, 40, 41, 45, 74, 5, 0,
+        ];
+        assert_eq!(ContentEncoding::Deflate.decode(&zlib)?, content);
+        assert_eq!(ContentEncoding::Deflate.decode(&raw)?, content);
+        Ok(())
+    }
+
+    /// Data that is neither a zlib stream nor a raw deflate stream errors
+    /// with InflateError instead of returning bytes.
+    #[test]
+    fn test_content_encoding_decode_garbage_errors() {
+        let garbage = [0xffu8, 0xff, 0xff, 0xff];
+        assert!(matches!(
+            ContentEncoding::Deflate.decode(&garbage),
+            Err(Error::InflateError(_))
+        ));
+    }
+
+    /// The CLI-facing strum names for the content headers are kebab-case.
+    #[test]
+    fn test_content_headers_strum_names() {
+        use std::str::FromStr;
+        assert_eq!(
+            ContentEncoding::from_str("deflate").unwrap(),
+            ContentEncoding::Deflate
+        );
+        assert_eq!(
+            ContentEncoding::from_str("identity").unwrap(),
+            ContentEncoding::Identity
+        );
+        assert_eq!(
+            ContentEncoding::from_str("none").unwrap(),
+            ContentEncoding::None
+        );
+        assert_eq!(ContentEncoding::Deflate.to_string(), "deflate");
+        assert_eq!(
+            ContentType::from_str("octet-stream").unwrap(),
+            ContentType::OctetStream
+        );
+        assert_eq!(ContentType::from_str("json").unwrap(), ContentType::Json);
+        assert_eq!(ContentType::Json.to_string(), "json");
+        assert_eq!(
+            ContentLanguage::from_str("en").unwrap(),
+            ContentLanguage::En
+        );
+    }
+
+    /// Every documented meta magic maps to its KnownMeta while the document
+    /// magic and the Oa magics are unsupported.
+    #[test]
+    fn test_known_meta_try_from_magic() {
+        let cases: [(KnownMagic, KnownMeta); 13] = [
+            (KnownMagic::OpMetaV1, KnownMeta::OpV1),
+            (KnownMagic::DotrainV1, KnownMeta::DotrainV1),
+            (KnownMagic::RainlangV1, KnownMeta::RainlangV1),
+            (KnownMagic::SolidityAbiV2, KnownMeta::SolidityAbiV2),
+            (KnownMagic::AuthoringMetaV1, KnownMeta::AuthoringMetaV1),
+            (KnownMagic::AuthoringMetaV2, KnownMeta::AuthoringMetaV2),
+            (KnownMagic::AddressList, KnownMeta::AddressList),
+            (
+                KnownMagic::InterpreterCallerMetaV1,
+                KnownMeta::InterpreterCallerMetaV1,
+            ),
+            (
+                KnownMagic::ExpressionDeployerV2BytecodeV1,
+                KnownMeta::ExpressionDeployerV2BytecodeV1,
+            ),
+            (KnownMagic::RainlangSourceV1, KnownMeta::RainlangSourceV1),
+            (KnownMagic::DotrainSourceV1, KnownMeta::DotrainSourceV1),
+            (
+                KnownMagic::OrderBuilderStateV1,
+                KnownMeta::OrderBuilderStateV1,
+            ),
+            (
+                KnownMagic::RaindexSignedContextOracleV1,
+                KnownMeta::RaindexSignedContextOracleV1,
+            ),
+        ];
+        for (magic, meta) in cases {
+            assert_eq!(KnownMeta::try_from(magic).unwrap(), meta, "{:?}", magic);
+        }
+        for magic in [
+            KnownMagic::RainMetaDocumentV1,
+            KnownMagic::OaSchema,
+            KnownMagic::OaHashList,
+            KnownMagic::OaStructure,
+            KnownMagic::OaTokenImage,
+            KnownMagic::OaTokenCredentialLinks,
+        ] {
+            assert!(
+                matches!(KnownMeta::try_from(magic), Err(Error::UnsupportedMeta)),
+                "{:?}",
+                magic
+            );
+        }
+    }
+
+    /// KnownMeta parses from and displays as the kebab-case names used by the
+    /// CLI (validate --meta, build, schema show).
+    #[test]
+    fn test_known_meta_strum_parse_display() {
+        use std::str::FromStr;
+        assert_eq!(KnownMeta::from_str("op-v1").unwrap(), KnownMeta::OpV1);
+        assert_eq!(
+            KnownMeta::from_str("solidity-abi-v2").unwrap(),
+            KnownMeta::SolidityAbiV2
+        );
+        assert_eq!(
+            KnownMeta::from_str("interpreter-caller-meta-v1").unwrap(),
+            KnownMeta::InterpreterCallerMetaV1
+        );
+        assert_eq!(KnownMeta::SolidityAbiV2.to_string(), "solidity-abi-v2");
+        assert_eq!(KnownMeta::OpV1.to_string(), "op-v1");
+    }
+
+    fn sample_deployer(meta_hash: &[u8], meta_bytes: &[u8]) -> NPE2Deployer {
+        NPE2Deployer {
+            meta_hash: meta_hash.to_vec(),
+            meta_bytes: meta_bytes.to_vec(),
+            bytecode: vec![0xb1],
+            parser: vec![0xb2],
+            store: vec![0xb3],
+            interpreter: vec![0xb4],
+            authoring_meta: None,
+        }
+    }
+
+    fn deployer_json_body(
+        meta_hash_hex: &str,
+        meta_bytes_hex: &str,
+        tx_hex: &str,
+        bytecode_meta_id_hex: &str,
+    ) -> serde_json::Value {
+        json!({
+            "data": {
+                "expressionDeployers": [{
+                    "constructorMetaHash": meta_hash_hex,
+                    "constructorMeta": meta_bytes_hex,
+                    "deployTransaction": {"id": tx_hex},
+                    "bytecode": "0x01",
+                    "parser": {"parser": {"deployedBytecode": "0x02"}},
+                    "store": {"store": {"deployedBytecode": "0x03"}},
+                    "interpreter": {"interpreter": {"deployedBytecode": "0x04"}},
+                    "meta": [{"__typename": "RainMetaV1", "id": bytecode_meta_id_hex}]
+                }]
+            }
+        })
+    }
+
+    /// search() lowercases the hash before building the query variables.
+    #[tokio::test]
+    async fn test_search_lowercases_hash() {
+        use httpmock::prelude::*;
+        let (_, doc) = sample_authoring_doc();
+        let hash_upper = format!("0x{}", "AB".repeat(32));
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .body_contains(hash_upper.to_ascii_lowercase());
+            then.status(200).json_body(json!({
+                "data": {"meta": {"__typename": "RainMetaV1", "rawBytes": hex::encode_prefixed(&doc)}}
+            }));
+        });
+        let response = search(&hash_upper, &vec![server.url("/sg")]).await.unwrap();
+        assert_eq!(response.bytes, doc);
+        mock.assert();
+    }
+
+    /// search() queries every subgraph and the first success wins even when
+    /// an earlier subgraph fails.
+    #[tokio::test]
+    async fn test_search_first_success_wins() {
+        use httpmock::prelude::*;
+        let (_, doc) = sample_authoring_doc();
+        let bad = MockServer::start();
+        let _bad_mock = bad.mock(|when, then| {
+            when.method(POST);
+            then.status(500).body("subgraph down");
+        });
+        let good = MockServer::start();
+        let _good_mock = good.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(json!({
+                "data": {"meta": {"__typename": "RainMetaV1", "rawBytes": hex::encode_prefixed(&doc)}}
+            }));
+        });
+        let response = search(
+            &format!("0x{}", "11".repeat(32)),
+            &vec![bad.url("/sg"), good.url("/sg")],
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.bytes, doc);
+    }
+
+    /// search_deployer() lowercases the hash before building the query
+    /// variables.
+    #[tokio::test]
+    async fn test_search_deployer_lowercases_hash() {
+        use httpmock::prelude::*;
+        let (_, doc) = sample_authoring_doc();
+        let meta_hash_hex = hex::encode_prefixed(keccak256(&doc).0);
+        let hash_upper = format!("0x{}", "CD".repeat(32));
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .body_contains(hash_upper.to_ascii_lowercase());
+            then.status(200).json_body(deployer_json_body(
+                &meta_hash_hex,
+                &hex::encode_prefixed(&doc),
+                &format!("0x{}", "77".repeat(32)),
+                &meta_hash_hex,
+            ));
+        });
+        let response = search_deployer(&hash_upper, &vec![server.url("/sg")])
+            .await
+            .unwrap();
+        assert_eq!(response.meta_bytes, doc);
+        assert_eq!(response.bytecode, vec![0x01]);
+        mock.assert();
+    }
+
+    /// search_deployer() queries every subgraph and the first success wins
+    /// even when an earlier subgraph fails.
+    #[tokio::test]
+    async fn test_search_deployer_first_success_wins() {
+        use httpmock::prelude::*;
+        let (_, doc) = sample_authoring_doc();
+        let meta_hash_hex = hex::encode_prefixed(keccak256(&doc).0);
+        let bad = MockServer::start();
+        let _bad_mock = bad.mock(|when, then| {
+            when.method(POST);
+            then.status(500).body("subgraph down");
+        });
+        let good = MockServer::start();
+        let _good_mock = good.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(deployer_json_body(
+                &meta_hash_hex,
+                &hex::encode_prefixed(&doc),
+                &format!("0x{}", "77".repeat(32)),
+                &meta_hash_hex,
+            ));
+        });
+        let response = search_deployer(
+            &format!("0x{}", "22".repeat(32)),
+            &vec![bad.url("/sg"), good.url("/sg")],
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.meta_bytes, doc);
+    }
+
+    /// When the erc165 probe answers false or errors, the result is false
+    /// WITHOUT making the IDescribedByMetaV1 supportsInterface call: a queued
+    /// "true" response must never be consumed.
+    #[tokio::test]
+    async fn test_implements_erc165_gate_short_circuits() {
+        let address = Address::random();
+
+        // erc165 check1 answers false
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
+        assert!(!implements_i_described_by_meta_v1(&provider, address).await);
+
+        // erc165 probe errors
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter.push_failure(ErrorPayload {
+            code: -32000,
+            message: "connection reset".into(),
+            data: None,
+        });
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
+        assert!(!implements_i_described_by_meta_v1(&provider, address).await);
+    }
+
+    /// An eth_call response that does not decode as bool must read as "does
+    /// not implement", not silently as true.
+    #[tokio::test]
+    async fn test_implements_undecodable_response_is_false() {
+        let address = Address::random();
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
+        asserter.push_success(&"0x");
+        assert!(!implements_i_described_by_meta_v1(&provider, address).await);
+    }
+
+    /// Each of the six required fields independently marks the record
+    /// corrupt when empty; a fully populated record is not corrupt.
+    #[test]
+    fn test_npe2_deployer_is_corrupt_per_field() {
+        let full = NPE2Deployer {
+            meta_hash: vec![1],
+            meta_bytes: vec![2],
+            bytecode: vec![3],
+            parser: vec![4],
+            store: vec![5],
+            interpreter: vec![6],
+            authoring_meta: None,
+        };
+        assert!(!full.is_corrupt());
+        for field in 0..6usize {
+            let mut record = full.clone();
+            match field {
+                0 => record.meta_hash = vec![],
+                1 => record.meta_bytes = vec![],
+                2 => record.bytecode = vec![],
+                3 => record.parser = vec![],
+                4 => record.store = vec![],
+                5 => record.interpreter = vec![],
+                _ => unreachable!(),
+            }
+            assert!(record.is_corrupt(), "empty field {} must corrupt", field);
+        }
+    }
+
+    /// Store::default() carries the known NPE2 subgraphs; Store::new() starts
+    /// with none.
+    #[test]
+    fn test_store_default_vs_new_subgraphs() {
+        assert_eq!(
+            Store::default().subgraphs(),
+            &KnownSubgraphs::NPE2.map(|url| url.to_string()).to_vec()
+        );
+        assert!(Store::new().subgraphs().is_empty());
+    }
+
+    /// create() honors include_rain_subgraphs, validates cache entries via
+    /// the keccak gate, and keeps a dotrain uri only when its hash is present
+    /// in the cache.
+    #[test]
+    fn test_store_create_validates_entries() {
+        let (_, doc) = sample_authoring_doc();
+        let good_hash = keccak256(&doc).0.to_vec();
+        let bad_hash = vec![0xEEu8; 32];
+        let mut cache = HashMap::new();
+        cache.insert(good_hash.clone(), doc.clone());
+        cache.insert(bad_hash.clone(), b"does not hash to bad_hash".to_vec());
+        let mut deployer_cache = HashMap::new();
+        let deployer = sample_deployer(&[0xAA; 32], b"dep-meta");
+        let deployer_key = vec![0x33u8; 32];
+        deployer_cache.insert(deployer_key.clone(), deployer.clone());
+        let mut dotrain_cache = HashMap::new();
+        dotrain_cache.insert("a.rain".to_string(), good_hash.clone());
+        dotrain_cache.insert("missing.rain".to_string(), vec![0x44u8; 32]);
+
+        let store = Store::create(
+            &vec!["https://example.com/custom-sg".to_string()],
+            &cache,
+            &deployer_cache,
+            &dotrain_cache,
+            true,
+        );
+
+        for sg in KnownSubgraphs::NPE2 {
+            assert!(store.subgraphs().contains(&sg.to_string()));
+        }
+        assert!(store
+            .subgraphs()
+            .contains(&"https://example.com/custom-sg".to_string()));
+        assert_eq!(store.get_meta(&good_hash), Some(&doc));
+        assert_eq!(store.get_meta(&bad_hash), None);
+        assert_eq!(store.get_deployer(&deployer_key), Some(&deployer));
+        assert_eq!(store.get_dotrain_hash("a.rain"), Some(&good_hash));
+        assert_eq!(store.get_dotrain_hash("missing.rain"), None);
+    }
+
+    /// add_subgraphs skips urls already present.
+    #[test]
+    fn test_store_add_subgraphs_dedupe() {
+        let mut store = Store::new();
+        store.add_subgraphs(&vec!["sg-a".to_string()]);
+        store.add_subgraphs(&vec!["sg-a".to_string(), "sg-b".to_string()]);
+        assert_eq!(
+            store.subgraphs(),
+            &vec!["sg-a".to_string(), "sg-b".to_string()]
+        );
+    }
+
+    /// get_deployer resolves a direct cache hit, then the tx-hash
+    /// indirection, then None; set_deployer populates all three maps.
+    #[test]
+    fn test_store_get_deployer_lookup_chain() {
+        let mut store = Store::new();
+        let deployer = sample_deployer(&[0xAB; 32], b"dep-meta-bytes");
+        let key = vec![0x01u8; 32];
+        let tx = vec![0x02u8; 32];
+        store.set_deployer(&key, &deployer, Some(&tx));
+        assert_eq!(store.get_deployer(&key), Some(&deployer));
+        assert_eq!(store.get_deployer(&tx), Some(&deployer));
+        assert_eq!(store.get_deployer(&[0x03u8; 32]), None);
+        assert_eq!(
+            store.get_meta(&deployer.meta_hash),
+            Some(&deployer.meta_bytes)
+        );
+    }
+
+    /// A successful subgraph search populates the meta cache, the deployer
+    /// cache keyed by the bytecode meta hash, and the tx-hash map, and
+    /// returns the record for the searched hash.
+    #[tokio::test]
+    async fn test_store_search_deployer_populates_caches() {
+        use httpmock::prelude::*;
+        let (authoring_meta, doc) = sample_authoring_doc();
+        let meta_hash = keccak256(&doc).0.to_vec();
+        let meta_hash_hex = hex::encode_prefixed(&meta_hash);
+        let tx = vec![0x77u8; 32];
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(deployer_json_body(
+                &meta_hash_hex,
+                &hex::encode_prefixed(&doc),
+                &hex::encode_prefixed(&tx),
+                &meta_hash_hex,
+            ));
+        });
+        let mut store = Store::new();
+        store.add_subgraphs(&vec![server.url("/sg")]);
+
+        let record = store.search_deployer(&meta_hash).await.cloned().unwrap();
+        assert_eq!(record.meta_hash, meta_hash);
+        assert_eq!(record.meta_bytes, doc);
+        assert_eq!(record.bytecode, vec![0x01]);
+        assert_eq!(record.parser, vec![0x02]);
+        assert_eq!(record.store, vec![0x03]);
+        assert_eq!(record.interpreter, vec![0x04]);
+        assert_eq!(record.authoring_meta, Some(authoring_meta));
+        assert_eq!(store.get_meta(&meta_hash), Some(&doc));
+        assert_eq!(store.get_deployer(&tx), Some(&record));
+    }
+
+    /// A failed subgraph search returns None and stores nothing.
+    #[tokio::test]
+    async fn test_store_search_deployer_error_returns_none() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(POST);
+            then.status(500).body("subgraph down");
+        });
+        let mut store = Store::new();
+        store.add_subgraphs(&vec![server.url("/sg")]);
+        assert!(store.search_deployer(&[0x0Du8; 32]).await.is_none());
+        assert!(store.cache().is_empty());
+        assert!(store.deployer_cache().is_empty());
+    }
+
+    /// search_deployer_check returns from the deployer cache or the tx-hash
+    /// map without any network round trip, and only falls back to the
+    /// subgraphs when neither hits.
+    #[tokio::test]
+    async fn test_store_search_deployer_check_branches() {
+        use httpmock::prelude::*;
+        // cached branches: no subgraphs registered at all
+        let mut store = Store::new();
+        let deployer = sample_deployer(&[0xAC; 32], b"cached-meta");
+        let key = vec![0x11u8; 32];
+        let tx = vec![0x22u8; 32];
+        store.set_deployer(&key, &deployer, Some(&tx));
+        assert_eq!(store.search_deployer_check(&key).await, Some(&deployer));
+        assert_eq!(store.search_deployer_check(&tx).await, Some(&deployer));
+
+        // network fallback
+        let (_, doc) = sample_authoring_doc();
+        let meta_hash = keccak256(&doc).0.to_vec();
+        let meta_hash_hex = hex::encode_prefixed(&meta_hash);
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(deployer_json_body(
+                &meta_hash_hex,
+                &hex::encode_prefixed(&doc),
+                &format!("0x{}", "66".repeat(32)),
+                &meta_hash_hex,
+            ));
+        });
+        let mut fresh = Store::new();
+        fresh.add_subgraphs(&vec![server.url("/sg")]);
+        let found = fresh
+            .search_deployer_check(&meta_hash)
+            .await
+            .cloned()
+            .unwrap();
+        assert_eq!(found.meta_bytes, doc);
+    }
+
+    /// set_deployer_from_query_response fills the meta cache, the tx-hash
+    /// map and the deployer cache, and returns the assembled record.
+    #[test]
+    fn test_store_set_deployer_from_query_response() {
+        let (authoring_meta, doc) = sample_authoring_doc();
+        let meta_hash = vec![0x0Au8; 32];
+        let bytecode_meta_hash = vec![0x0Bu8; 32];
+        let tx = vec![0x0Cu8; 32];
+        let response = DeployerResponse {
+            tx_hash: tx.clone(),
+            bytecode_meta_hash: bytecode_meta_hash.clone(),
+            meta_hash: meta_hash.clone(),
+            meta_bytes: doc.clone(),
+            bytecode: vec![0xE1],
+            parser: vec![0xE2],
+            store: vec![0xE3],
+            interpreter: vec![0xE4],
+        };
+        let mut store = Store::new();
+        let record = store.set_deployer_from_query_response(response);
+        assert_eq!(record.meta_hash, meta_hash);
+        assert_eq!(record.meta_bytes, doc);
+        assert_eq!(record.bytecode, vec![0xE1]);
+        assert_eq!(record.authoring_meta, Some(authoring_meta));
+        assert_eq!(store.get_meta(&meta_hash), Some(&doc));
+        assert_eq!(store.get_deployer(&bytecode_meta_hash), Some(&record));
+        assert_eq!(store.get_deployer(&tx), Some(&record));
+    }
+
+    /// set_dotrain on a fresh uri returns (new_hash, empty), keyed by the
+    /// keccak of the cbor encoded DotrainV1 meta item, and every dotrain
+    /// getter resolves it.
+    #[test]
+    fn test_store_dotrain_getters_and_set_fresh() {
+        let mut store = Store::new();
+        let text = "some dotrain content";
+        let (hash, old) = store.set_dotrain(text, "file.rain", false).unwrap();
+        assert!(old.is_empty());
+        let expected_item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(text.as_bytes()),
+            magic: KnownMagic::DotrainV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let expected_bytes = expected_item.cbor_encode().unwrap();
+        assert_eq!(hash, keccak256(&expected_bytes).0.to_vec());
+        assert_eq!(store.get_dotrain_hash("file.rain"), Some(&hash));
+        assert_eq!(store.get_dotrain_uri(&hash), Some(&"file.rain".to_string()));
+        assert_eq!(store.get_dotrain_meta("file.rain"), Some(&expected_bytes));
+        assert_eq!(store.get_dotrain_hash("other.rain"), None);
+        assert_eq!(store.get_dotrain_uri(&[0u8; 32]), None);
+        assert_eq!(store.get_dotrain_meta("other.rain"), None);
+    }
+
+    /// set_dotrain branches: same content keeps the meta and reports no old
+    /// hash; different content remaps the uri and drops or keeps the old
+    /// meta per keep_old.
+    #[test]
+    fn test_store_set_dotrain_branches() {
+        let mut store = Store::new();
+        let (hash_one, _) = store.set_dotrain("text one", "a.rain", false).unwrap();
+
+        // same content again: same hash, no old hash, meta retained
+        let (hash_same, old_same) = store.set_dotrain("text one", "a.rain", false).unwrap();
+        assert_eq!(hash_same, hash_one);
+        assert!(old_same.is_empty());
+        assert!(store.get_meta(&hash_one).is_some());
+
+        // different content, keep_old = false: remap and drop the old meta
+        let (hash_two, old_two) = store.set_dotrain("text two", "a.rain", false).unwrap();
+        assert_ne!(hash_two, hash_one);
+        assert_eq!(old_two, hash_one);
+        assert_eq!(store.get_dotrain_hash("a.rain"), Some(&hash_two));
+        assert!(store.get_meta(&hash_one).is_none());
+        assert!(store.get_meta(&hash_two).is_some());
+
+        // different content, keep_old = true: old meta kept
+        let (hash_three, old_three) = store.set_dotrain("text three", "a.rain", true).unwrap();
+        assert_eq!(old_three, hash_two);
+        assert_eq!(store.get_dotrain_hash("a.rain"), Some(&hash_three));
+        assert!(store.get_meta(&hash_two).is_some());
+        assert!(store.get_meta(&hash_three).is_some());
+    }
+
+    /// delete_dotrain removes the uri mapping and honors keep_meta for the
+    /// cached meta bytes.
+    #[test]
+    fn test_store_delete_dotrain_keep_meta() {
+        let mut store = Store::new();
+        let (hash, _) = store.set_dotrain("dotrain body", "d.rain", false).unwrap();
+        store.delete_dotrain("d.rain", false);
+        assert_eq!(store.get_dotrain_hash("d.rain"), None);
+        assert!(store.get_meta(&hash).is_none());
+
+        let (hash_again, _) = store.set_dotrain("dotrain body", "d.rain", false).unwrap();
+        store.delete_dotrain("d.rain", true);
+        assert_eq!(store.get_dotrain_hash("d.rain"), None);
+        assert!(store.get_meta(&hash_again).is_some());
+    }
+
+    /// merge keeps existing meta cache, deployer cache and dotrain entries,
+    /// while the tx-hash map takes the other store's mappings, and subgraphs
+    /// union.
+    #[test]
+    fn test_store_merge_semantics() {
+        let shared_meta_hash = vec![0x5Au8; 32];
+        let deployer_ours = sample_deployer(&shared_meta_hash, b"ours");
+        let deployer_theirs = sample_deployer(&shared_meta_hash, b"theirs");
+        let shared_tx = vec![0x0Fu8; 32];
+
+        let mut ours = Store::new();
+        let mut theirs = Store::new();
+        ours.set_deployer(&[0x01u8; 32], &deployer_ours, Some(&shared_tx));
+        theirs.set_deployer(&[0x02u8; 32], &deployer_theirs, Some(&shared_tx));
+
+        // same deployer cache key in both stores
+        let contested_key = vec![0x03u8; 32];
+        let deployer_a = sample_deployer(&[0x04; 32], b"deployer-a");
+        let deployer_b = sample_deployer(&[0x05; 32], b"deployer-b");
+        ours.set_deployer(&contested_key, &deployer_a, None);
+        theirs.set_deployer(&contested_key, &deployer_b, None);
+
+        // same dotrain uri, different content
+        let (hash_ours, _) = ours.set_dotrain("content a", "x.rain", false).unwrap();
+        let (_hash_theirs, _) = theirs.set_dotrain("content b", "x.rain", false).unwrap();
+
+        theirs.add_subgraphs(&vec!["sg-their".to_string()]);
+
+        ours.merge(&theirs);
+
+        // meta cache: existing entry wins
+        assert_eq!(ours.get_meta(&shared_meta_hash), Some(&b"ours".to_vec()));
+        // deployer cache: existing entry wins
+        assert_eq!(ours.get_deployer(&contested_key), Some(&deployer_a));
+        // tx-hash map: the other store's mapping overwrites
+        assert_eq!(ours.get_deployer(&shared_tx), Some(&deployer_theirs));
+        // dotrain: existing uri mapping wins
+        assert_eq!(ours.get_dotrain_hash("x.rain"), Some(&hash_ours));
+        // subgraphs merged
+        assert!(ours.subgraphs().contains(&"sg-their".to_string()));
+    }
+
+    /// update() stores the fetched bytes under the requested hash and each
+    /// inner meta item under the keccak of its own encoding; update_check
+    /// serves a cached hash without any network access.
+    #[tokio::test]
+    async fn test_store_update_and_update_check() {
+        use httpmock::prelude::*;
+        let authoring_meta: AuthoringMeta = serde_json::from_str(
+            r#"[{"word":"stack","description":"Copies an existing value from the stack.","operandParserOffset":16}]"#,
+        )
+        .unwrap();
+        let item_one = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(authoring_meta.abi_encode_validate().unwrap()),
+            magic: KnownMagic::AuthoringMetaV1,
+            content_type: ContentType::Cbor,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let item_two = sample_dotrain_item();
+        let doc = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![item_one.clone(), item_two.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
+        let requested = keccak256(&doc).0.to_vec();
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(json!({
+                "data": {"meta": {"__typename": "RainMetaV1", "rawBytes": hex::encode_prefixed(&doc)}}
+            }));
+        });
+        let mut store = Store::new();
+        store.add_subgraphs(&vec![server.url("/sg")]);
+        let fetched = store.update(&requested).await.cloned().unwrap();
+        assert_eq!(fetched, doc);
+        assert_eq!(store.get_meta(&requested), Some(&doc));
+        let inner_one = item_one.cbor_encode().unwrap();
+        let inner_two = item_two.cbor_encode().unwrap();
+        assert_eq!(
+            store.get_meta(keccak256(&inner_one).0.as_ref()),
+            Some(&inner_one)
+        );
+        assert_eq!(
+            store.get_meta(keccak256(&inner_two).0.as_ref()),
+            Some(&inner_two)
+        );
+
+        // update_check: cached hash short-circuits, no subgraphs needed
+        let mut cached_store = Store::new();
+        let bytes = b"standalone meta bytes".to_vec();
+        let hash = keccak256(&bytes).0.to_vec();
+        assert!(cached_store.update_with(&hash, &bytes).is_some());
+        assert_eq!(cached_store.update_check(&hash).await, Some(&bytes));
+    }
+
+    /// update_with enforces keccak(bytes) == hash, leaves an existing entry
+    /// untouched, and unpacks inner items only for RainMetaDocumentV1
+    /// prefixed bytes.
+    #[test]
+    fn test_store_update_with_validation_and_content() {
+        // hash mismatch rejected
+        let mut store = Store::new();
+        let bytes = b"payload bytes".to_vec();
+        let wrong_hash = vec![0x99u8; 32];
+        assert!(store.update_with(&wrong_hash, &bytes).is_none());
+        assert!(store.get_meta(&wrong_hash).is_none());
+        // valid pair stored
+        let hash = keccak256(&bytes).0.to_vec();
+        assert_eq!(store.update_with(&hash, &bytes), Some(&bytes));
+
+        // existing entry is returned untouched, not overwritten
+        let mut seeded = Store::new();
+        let content = b"real content".to_vec();
+        let content_hash = keccak256(&content).0.to_vec();
+        let planted = sample_deployer(&content_hash, b"planted value");
+        seeded.set_deployer(&[0x77u8; 32], &planted, None);
+        assert_eq!(
+            seeded.update_with(&content_hash, &content),
+            Some(&b"planted value".to_vec())
+        );
+        assert_eq!(
+            seeded.get_meta(&content_hash),
+            Some(&b"planted value".to_vec())
+        );
+
+        // prefixed document: inner item stored under keccak of its encoding
+        let (_, doc) = sample_authoring_doc();
+        let doc_hash = keccak256(&doc).0.to_vec();
+        let mut doc_store = Store::new();
+        assert!(doc_store.update_with(&doc_hash, &doc).is_some());
+        let inner = doc[8..].to_vec();
+        assert_eq!(store_inner_lookup(&doc_store, &inner), Some(inner.clone()));
+
+        // bare cbor sequence without the document prefix: no inner extraction
+        let item_a = sample_dotrain_item().cbor_encode().unwrap();
+        let (_, doc_b) = sample_authoring_doc();
+        let item_b = doc_b[8..].to_vec();
+        let seq = [item_a.clone(), item_b].concat();
+        let seq_hash = keccak256(&seq).0.to_vec();
+        let mut seq_store = Store::new();
+        assert!(seq_store.update_with(&seq_hash, &seq).is_some());
+        assert_eq!(store_inner_lookup(&seq_store, &item_a), None);
+    }
+
+    fn store_inner_lookup(store: &Store, inner_encoded: &[u8]) -> Option<Vec<u8>> {
+        store.get_meta(keccak256(inner_encoded).0.as_ref()).cloned()
+    }
+
+    /// bytes32_to_str propagates invalid utf8 as an error instead of
+    /// swallowing it.
+    #[test]
+    fn test_bytes32_to_str_invalid_utf8() {
+        let mut bytes = [0u8; 32];
+        bytes[0] = 0xf0;
+        bytes[1] = 0x28;
+        bytes[2] = 0x8c;
+        bytes[3] = 0x28;
+        assert!(matches!(bytes32_to_str(&bytes), Err(Error::Utf8Error(_))));
+        let no_nul = [0xffu8; 32];
+        assert!(matches!(bytes32_to_str(&no_nul), Err(Error::Utf8Error(_))));
+    }
 }
