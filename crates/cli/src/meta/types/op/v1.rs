@@ -282,8 +282,16 @@ mod tests {
         assert!(range(0, 16).validate().is_err());
         assert!(range(16, 16).validate().is_err());
         assert!(range(255, 255).validate().is_err());
+
+        let both_ends = range(16, 255).validate().unwrap_err();
+        assert!(both_ends.errors().contains_key("min"));
+        assert!(both_ends.errors().contains_key("max"));
+
         // Order error and both end errors must coexist without a key collision.
-        assert!(range(255, 16).validate().is_err());
+        let order_and_ends = range(255, 16).validate().unwrap_err();
+        assert!(order_and_ends.errors().contains_key("range"));
+        assert!(order_and_ends.errors().contains_key("min"));
+        assert!(order_and_ends.errors().contains_key("max"));
     }
 
     #[test]
@@ -332,9 +340,11 @@ mod tests {
         assert!(Output::Computed(range(0, 3), computation("\u{2665}"))
             .validate()
             .is_err());
-        assert!(Output::Computed(range(16, 0), computation("\u{2665}"))
+        let both = Output::Computed(range(16, 0), computation("\u{2665}"))
             .validate()
-            .is_err());
+            .unwrap_err();
+        assert!(both.errors().contains_key("bits"));
+        assert!(both.errors().contains_key("computation"));
     }
 
     #[test]
