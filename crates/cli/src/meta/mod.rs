@@ -1721,6 +1721,17 @@ mod tests {
         ));
     }
 
+    /// Only a cbor map can be a droppable item; a sequence member that is not
+    /// a map is malformed.
+    #[test]
+    fn test_cbor_decode_non_map_item_errors() {
+        let bytes: Vec<u8> = vec![0x01]; // unsigned(1)
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
     /// unpack decodes the payload according to the content encoding.
     #[test]
     fn test_unpack_decodes_content_encoding() -> Result<(), Error> {
