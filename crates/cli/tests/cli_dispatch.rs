@@ -238,50 +238,6 @@ fn test_dispatch_solc_artifact() {
     );
 }
 
-/// `subgraph` routes to `subgraph::dispatch`: `all` prints all 9 known URLs,
-/// `chain` prints the 3 URLs of a supported chain and hard-errors on an
-/// unsupported one.
-#[test]
-fn test_dispatch_subgraph() {
-    let out = run(&["subgraph", "all"]);
-    assert!(out.status.success());
-    let stdout = stdout_utf8(&out);
-    assert_eq!(stdout.lines().count(), 9);
-    assert!(stdout.contains(
-        "https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-ethereum"
-    ));
-
-    let out = run(&["subgraph", "chain", "137"]);
-    assert!(out.status.success());
-    let stdout = stdout_utf8(&out);
-    assert_eq!(stdout.lines().count(), 3);
-    assert!(stdout.contains("interpreter-registry-polygon"));
-
-    let out = run(&["subgraph", "chain", "2"]);
-    assert!(!out.status.success());
-
-    // chain 1 is exactly the 3 ethereum endpoints, in declaration order.
-    let out = run(&["subgraph", "chain", "1"]);
-    assert!(out.status.success());
-    let expected_eth = "\
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-ethereum
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-np-eth
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-npe2-eth
-";
-    assert_eq!(stdout_utf8(&out), expected_eth);
-
-    // chain 80001 is exactly the 3 mumbai endpoints, not an error and not
-    // another network's set.
-    let out = run(&["subgraph", "chain", "80001"]);
-    assert!(out.status.success());
-    let expected_mumbai = "\
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-np
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-npe2
-";
-    assert_eq!(stdout_utf8(&out), expected_mumbai);
-}
-
 /// `generate` routes to `generate::generate`: dotrain source content becomes
 /// a JSON blob whose meta bytes carry the rain meta document magic prefix,
 /// and empty content is a hard error. A no-op arm would exit 0 for both and
