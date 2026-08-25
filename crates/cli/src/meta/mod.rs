@@ -680,27 +680,14 @@ impl Store {
         }
     }
 
-    /// searches for DeployerNPRecord in the subgraphs given the deployer hash
+    /// searches for DeployerNPRecord in the subgraphs given the deployer hash,
+    /// which the subgraph query matches against either the deploy transaction
+    /// hash or the bytecode meta hash
     pub async fn search_deployer(&mut self, hash: &[u8]) -> Option<&NPE2Deployer> {
         match search_deployer(&hex::encode_prefixed(hash), &self.subgraphs).await {
             Ok(res) => {
-                self.cache
-                    .insert(res.meta_hash.clone(), res.meta_bytes.clone());
-                let authoring_meta = res.get_authoring_meta();
-                self.deployer_cache.insert(
-                    res.bytecode_meta_hash.clone(),
-                    NPE2Deployer {
-                        meta_hash: res.meta_hash.clone(),
-                        meta_bytes: res.meta_bytes,
-                        bytecode: res.bytecode,
-                        parser: res.parser,
-                        store: res.store,
-                        interpreter: res.interpreter,
-                        authoring_meta,
-                    },
-                );
-                self.deployer_hash_map.insert(res.tx_hash, res.meta_hash);
-                self.deployer_cache.get(hash)
+                self.set_deployer_from_query_response(res);
+                self.get_deployer(hash)
             }
             Err(_e) => None,
         }
@@ -2133,30 +2120,35 @@ mod tests {
         );
     }
 
-    /// A successful subgraph search populates the meta cache, the deployer
-    /// cache keyed by the bytecode meta hash, and the tx-hash map, and
-    /// returns the record for the searched hash.
+    /// A successful subgraph search keyed by the bytecode meta hash populates
+    /// the meta cache, the deployer cache keyed by that same bytecode meta
+    /// hash, and the tx-hash map, and returns the record for the searched
+    /// hash, with the constructor meta hash distinct from the bytecode one.
     #[tokio::test]
     async fn test_store_search_deployer_populates_caches() {
         use httpmock::prelude::*;
         let (authoring_meta, doc) = sample_authoring_doc();
         let meta_hash = keccak256(&doc).0.to_vec();
-        let meta_hash_hex = hex::encode_prefixed(&meta_hash);
+        let bytecode_meta_hash = vec![0x88u8; 32];
         let tx = vec![0x77u8; 32];
         let server = MockServer::start();
         let _mock = server.mock(|when, then| {
             when.method(POST);
             then.status(200).json_body(deployer_json_body(
-                &meta_hash_hex,
+                &hex::encode_prefixed(&meta_hash),
                 &hex::encode_prefixed(&doc),
                 &hex::encode_prefixed(&tx),
-                &meta_hash_hex,
+                &hex::encode_prefixed(&bytecode_meta_hash),
             ));
         });
         let mut store = Store::new();
         store.add_subgraphs(&vec![server.url("/sg")]);
 
-        let record = store.search_deployer(&meta_hash).await.cloned().unwrap();
+        let record = store
+            .search_deployer(&bytecode_meta_hash)
+            .await
+            .cloned()
+            .unwrap();
         assert_eq!(record.meta_hash, meta_hash);
         assert_eq!(record.meta_bytes, doc);
         assert_eq!(record.bytecode, vec![0x01]);
@@ -2165,7 +2157,73 @@ mod tests {
         assert_eq!(record.interpreter, vec![0x04]);
         assert_eq!(record.authoring_meta, Some(authoring_meta));
         assert_eq!(store.get_meta(&meta_hash), Some(&doc));
+        assert_eq!(
+            store.deployer_cache().get(&bytecode_meta_hash),
+            Some(&record)
+        );
         assert_eq!(store.get_deployer(&tx), Some(&record));
+    }
+
+    /// A search keyed by the deploy transaction hash returns the record it
+    /// just fetched and leaves the tx-hash map pointing at the deployer cache
+    /// key, so later lookups by that tx hash resolve through it.
+    #[tokio::test]
+    async fn test_store_search_deployer_by_tx_hash() {
+        use httpmock::prelude::*;
+        let (_, doc) = sample_authoring_doc();
+        let meta_hash = keccak256(&doc).0.to_vec();
+        let bytecode_meta_hash = vec![0xBBu8; 32];
+        let tx = vec![0xCCu8; 32];
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(deployer_json_body(
+                &hex::encode_prefixed(&meta_hash),
+                &hex::encode_prefixed(&doc),
+                &hex::encode_prefixed(&tx),
+                &hex::encode_prefixed(&bytecode_meta_hash),
+            ));
+        });
+        let mut store = Store::new();
+        store.add_subgraphs(&vec![server.url("/sg")]);
+
+        let record = store.search_deployer(&tx).await.cloned().unwrap();
+        assert_eq!(record.meta_hash, meta_hash);
+        assert_eq!(record.meta_bytes, doc);
+        assert_eq!(
+            store.deployer_cache().get(&bytecode_meta_hash),
+            Some(&record)
+        );
+        assert_eq!(store.get_deployer(&tx), Some(&record));
+    }
+
+    /// A tx-hash search through search_deployer_check keeps resolving on
+    /// every later call, from the cache and without a second round trip.
+    #[tokio::test]
+    async fn test_store_search_deployer_check_tx_hash_not_poisoned() {
+        use httpmock::prelude::*;
+        let (_, doc) = sample_authoring_doc();
+        let meta_hash = keccak256(&doc).0.to_vec();
+        let bytecode_meta_hash = vec![0xBBu8; 32];
+        let tx = vec![0x99u8; 32];
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(deployer_json_body(
+                &hex::encode_prefixed(&meta_hash),
+                &hex::encode_prefixed(&doc),
+                &hex::encode_prefixed(&tx),
+                &hex::encode_prefixed(&bytecode_meta_hash),
+            ));
+        });
+        let mut store = Store::new();
+        store.add_subgraphs(&vec![server.url("/sg")]);
+
+        let record = store.search_deployer_check(&tx).await.cloned().unwrap();
+        assert_eq!(record.meta_bytes, doc);
+        assert_eq!(store.search_deployer_check(&tx).await, Some(&record));
+        assert_eq!(store.search_deployer_check(&tx).await, Some(&record));
+        assert_eq!(mock.hits(), 1);
     }
 
     /// A failed subgraph search returns None and stores nothing.
