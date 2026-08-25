@@ -30,7 +30,39 @@ impl DotrainSourceV1 {
     pub fn hash(&self) -> B256 {
         keccak256(self.0.as_bytes())
     }
+    /// Extract DotrainSourceV1 from raw meta bytes
+    ///
+    /// This function attempts to decode CBOR data and find a DotrainSourceV1 document
+    /// among potentially multiple metadata items.
+    ///
+    /// Returns:
+    /// - Ok(Some(DotrainSourceV1)) if found and successfully parsed
+    /// - Ok(None) if no DotrainSourceV1 document found in the meta bytes
+    /// - Err(Error) if there are parsing/decoding errors
+    pub fn extract_from_meta(meta_bytes: &[u8]) -> Result<Option<Self>, Error> {
+        let decoded_items = RainMetaDocumentV1Item::cbor_decode(meta_bytes)?;
+
+        for item in decoded_items {
+            if item.magic == KnownMagic::RainMetaDocumentV1 {
+                if let Some(dotrain_source) =
+                    DotrainSourceV1::extract_from_meta(item.payload.as_ref())?
+                {
+                    return Ok(Some(dotrain_source));
+                }
+            }
+            if item.magic == KnownMagic::DotrainSourceV1 {
+                return Ok(Some(DotrainSourceV1::try_from(item)?));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Fetches the DotrainSourceV1 from the Metaboard by subject
+    ///
+    /// Scans every meta emitted under the subject, and every item within each
+    /// of them, for a DotrainSourceV1 document.
+    ///
     /// Returns Ok(Some(DotrainSourceV1)) if found, Ok(None) if not found
     pub async fn fetch_by_subject(
         subject: [u8; 32],
@@ -42,19 +74,12 @@ impl DotrainSourceV1 {
 
         match client.get_metabytes_by_subject(&subject_bytes).await {
             Ok(metabytes) => {
-                if metabytes.is_empty() {
-                    return Ok(None);
+                for meta_bytes in &metabytes {
+                    if let Some(dotrain_source) = DotrainSourceV1::extract_from_meta(meta_bytes)? {
+                        return Ok(Some(dotrain_source));
+                    }
                 }
-                // Try to decode the first meta
-                let decoded_items = RainMetaDocumentV1Item::cbor_decode(&metabytes[0])?;
-
-                if decoded_items.is_empty() {
-                    return Ok(None);
-                }
-
-                // Try to convert to DotrainSourceV1
-                let dotrain_source = DotrainSourceV1::try_from(decoded_items[0].clone())?;
-                Ok(Some(dotrain_source))
+                Ok(None)
             }
             Err(MetaboardSubgraphClientError::Empty(_)) => {
                 // No meta found for this subject
@@ -100,6 +125,27 @@ impl TryFrom<RainMetaDocumentV1Item> for DotrainSourceV1 {
 mod tests {
     use super::*;
     use crate::meta::KnownMagic;
+
+    /// The subgraph response shape `get_metabytes_by_subject` reads, over an
+    /// arbitrary number of metas emitted under one subject.
+    fn metas_response(metas: &[Vec<u8>], subject: [u8; 32]) -> serde_json::Value {
+        let rows: Vec<serde_json::Value> = metas
+            .iter()
+            .map(|meta| {
+                serde_json::json!({
+                    "meta": format!("0x{}", hex::encode(meta)),
+                    "metaHash": "0x1234567890abcdef",
+                    "sender": "0x1234567890123456789012345678901234567890",
+                    "id": "0x123",
+                    "metaBoard": {
+                        "address": "0x1234567890123456789012345678901234567890"
+                    },
+                    "subject": hex::encode(subject)
+                })
+            })
+            .collect();
+        serde_json::json!({ "data": { "metaV1S": rows } })
+    }
 
     #[test]
     fn test_into_document() {
@@ -359,28 +405,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_wrong_magic() {
+    async fn test_fetch_by_subject_only_other_meta_types_is_not_found() {
         use httpmock::prelude::*;
 
-        // Create a mock server
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
 
         let subject = [0x42; 32];
 
-        // Create a document with wrong magic
+        // A subject carrying only other meta types holds no dotrain source,
+        // which is the documented Ok(None), not an error.
         let wrong_document = RainMetaDocumentV1Item {
             payload: serde_bytes::ByteBuf::from("test content"),
-            magic: KnownMagic::AuthoringMetaV1, // Wrong magic
+            magic: KnownMagic::AuthoringMetaV1,
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
             schema: None,
         };
         let wrong_cbor_bytes = wrong_document.cbor_encode().unwrap();
-        let wrong_cbor_hex = hex::encode(&wrong_cbor_bytes);
 
-        // Mock response with wrong magic
         let mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/")
@@ -388,39 +432,168 @@ mod tests {
                 .body_contains("subject");
             then.status(200)
                 .header("content-type", "application/json")
-                .json_body(serde_json::json!({
-                    "data": {
-                        "metaV1S": [
-                            {
-                                "meta": format!("0x{}", wrong_cbor_hex),
-                                "metaHash": "0x1234567890abcdef",
-                                "sender": "0x1234567890123456789012345678901234567890",
-                                "id": "0x123",
-                                "metaBoard": {
-                                    "address": "0x1234567890123456789012345678901234567890"
-                                },
-                                "subject": hex::encode(subject)
-                            }
-                        ]
-                    }
-                }));
+                .json_body(metas_response(&[wrong_cbor_bytes], subject));
         });
 
-        // Test the function
-        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
+        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap();
+        assert!(result.is_none());
 
-        // Verify the result is an error (wrong magic)
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            Error::InvalidMetaMagic(expected, actual) => {
-                assert_eq!(expected, KnownMagic::DotrainSourceV1);
-                assert_eq!(actual, KnownMagic::AuthoringMetaV1);
-            }
-            _ => panic!("Expected InvalidMetaMagic error"),
-        }
-
-        // Verify the mock was called
         mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_scans_past_earlier_metas() {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+        let subject = [0x42; 32];
+
+        let other = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from("authoring meta"),
+            magic: KnownMagic::AuthoringMetaV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let dotrain: RainMetaDocumentV1Item =
+            DotrainSourceV1("/* in the second meta */".to_string()).into();
+
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("subject");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(metas_response(
+                    &[other.cbor_encode().unwrap(), dotrain.cbor_encode().unwrap()],
+                    subject,
+                ));
+        });
+
+        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.0, "/* in the second meta */");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_scans_past_earlier_items() {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+        let subject = [0x42; 32];
+
+        // One meta blob whose first item is some other meta type: the dotrain
+        // source after it is still under the subject.
+        let other = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from("authoring meta"),
+            magic: KnownMagic::AuthoringMetaV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let dotrain: RainMetaDocumentV1Item =
+            DotrainSourceV1("/* in the second item */".to_string()).into();
+        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![other, dotrain],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
+
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("subject");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(metas_response(&[cbor_bytes], subject));
+        });
+
+        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.0, "/* in the second item */");
+        mock.assert();
+    }
+
+    #[test]
+    fn test_extract_from_meta_absent_is_none() {
+        let other = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from("authoring meta"),
+            magic: KnownMagic::AuthoringMetaV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let cbor_bytes = other.cbor_encode().unwrap();
+
+        assert!(DotrainSourceV1::extract_from_meta(&cbor_bytes)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_extract_from_meta_invalid_cbor() {
+        // Undecodable bytes are an error, never "not found".
+        let result = DotrainSourceV1::extract_from_meta(&[0xFF, 0xFE, 0xFD, 0xFC]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_from_meta_nested_rain_document() {
+        // A decoded item whose magic is RainMetaDocumentV1 carries a complete
+        // prefixed document as payload; extract_from_meta must recurse into it.
+        let inner_item: RainMetaDocumentV1Item = DotrainSourceV1("/* nested */".to_string()).into();
+        let inner_doc_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![inner_item],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
+
+        let outer_item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(inner_doc_bytes),
+            magic: KnownMagic::RainMetaDocumentV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let outer_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![outer_item],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
+
+        let extracted = DotrainSourceV1::extract_from_meta(&outer_bytes)
+            .unwrap()
+            .unwrap();
+        assert_eq!(extracted.0, "/* nested */");
+    }
+
+    #[test]
+    fn test_extract_from_meta_invalid_utf8_payload_errors() {
+        // A dotrain-magic item that is not utf8 is corrupt data, not a miss:
+        // the scan must surface the error rather than skipping the item.
+        let item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(vec![0xFF, 0xFE, 0xFD]),
+            magic: KnownMagic::DotrainSourceV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+        let cbor_bytes = item.cbor_encode().unwrap();
+
+        match DotrainSourceV1::extract_from_meta(&cbor_bytes) {
+            Err(Error::FromUtf8Error(_)) => {}
+            other => panic!("Expected FromUtf8Error, got {:?}", other),
+        }
     }
 
     #[tokio::test]
