@@ -18,6 +18,11 @@ contract LibMetaCheckMetaUnhashedV1_2Test is Test {
         bytes memory meta = abi.encodePacked(META_MAGIC_NUMBER_V1, data);
         LibMeta.checkMetaUnhashedV1(meta);
 
+        // The fuzzer CAN produce `data` that carries the magic prefix — the
+        // magic number sits in the fuzz dictionary — and such data is rain
+        // meta, so the revert below is not the behaviour for it. Same idiom
+        // as `testEmitMetaNotRainMeta`.
+        vm.assume(!LibMeta.isRainMetaV1(data));
         vm.expectRevert(abi.encodeWithSelector(NotRainMetaV1.selector, data));
         this.checkMetaUnhashedV1External(data);
     }

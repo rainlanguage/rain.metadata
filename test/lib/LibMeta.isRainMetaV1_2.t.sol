@@ -13,7 +13,16 @@ contract LibMetaIsRainMetaV1_2Test is Test {
         bytes memory meta = abi.encodePacked(META_MAGIC_NUMBER_V1, data);
         // True with prefix.
         assertTrue(LibMeta.isRainMetaV1(meta));
-        // False without prefix.
+        // False without prefix. The fuzzer CAN produce `data` that carries
+        // the prefix itself — the magic number is a PUSH8 in this very
+        // suite's bytecode, so it sits in the fuzz dictionary — which made
+        // this half flaky red on any seed that emitted it. When that happens
+        // the prefix is broken deterministically rather than the run
+        // discarded: the magic starts 0xff, so a zeroed first byte is never
+        // the prefix, and every other fuzzed byte keeps its value.
+        if (LibMeta.isRainMetaV1(data)) {
+            data[0] = 0;
+        }
         assertTrue(!LibMeta.isRainMetaV1(data));
     }
 }
