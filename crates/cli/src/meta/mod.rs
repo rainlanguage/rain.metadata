@@ -907,10 +907,17 @@ impl Store {
 }
 
 /// converts string to bytes32
+///
+/// Right padding with `0u8` is the encoding, so [`bytes32_to_str`] ends the
+/// string at the first `0u8` and cannot carry one. An input holding a nul is
+/// rejected rather than round tripped into a shorter string.
 pub fn str_to_bytes32(text: &str) -> Result<[u8; 32], Error> {
     let bytes: &[u8] = text.as_bytes();
     if bytes.len() > 32 {
         return Err(Error::BiggerThan32Bytes);
+    }
+    if bytes.contains(&0u8) {
+        return Err(Error::NulByteInInput);
     }
     let mut b32 = [0u8; 32];
     b32[..bytes.len()].copy_from_slice(bytes);
@@ -1279,6 +1286,46 @@ mod tests {
             str_to_bytes32("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456").unwrap_err(),
             Error::BiggerThan32Bytes
         ));
+    }
+
+    /// A nul cannot survive the padding convention bytes32_to_str decodes, so
+    /// it is rejected on the way in wherever it sits, including the pair the
+    /// issue collides ("a" and "a\0").
+    #[test]
+    fn test_str_to_bytes32_rejects_nul() {
+        for text in [
+            "\0",
+            "\0a",
+            "a\0",
+            "a\0b",
+            "abcdefghijklmnopqrstuvwxyz01234\0",
+        ] {
+            assert!(
+                matches!(str_to_bytes32(text), Err(Error::NulByteInInput)),
+                "nul bearing input {:?} accepted",
+                text
+            );
+        }
+    }
+
+    /// Everything str_to_bytes32 accepts comes back out of bytes32_to_str
+    /// unchanged, and no two of them share a bytes32.
+    #[test]
+    fn test_str_to_bytes32_round_trip() -> Result<(), Error> {
+        let mut seen: Vec<[u8; 32]> = vec![];
+        for text in [
+            "",
+            "a",
+            "stack",
+            "!@#$%^&*(),./;'[]",
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345",
+        ] {
+            let bytes = str_to_bytes32(text)?;
+            assert_eq!(bytes32_to_str(&bytes)?, text);
+            assert!(!seen.contains(&bytes), "input {:?} collided", text);
+            seen.push(bytes);
+        }
+        Ok(())
     }
 
     #[tokio::test]
