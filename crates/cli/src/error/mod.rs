@@ -18,7 +18,6 @@ pub enum Error {
     InflateError(String),
     InvalidInput(String),
     InvalidUrl(String),
-    AmbiguousSubject(String),
     Utf8Error(Utf8Error),
     FromUtf8Error(FromUtf8Error),
     ReqwestError(reqwest::Error),
@@ -48,9 +47,6 @@ impl std::fmt::Display for Error {
             }
             Error::InvalidInput(v) => write!(f, "invalid input: {}", v),
             Error::InvalidUrl(v) => write!(f, "invalid URL: {}", v),
-            Error::AmbiguousSubject(v) => {
-                write!(f, "subject {} carries conflicting metas", v)
-            }
             Error::ReqwestError(v) => write!(f, "{}", v),
             Error::InflateError(v) => write!(f, "{}", v),
             Error::Utf8Error(v) => write!(f, "{}", v),
@@ -146,10 +142,6 @@ mod tests {
             "invalid URL: not-a-url"
         );
         assert_eq!(Error::InflateError("boom".to_string()).to_string(), "boom");
-        assert_eq!(
-            Error::AmbiguousSubject("0x1234".to_string()).to_string(),
-            "subject 0x1234 carries conflicting metas"
-        );
     }
 
     /// InvalidMetaMagic renders expected first, actual second.

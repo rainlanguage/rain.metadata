@@ -30,43 +30,38 @@ impl DotrainSourceV1 {
     pub fn hash(&self) -> B256 {
         keccak256(self.0.as_bytes())
     }
-    /// Fetches the DotrainSourceV1 from the Metaboard by subject.
-    /// The metaboard is append-only and its emitters are untrusted, so a
-    /// subject can carry any number of dotrain sources. Returns
-    /// Ok(Some(DotrainSourceV1)) when every one of them is the same source,
-    /// Ok(None) when there is none, and Err(AmbiguousSubject) when they
-    /// disagree, because nothing here can tell which of them the subject names.
+    /// Fetches every `DotrainSourceV1` the metaboard carries under `subject`.
+    ///
+    /// A subject is whatever entity the metadata is about, and both directions
+    /// of that relation are 1:N: any number of senders may emit under one
+    /// subject, and any meta may carry any number of items. Nothing requires
+    /// the sources found there to agree, so all of them are returned, in the
+    /// order scanned: rows in the order the query pins, items in the order
+    /// they are encoded. Nothing is deduplicated, reordered or dropped.
+    /// An empty vec means the subject carries no dotrain source.
     pub async fn fetch_by_subject(
         subject: [u8; 32],
         subgraph_url: Url,
-    ) -> Result<Option<Self>, Error> {
+    ) -> Result<Vec<Self>, Error> {
         let client = MetaboardSubgraphClient::new(subgraph_url);
-        let subject_hex = format!("0x{}", hex::encode(subject));
-        let subject_bytes = Bytes(subject_hex.clone());
+        let subject_bytes = Bytes(format!("0x{}", hex::encode(subject)));
 
         let metabytes = match client.get_metabytes_by_subject(&subject_bytes).await {
             Ok(metabytes) => metabytes,
-            Err(MetaboardSubgraphClientError::Empty(_)) => return Ok(None),
+            Err(MetaboardSubgraphClientError::Empty(_)) => return Ok(vec![]),
             Err(e) => return Err(Error::MetaboardSubgraphClientError(e)),
         };
 
-        let mut found: Option<Self> = None;
+        let mut sources = Vec::new();
         for meta_bytes in metabytes {
             for item in RainMetaDocumentV1Item::cbor_decode(&meta_bytes)? {
                 if item.magic != KnownMagic::DotrainSourceV1 {
                     continue;
                 }
-                let source = DotrainSourceV1::try_from(item)?;
-                if let Some(first) = &found {
-                    if first.0 != source.0 {
-                        return Err(Error::AmbiguousSubject(subject_hex));
-                    }
-                } else {
-                    found = Some(source);
-                }
+                sources.push(DotrainSourceV1::try_from(item)?);
             }
         }
-        Ok(found)
+        Ok(sources)
     }
 }
 
@@ -307,11 +302,9 @@ mod tests {
         let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
 
         // Verify the result
-        assert!(result.is_ok());
-        let dotrain_source = result.unwrap();
-        assert!(dotrain_source.is_some());
-        let dotrain_source = dotrain_source.unwrap();
-        assert_eq!(dotrain_source.0, dotrain_code);
+        let sources = result.unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].0, dotrain_code);
 
         // Verify the mock was called
         mock.assert();
@@ -346,9 +339,7 @@ mod tests {
         let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
 
         // Verify the result
-        assert!(result.is_ok());
-        let dotrain_source = result.unwrap();
-        assert!(dotrain_source.is_none());
+        assert!(result.unwrap().is_empty());
 
         // Verify the mock was called
         mock.assert();
@@ -401,7 +392,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_only_other_meta_types_is_not_found() {
+    async fn test_fetch_by_subject_only_other_meta_types_yields_nothing() {
         use httpmock::prelude::*;
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
@@ -417,7 +408,7 @@ mod tests {
         let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
             .await
             .unwrap();
-        assert!(result.is_none());
+        assert!(result.is_empty());
         mock.assert();
     }
 
@@ -466,12 +457,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_conflicting_items_is_ambiguous() {
+    async fn test_fetch_by_subject_returns_every_item_in_one_meta() {
         use httpmock::prelude::*;
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
         let subject = [0x42; 32];
 
+        // One blob carrying two different sources: both come back, in
+        // encoding order. Neither position nor content picks a winner.
         let mock = server.mock(|when, then| {
             when.method(POST).path("/").body_contains("subject");
             then.status(200)
@@ -482,27 +475,29 @@ mod tests {
                 ));
         });
 
-        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
-        match result {
-            Err(Error::AmbiguousSubject(s)) => {
-                assert_eq!(s, format!("0x{}", hex::encode(subject)))
-            }
-            other => panic!("Expected Err(AmbiguousSubject), got {:?}", other),
-        }
+        let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap();
+        assert_eq!(
+            sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
         mock.assert();
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_conflicting_metas_is_ambiguous_in_either_order() {
+    async fn test_fetch_by_subject_returns_divergent_metas_in_row_order() {
         use httpmock::prelude::*;
         let subject = [0x42; 32];
 
-        for rows in [
-            vec![dotrain_meta(&["first"]), dotrain_meta(&["second"])],
-            vec![dotrain_meta(&["second"]), dotrain_meta(&["first"])],
-        ] {
+        // Two metas under one subject holding two different sources is
+        // ordinary valid data, not a conflict to resolve: every source is
+        // returned. Running the same fixture in both row orders pins that the
+        // vec is the rows as they arrive - nothing sorted, nothing dropped.
+        for expected in [vec!["first", "second"], vec!["second", "first"]] {
             let server = MockServer::start();
             let mock_url = Url::parse(&server.url("/")).unwrap();
+            let rows: Vec<Vec<u8>> = expected.iter().map(|s| dotrain_meta(&[*s])).collect();
             let mock = server.mock(|when, then| {
                 when.method(POST).path("/").body_contains("subject");
                 then.status(200)
@@ -510,24 +505,26 @@ mod tests {
                     .json_body(metas_response(&rows, subject));
             });
 
-            let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
-            match result {
-                Err(Error::AmbiguousSubject(s)) => {
-                    assert_eq!(s, format!("0x{}", hex::encode(subject)))
-                }
-                other => panic!("Expected Err(AmbiguousSubject), got {:?}", other),
-            }
+            let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+                .await
+                .unwrap();
+            assert_eq!(
+                sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+                expected
+            );
             mock.assert();
         }
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_agreeing_metas_yield_the_source() {
+    async fn test_fetch_by_subject_keeps_duplicate_sources() {
         use httpmock::prelude::*;
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
         let subject = [0x42; 32];
 
+        // Two emissions of the same source are two metas, and how many there
+        // are is the caller's to read: they are not collapsed into one.
         let mock = server.mock(|when, then| {
             when.method(POST).path("/").body_contains("subject");
             then.status(200)
@@ -538,11 +535,13 @@ mod tests {
                 ));
         });
 
-        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+        let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
             .await
-            .unwrap()
             .unwrap();
-        assert_eq!(result.0, "agreed");
+        assert_eq!(
+            sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            vec!["agreed", "agreed"]
+        );
         mock.assert();
     }
 
@@ -563,11 +562,13 @@ mod tests {
                 ));
         });
 
-        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+        let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
             .await
-            .unwrap()
             .unwrap();
-        assert_eq!(result.0, "only one");
+        assert_eq!(
+            sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            vec!["only one"]
+        );
         mock.assert();
     }
 
@@ -578,7 +579,7 @@ mod tests {
         let mock_url = Url::parse(&server.url("/")).unwrap();
 
         // An HTTP-level failure is not "no meta found": it must surface as
-        // Err(MetaboardSubgraphClientError), never Ok(None).
+        // Err(MetaboardSubgraphClientError), never an empty vec.
         let mock = server.mock(|when, then| {
             when.method(POST).path("/");
             then.status(500);
