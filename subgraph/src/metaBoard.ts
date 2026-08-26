@@ -13,7 +13,9 @@ export function handleMetaV1_2(event: MetaV1Event): void {
     metaBoard.save();
   }
 
-  let metaV1 = new MetaV1(metaBoard.nextMetaId.toString());
+  let metaV1 = new MetaV1(
+    metaBoard.id.toHexString() + "-" + metaBoard.nextMetaId.toString(),
+  );
   metaV1.transaction = event.transaction.hash;
 
   metaV1.metaBoard = metaBoard.address;
