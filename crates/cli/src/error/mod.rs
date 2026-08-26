@@ -14,6 +14,7 @@ pub enum Error {
     NoRecordFound,
     UnsupportedMeta,
     BiggerThan32Bytes,
+    NulByteInInput,
     InflateError(String),
     InvalidInput(String),
     InvalidUrl(String),
@@ -41,6 +42,7 @@ impl std::fmt::Display for Error {
             Error::BiggerThan32Bytes => {
                 f.write_str("unexpected input size, must be 32 bytes or less")
             }
+            Error::NulByteInInput => f.write_str("unexpected nul byte in input"),
             Error::InvalidInput(v) => write!(f, "invalid input: {}", v),
             Error::InvalidUrl(v) => write!(f, "invalid URL: {}", v),
             Error::ReqwestError(v) => write!(f, "{}", v),
@@ -119,6 +121,10 @@ mod tests {
         assert_eq!(
             Error::BiggerThan32Bytes.to_string(),
             "unexpected input size, must be 32 bytes or less"
+        );
+        assert_eq!(
+            Error::NulByteInInput.to_string(),
+            "unexpected nul byte in input"
         );
     }
 
