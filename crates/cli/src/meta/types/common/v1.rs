@@ -47,7 +47,7 @@ pub struct RainSymbol {
 pub struct RainTitle {
     #[validate(regex(
         path = "REGEX_RAIN_TITLE",
-        message = "Must be alphanumeric ASCII letters and spaces.\n"
+        message = "Must be non-empty printable ASCII, not beginning or ending with a space.\n"
     ))]
     pub value: String,
 }
@@ -123,7 +123,8 @@ mod test {
     fn test_rain_title_validate() {
         // valids
         for i in [
-            "a", "a-", "a-a", "a0", "a a", "-", "A", "A0", "0", "_", "0a", "0A",
+            "a", "a-", "a-a", "a0", "a a", "a  a", "-", "A", "A0", "0", "_", "0a", "0A", "!", "~",
+            "#1: hi!",
         ] {
             assert!(
                 RainTitle {
@@ -148,6 +149,16 @@ mod test {
                 i
             );
         }
+
+        let err = RainTitle {
+            value: " a".to_string(),
+        }
+        .validate()
+        .unwrap_err();
+        assert_eq!(
+            err.field_errors()["value"][0].message.as_deref(),
+            Some("Must be non-empty printable ASCII, not beginning or ending with a space.\n")
+        );
     }
 
     #[test]
