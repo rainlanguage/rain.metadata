@@ -16,7 +16,9 @@ import {
   OTHER_CONTRACT_ADDRESS,
 } from "./utils";
 import { Bytes, BigInt, ethereum, Address } from "@graphprotocol/graph-ts";
-import { MetaV1_2 } from "../generated/metaboard0/MetaBoard";
+import {
+  MetaV1_2,
+} from "../generated/metaboard0/MetaBoard";
 import {
   MetaBoard,
   MetaV1 as MetaV1Entity,
@@ -39,6 +41,17 @@ const transactionHash =
   "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 const transactionBlockNumber = 32377304;
 const transactionTimestamp = 1751543962;
+const otherMetaString = "0xff0a89c674ee7874040506";
+const otherMetaHashString =
+  "0xc9d578b9ed6efc27f27b866fa548a98b91787a8b5c3e26b2fcc5763388a17079";
+const otherTransactionHash =
+  "0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
+// Spelled out rather than built the way `handleMetaV1_2` builds them, so the
+// id scheme is pinned to something outside the mapping.
+const FIRST_BOARD_META_ID = "0xfb8437aefbb8031064e274527c5fc08e30ac6928-0";
+const FIRST_BOARD_SECOND_META_ID =
+  "0xfb8437aefbb8031064e274527c5fc08e30ac6928-1";
+const OTHER_BOARD_META_ID = "0x4a9b0f6c1e3d2a5b8c7d6e9f0a1b2c3d4e5f6a7b-0";
 
 describe("Test meta event", () => {
   afterEach(() => {
@@ -224,7 +237,9 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
   });
 
   test("Checks MetaV1 entity data", () => {
-    let retrievedMetaV1 = MetaV1Entity.load("0") as MetaV1Entity;
+    let retrievedMetaV1 = MetaV1Entity.load(
+      FIRST_BOARD_META_ID,
+    ) as MetaV1Entity;
     assert.entityCount(ENTITY_TYPE_META_V1, 1);
     assert.addressEquals(
       Address.fromBytes(retrievedMetaV1.sender),
@@ -261,6 +276,120 @@ describe("Test MetaBoard and MetaV1 Entities", () => {
       BigInt.fromString(transactionTimestamp.toString()),
     );
     assert.bytesEquals(retrievedTransaction.from, Address.fromString(sender));
+  });
+});
+
+// `nextMetaId` is counted per MetaBoard entity, so every board counts from
+// zero. While the MetaV1 id was that counter alone, a deployment indexing two
+// boards gave both boards' first meta the id "0" and the store overwrote the
+// first with the second: a meta that had been indexed, and its metaHash, left
+// the index. IDescribedByMetaV1 implies an indexer that can retrieve the
+// metadata for a given hash, so that loss is the interface's own claim
+// failing. rainlanguage/rain.metadata#206.
+describe("Test MetaV1 ids are scoped to their metaboard", () => {
+  afterEach(() => {
+    clearStore();
+    clearInBlockStore();
+  });
+
+  test("Two metaboards do not overwrite each other's metas", () => {
+    handleMetaV1_2(
+      createNewMetaV1Event(
+        CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(metaString),
+        transactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+    );
+    handleMetaV1_2(
+      createNewMetaV1Event(
+        OTHER_CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(otherMetaString),
+        otherTransactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+    );
+
+    assert.entityCount(ENTITY_TYPE_META_BOARD, 2);
+    assert.entityCount(ENTITY_TYPE_META_V1, 2);
+
+    const firstBoardMeta = MetaV1Entity.load(FIRST_BOARD_META_ID);
+    assert.assertNotNull(firstBoardMeta);
+    assert.bytesEquals(
+      (firstBoardMeta as MetaV1Entity).metaHash,
+      Bytes.fromHexString(metaHashString),
+    );
+    assert.bytesEquals(
+      (firstBoardMeta as MetaV1Entity).metaBoard,
+      CONTRACT_ADDRESS,
+    );
+
+    const otherBoardMeta = MetaV1Entity.load(OTHER_BOARD_META_ID);
+    assert.assertNotNull(otherBoardMeta);
+    assert.bytesEquals(
+      (otherBoardMeta as MetaV1Entity).metaHash,
+      Bytes.fromHexString(otherMetaHashString),
+    );
+    assert.bytesEquals(
+      (otherBoardMeta as MetaV1Entity).metaBoard,
+      OTHER_CONTRACT_ADDRESS,
+    );
+
+    const firstBoard = MetaBoard.load(CONTRACT_ADDRESS) as MetaBoard;
+    const otherBoard = MetaBoard.load(OTHER_CONTRACT_ADDRESS) as MetaBoard;
+    assert.bigIntEquals(firstBoard.nextMetaId, BigInt.fromI32(1));
+    assert.bigIntEquals(otherBoard.nextMetaId, BigInt.fromI32(1));
+  });
+
+  test("One metaboard's metas do not overwrite each other", () => {
+    handleMetaV1_2(
+      createNewMetaV1Event(
+        CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(metaString),
+        transactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+    );
+    handleMetaV1_2(
+      createNewMetaV1Event(
+        CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(otherMetaString),
+        otherTransactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+    );
+
+    assert.entityCount(ENTITY_TYPE_META_BOARD, 1);
+    assert.entityCount(ENTITY_TYPE_META_V1, 2);
+
+    const firstMeta = MetaV1Entity.load(FIRST_BOARD_META_ID);
+    assert.assertNotNull(firstMeta);
+    assert.bytesEquals(
+      (firstMeta as MetaV1Entity).metaHash,
+      Bytes.fromHexString(metaHashString),
+    );
+
+    const secondMeta = MetaV1Entity.load(FIRST_BOARD_SECOND_META_ID);
+    assert.assertNotNull(secondMeta);
+    assert.bytesEquals(
+      (secondMeta as MetaV1Entity).metaHash,
+      Bytes.fromHexString(otherMetaHashString),
+    );
+
+    const board = MetaBoard.load(CONTRACT_ADDRESS) as MetaBoard;
+    assert.bigIntEquals(board.nextMetaId, BigInt.fromI32(2));
   });
 });
 

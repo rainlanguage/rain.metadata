@@ -238,6 +238,68 @@ fn test_dispatch_solc_artifact() {
     );
 }
 
+/// A component the artifact does not carry is a hard error: nonzero exit,
+/// nothing on stdout, the missing key named on stderr. Printing `null` and
+/// exiting 0 would be indistinguishable from a component that legitimately
+/// serialises as null, so both cases are asserted here.
+#[test]
+fn test_dispatch_solc_artifact_missing_component() {
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("artifact-no-abi.json");
+    std::fs::write(
+        &artifact,
+        r#"{"bytecode":{"object":"0x60"},"deployedBytecode":{"object":"0x60"}}"#,
+    )
+    .unwrap();
+
+    let out = run(&[
+        "solc",
+        "artifact",
+        "-c",
+        "abi",
+        "-i",
+        artifact.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    assert_eq!(stdout_utf8(&out), "");
+    let stderr = String::from_utf8(out.stderr.clone()).unwrap();
+    assert!(
+        stderr.contains(r#"artifact has no "abi" component"#),
+        "stderr did not name the missing component: {}",
+        stderr
+    );
+
+    // -o must not be written either: a failed extraction produces no file.
+    let out_path = dir.path().join("component.json");
+    let out = run(&[
+        "solc",
+        "artifact",
+        "-c",
+        "abi",
+        "-i",
+        artifact.to_str().unwrap(),
+        "-o",
+        out_path.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    assert!(!out_path.exists());
+
+    // An explicitly null component is a value, not an absence: it succeeds
+    // and prints null.
+    let null_abi = dir.path().join("artifact-null-abi.json");
+    std::fs::write(&null_abi, r#"{"abi":null}"#).unwrap();
+    let out = run(&[
+        "solc",
+        "artifact",
+        "-c",
+        "abi",
+        "-i",
+        null_abi.to_str().unwrap(),
+    ]);
+    assert!(out.status.success());
+    assert_eq!(stdout_utf8(&out), "null");
+}
+
 /// `generate` routes to `generate::generate`: dotrain source content becomes
 /// a JSON blob whose meta bytes carry the rain meta document magic prefix,
 /// and empty content is a hard error. A no-op arm would exit 0 for both and
