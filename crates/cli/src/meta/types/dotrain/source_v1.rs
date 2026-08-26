@@ -39,6 +39,9 @@ impl DotrainSourceV1 {
     /// order scanned: rows in the order the query pins, items in the order
     /// they are encoded. Nothing is deduplicated, reordered or dropped.
     /// An empty vec means the subject carries no dotrain source.
+    ///
+    /// The query is not paginated, so what is scanned is the subgraph's first
+    /// page of metas under the subject in that order, currently 100 rows.
     pub async fn fetch_by_subject(
         subject: [u8; 32],
         subgraph_url: Url,
