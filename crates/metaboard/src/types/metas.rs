@@ -41,7 +41,7 @@ pub struct MetaV1 {
     pub meta_hash: Bytes,
     pub meta: Bytes,
     pub sender: Bytes,
-    pub id: cynic::Id,
+    pub id: Bytes,
     pub meta_board: MetaBoard,
     pub subject: Bytes,
 }

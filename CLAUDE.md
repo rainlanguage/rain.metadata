@@ -28,11 +28,11 @@ means adding it to `LibCopyArtifacts.contracts()` AND
 `crates/bindings/src/lib.rs` together, or that assertion fails.
 
 `foundry.toml`'s `ffi = true` and its filesystem permissions exist for
-`CopyArtifacts` and for `test/subgraph/SubgraphManifest.t.sol`, which reads the
-built interface artifact with `jq` and the subgraph manifest with `yq` — both
-over `vm.ffi`, so the manifest needs no `fs_permissions` entry, and both
-binaries have to be on `PATH` in the sol shell. Nothing else here shells out or
-touches the filesystem.
+`CopyArtifacts` and for `test/subgraph/`, which reads the built interface
+artifact with `jq`, the subgraph manifest and compose file with `yq`, and the
+git index with `git` — all over `vm.ffi`, so none of them needs an
+`fs_permissions` entry, and all three binaries have to be on `PATH` in the sol
+shell. Nothing else here shells out or touches the filesystem.
 
 ## The subgraph is SOURCE only (#149)
 

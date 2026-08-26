@@ -14,7 +14,7 @@ pub enum Error {
     NoRecordFound,
     UnsupportedMeta,
     BiggerThan32Bytes,
-    UnsupportedNetwork,
+    NulByteInInput,
     InflateError(String),
     InvalidInput(String),
     InvalidUrl(String),
@@ -27,6 +27,7 @@ pub enum Error {
     ValidationErrors(validator::ValidationErrors),
     DecodeHexStringError(alloy::primitives::hex::FromHexError),
     InvalidMetaMagic(KnownMagic, KnownMagic),
+    MetaNestingTooDeep(usize),
     MetaboardSubgraphClientError(MetaboardSubgraphClientError),
 }
 
@@ -39,12 +40,10 @@ impl std::fmt::Display for Error {
             Error::UnsupportedMeta => f.write_str("unsupported meta"),
             Error::InvalidHash => f.write_str("invalid keccak256 hash"),
             Error::NoRecordFound => f.write_str("found no matching record"),
-            Error::UnsupportedNetwork => {
-                f.write_str("no rain subgraph is deployed for this network")
-            }
             Error::BiggerThan32Bytes => {
                 f.write_str("unexpected input size, must be 32 bytes or less")
             }
+            Error::NulByteInInput => f.write_str("unexpected nul byte in input"),
             Error::InvalidInput(v) => write!(f, "invalid input: {}", v),
             Error::InvalidUrl(v) => write!(f, "invalid URL: {}", v),
             Error::ReqwestError(v) => write!(f, "{}", v),
@@ -62,6 +61,9 @@ impl std::fmt::Display for Error {
                     "invalid meta magic: expected {:?}, got {:?}",
                     expected, actual
                 )
+            }
+            Error::MetaNestingTooDeep(max) => {
+                write!(f, "nested meta documents deeper than {} levels", max)
             }
             Error::MetaboardSubgraphClientError(v) => write!(f, "{}", v),
         }
@@ -121,12 +123,12 @@ mod tests {
         assert_eq!(Error::InvalidHash.to_string(), "invalid keccak256 hash");
         assert_eq!(Error::NoRecordFound.to_string(), "found no matching record");
         assert_eq!(
-            Error::UnsupportedNetwork.to_string(),
-            "no rain subgraph is deployed for this network"
-        );
-        assert_eq!(
             Error::BiggerThan32Bytes.to_string(),
             "unexpected input size, must be 32 bytes or less"
+        );
+        assert_eq!(
+            Error::NulByteInInput.to_string(),
+            "unexpected nul byte in input"
         );
     }
 
@@ -151,6 +153,15 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "invalid meta magic: expected RainMetaDocumentV1, got OpMetaV1"
+        );
+    }
+
+    /// MetaNestingTooDeep renders the bound it carries.
+    #[test]
+    fn test_display_meta_nesting_too_deep_carries_the_bound() {
+        assert_eq!(
+            Error::MetaNestingTooDeep(32).to_string(),
+            "nested meta documents deeper than 32 levels"
         );
     }
 
