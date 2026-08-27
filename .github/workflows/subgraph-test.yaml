@@ -37,3 +37,57 @@ jobs:
         run: nix develop -c bash -c 'forge build && cd subgraph && npm ci && graph codegen'
       - name: Matchstick tests
         run: nix develop -c subgraph-test
+  # The committed graph-node API schema
+  # (`crates/metaboard/src/schema/metaboard.graphql`) is what `cynic_codegen`
+  # generates the consumer client from, and nothing in this repo produces it.
+  # It cannot be regenerated offline the way `copy-artifacts` regenerates the
+  # ABIs, because deriving it means running graph-node's own schema derivation
+  # — so graph-node runs, here, against a throwaway store and an anvil chain.
+  schema-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1G
+      - name: Install soldeer dependencies
+        run: nix develop github:rainlanguage/rainix#sol-shell -c forge soldeer install
+      - name: Build the ABI the manifest reads
+        run: nix develop github:rainlanguage/rainix#sol-shell -c forge build
+      - name: Start anvil
+        run: |
+          nix develop -c anvil --host 0.0.0.0 > anvil.log 2>&1 &
+          nix develop -c bash -c 'for _ in $(seq 60); do cast block-number --rpc-url http://127.0.0.1:8545 && exit 0; sleep 1; done; exit 1'
+      - name: Start graph-node
+        run: |
+          docker compose -f subgraph/docker-compose.graph-node.yml up -d --wait
+          for _ in $(seq 60); do
+            curl -s -o /dev/null http://localhost:8020/ && exit 0
+            sleep 2
+          done
+          exit 1
+      - name: Deploy the subgraph and diff the committed API schema
+        run: nix develop -c bash subgraph/check-api-schema.sh
+      - name: Upload the API schema graph-node derived
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metaboard-api-schema
+          path: metaboard.graphql.generated
+          if-no-files-found: warn
+      - name: graph-node logs
+        if: failure()
+        run: docker compose -f subgraph/docker-compose.graph-node.yml logs
+      - name: The subgraph source carries no build residue
+        run: git diff --exit-code -- subgraph/
