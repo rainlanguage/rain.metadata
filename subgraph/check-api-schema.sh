@@ -45,8 +45,9 @@ graph deploy \
   --version-label ci \
   rain/metaboard
 
-# Nothing has to index: graph-node derives the API schema at deploy time and
-# introspection answers it against an empty store.
+# graph-node derives the API schema at deploy time, but refuses queries until
+# the deployment has ingested a block, so print-api-schema.js retries. Anvil's
+# block 0 is the whole of what has to be ingested.
 node ./print-api-schema.js http://localhost:8000/subgraphs/name/rain/metaboard \
   > "$root/$generated"
 
