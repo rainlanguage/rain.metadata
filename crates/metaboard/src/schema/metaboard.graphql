@@ -93,7 +93,7 @@ type MetaV1 {
   meta: Bytes!
   metaBoard: MetaBoard!
   metaHash: Bytes!
-  sender: Bytes!
+  sender: String!
   subject: Bytes!
   transaction: Transaction!
 }
