@@ -16,6 +16,18 @@ jobs:
           nix_conf: |
             keep-env-derivations = true
             keep-outputs = true
+      # Substitute the prebuilt rainix derivations rather than rebuilding them
+      # from source (rainlanguage/rainix#196). Every rainix shell carries
+      # `rainix-static`, a rust build, and crates.io answers 403 to enough
+      # runner IPs that building it here is not reliably possible. The rainix
+      # reusable workflows get this from their shared preamble; this lane is
+      # hand-rolled and had to be told.
+      - uses: cachix/cachix-action@v15
+        continue-on-error: true
+        with:
+          name: rainlanguage
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          useDaemon: false
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
@@ -55,6 +67,12 @@ jobs:
           nix_conf: |
             keep-env-derivations = true
             keep-outputs = true
+      - uses: cachix/cachix-action@v15
+        continue-on-error: true
+        with:
+          name: rainlanguage
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          useDaemon: false
       - name: Restore and save Nix store
         uses: nix-community/cache-nix-action@v7
         with:
