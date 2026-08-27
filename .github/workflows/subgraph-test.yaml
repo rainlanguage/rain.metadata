@@ -52,7 +52,7 @@ jobs:
   # The committed graph-node API schema
   # (`crates/metaboard/src/schema/metaboard.graphql`) is what `cynic_codegen`
   # generates the consumer client from, and nothing in this repo produces it.
-  # It cannot be regenerated offline the way `copy-artifacts` regenerates the
+  # It cannot be regenerated offline the way `git-clean` regenerates the
   # ABIs, because deriving it means running graph-node's own schema derivation
   # — so graph-node runs, here, against a throwaway store and an anvil chain.
   schema-snapshot:
