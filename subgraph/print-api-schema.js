@@ -8,12 +8,17 @@ const {
 const endpoint = process.argv[2];
 const attempts = 30;
 const delayMs = 2000;
+const timeoutMs = 10000;
 
 async function introspect() {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ query: getIntrospectionQuery() }),
+    // Bounded, because a graph-node that accepts the connection and then
+    // stalls would hang this await and the retry below would never run. The
+    // signal covers reading the body, not just the headers.
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
