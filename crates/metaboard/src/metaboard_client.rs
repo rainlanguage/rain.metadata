@@ -271,11 +271,14 @@ mod tests {
 
         // Mock a successful response. body_contains pins the wire shape:
         // the subject Bytes value must be sent verbatim in the request
-        // (not coerced to a number, not stripped of `0x`).
+        // (not coerced to a number, not stripped of `0x`), and the rows must
+        // be ordered by the query rather than left to the indexer.
         server.mock(|when, then| {
             when.method(POST)
                 .path("/")
                 .body_contains("where: {subject: $subject}")
+                .body_contains("orderBy: id")
+                .body_contains("orderDirection: asc")
                 .body_contains("0x7b");
             then.status(200).json_body_obj(&{
                 serde_json::json!({
