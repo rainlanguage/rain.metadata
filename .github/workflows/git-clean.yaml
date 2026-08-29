@@ -1,7 +1,7 @@
-name: copy-artifacts
+name: Git is clean
 on: [push]
 jobs:
-  copy-artifacts:
+  git-clean:
     # Shared reusable (rainix#201): build from committed sources and assert the
     # committed abi artifacts are still current. Includes Cachix substitution +
     # 8G GC cap. secrets: inherit carries CACHIX_AUTH_TOKEN.

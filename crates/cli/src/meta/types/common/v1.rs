@@ -7,7 +7,8 @@ use serde::{Serialize, Deserialize};
 use schemars::JsonSchema;
 
 /// Valid symbols in Rainlang are alpha prefixed alphanumeric kebab case.
-pub static REGEX_RAIN_SYMBOL: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-z][0-9a-z-]*$").unwrap());
+pub static REGEX_RAIN_SYMBOL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-z][0-9a-z]*(-[0-9a-z]+)*$").unwrap());
 
 /// An identifier in solidity has to start with a letter, a dollar-sign or an
 /// sunderscore and may additionally contain numbers after the first symbol.
@@ -47,7 +48,7 @@ pub struct RainSymbol {
 pub struct RainTitle {
     #[validate(regex(
         path = "REGEX_RAIN_TITLE",
-        message = "Must be alphanumeric ASCII letters and spaces.\n"
+        message = "Must be non-empty printable ASCII, not beginning or ending with a space.\n"
     ))]
     pub value: String,
 }
@@ -91,7 +92,7 @@ mod test {
     #[test]
     fn test_rain_symbol_validate() {
         // valids
-        for i in ["a", "a-", "a-a", "a0"] {
+        for i in ["a", "a0", "a-a", "a-0", "a-b-c"] {
             assert!(
                 RainSymbol {
                     value: i.to_string()
@@ -105,7 +106,8 @@ mod test {
 
         // invalids
         for i in [
-            "", "♥", "-", " ", "A", "A0", "a ", "0", "_", "0a", "0A", "\n", "\t", "\r",
+            "", "♥", "-", " ", "A", "A0", "a ", "0", "_", "0a", "0A", "\n", "\t", "\r", "aA", "a-",
+            "a--b", "a-A", "a_b", "a-b_c", "a-b c", "a\na",
         ] {
             assert!(
                 RainSymbol {
@@ -123,7 +125,8 @@ mod test {
     fn test_rain_title_validate() {
         // valids
         for i in [
-            "a", "a-", "a-a", "a0", "a a", "-", "A", "A0", "0", "_", "0a", "0A",
+            "a", "a-", "a-a", "a0", "a a", "a  a", "-", "A", "A0", "0", "_", "0a", "0A", "!", "~",
+            "#1: hi!",
         ] {
             assert!(
                 RainTitle {
@@ -137,7 +140,7 @@ mod test {
         }
 
         // invalids
-        for i in ["", " ", " a", "a ", "♥", "\n", "\t", "\r"] {
+        for i in ["", " ", " a", "a ", "♥", "\n", "\t", "\r", "\u{7f}"] {
             assert!(
                 RainTitle {
                     value: i.to_string()
@@ -148,6 +151,16 @@ mod test {
                 i
             );
         }
+
+        let err = RainTitle {
+            value: " a".to_string(),
+        }
+        .validate()
+        .unwrap_err();
+        assert_eq!(
+            err.field_errors()["value"][0].message.as_deref(),
+            Some("Must be non-empty printable ASCII, not beginning or ending with a space.\n")
+        );
     }
 
     #[test]
@@ -169,7 +182,7 @@ mod test {
         }
 
         // invalids
-        for i in ["♥", "∴"] {
+        for i in ["♥", "∴", "\u{7f}"] {
             assert!(
                 RainString {
                     value: i.to_string()
@@ -249,6 +262,8 @@ mod test {
             "0x78fd1edb0bdb928db6015990fecafbb964b44692e2d435693062dd4efc6254dd ",
             " 0x78fd1edb0bdb928db6015990fecafbb964b44692e2d435693062dd4efc6254dd",
             "0x78fd1edb0bdb928db6015990fecafbb9 64b44692e2d435693062dd4efc6254dd",
+            "0xgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+            "0X78fd1edb0bdb928db6015990fecafbb964b44692e2d435693062dd4efc6254dd",
         ] {
             assert!(
                 !HASH_PATTERN.is_match(i),
