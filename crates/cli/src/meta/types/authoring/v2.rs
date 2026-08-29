@@ -1,4 +1,7 @@
-use alloy::{primitives::FixedBytes, sol_types::SolType};
+use alloy::{
+    primitives::{keccak256, FixedBytes, B256},
+    sol_types::SolType,
+};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::SolCall;
@@ -80,6 +83,8 @@ pub enum AuthoringMetaV2Error {
     HasNoWords,
     #[error("no RPC URLs provided")]
     NoRpcs,
+    #[error("Metaboard meta bytes hash {actual} does not match describedByMetaV1 hash {expected}")]
+    MetaHashMismatch { expected: B256, actual: B256 },
 }
 
 #[derive(Error, Debug)]
@@ -233,7 +238,21 @@ impl AuthoringMetaV2 {
                 error: error.into(),
             })?;
 
-        let meta = RainMetaDocumentV1Item::cbor_decode(metas[0].as_slice()).map_err(|error| {
+        let meta_bytes = metas[0].as_slice();
+        let meta_bytes_hash = keccak256(meta_bytes);
+        if meta_bytes_hash.0 != metahash {
+            return Err(FetchAuthoringMetaV2WordError {
+                contract_address,
+                rpcs: rpcs.clone(),
+                metaboard_url: metaboard_url.clone(),
+                error: AuthoringMetaV2Error::MetaHashMismatch {
+                    expected: metahash.into(),
+                    actual: meta_bytes_hash,
+                },
+            });
+        }
+
+        let meta = RainMetaDocumentV1Item::cbor_decode(meta_bytes).map_err(|error| {
             FetchAuthoringMetaV2WordError {
                 contract_address,
                 rpcs: rpcs.clone(),
@@ -525,6 +544,13 @@ mod tests {
             },
             "subject": "0x00",
         })
+    }
+
+    /// The hash the metaboard indexes `meta_hex` under: keccak256 of the raw
+    /// emitted bytes, as `LibDescribedByMeta.emitForDescribedAddress` and the
+    /// subgraph mapping both compute it.
+    fn meta_hex_hash(meta_hex: &str) -> [u8; 32] {
+        keccak256(decode::<String>(meta_hex.into()).unwrap()).0
     }
 
     /// cbor encoded RainMetaDocumentV1Item carrying the three word payload
@@ -868,7 +894,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_for_contract_success_decodes_first_meta() {
-        let hash = [1u8; 32];
+        let meta_hex = authoring_meta_v2_cbor_hex();
+        let hash = meta_hex_hash(&meta_hex);
         let rpc_server = MockServer::start_async().await;
         mock_described_by_rpc(&rpc_server, hash);
 
@@ -880,7 +907,7 @@ mod tests {
                     "metaV1S": [
                         // the first meta is the authoring meta document and is
                         // the one that must be decoded
-                        metaboard_meta_entry(&authoring_meta_v2_cbor_hex()),
+                        metaboard_meta_entry(&meta_hex),
                         // a trailing non-decodable meta must be ignored
                         metaboard_meta_entry("0x00"),
                     ]
@@ -921,7 +948,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_fetch_for_contract_invalid_cbor_is_meta_error() {
-        let hash = [1u8; 32];
+        let hash = meta_hex_hash("0x01");
         let rpc_server = MockServer::start_async().await;
         mock_described_by_rpc(&rpc_server, hash);
 
@@ -946,6 +973,72 @@ mod tests {
         match error.error {
             AuthoringMetaV2Error::MetaError(_) => {}
             other => panic!("expected MetaError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_rejects_meta_bytes_not_matching_the_hash() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        // a well formed authoring meta document served under a hash that is
+        // not its own: it decodes cleanly and must still be rejected
+        let meta_hex = authoring_meta_v2_cbor_hex();
+        assert_ne!(meta_hex_hash(&meta_hex), hash);
+
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [metaboard_meta_entry(&meta_hex)] }
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await;
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::MetaHashMismatch { expected, actual } => {
+                assert_eq!(expected, B256::from(hash));
+                assert_eq!(actual, B256::from(meta_hex_hash(&meta_hex)));
+            }
+            other => panic!("expected MetaHashMismatch, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_for_contract_checks_the_hash_before_decoding() {
+        let hash = [1u8; 32];
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        // bytes that are neither the hashed content nor valid cbor: the hash
+        // mismatch is what is reported, so nothing unverified is ever decoded
+        assert_ne!(meta_hex_hash("0x01"), hash);
+
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [metaboard_meta_entry("0x01")] }
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await;
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::MetaHashMismatch { .. } => {}
+            other => panic!("expected MetaHashMismatch, got {:?}", other),
         }
     }
 }
