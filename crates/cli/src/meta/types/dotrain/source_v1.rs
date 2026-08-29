@@ -30,30 +30,32 @@ impl DotrainSourceV1 {
     pub fn hash(&self) -> B256 {
         keccak256(self.0.as_bytes())
     }
-    /// Fetches every `DotrainSourceV1` the metaboard carries under `subject`.
+    /// Fetches every `DotrainSourceV1` under `subject` that hashes to
+    /// `subject`.
     ///
-    /// A subject is whatever entity the metadata is about, and both directions
-    /// of that relation are 1:N: any number of senders may emit under one
-    /// subject, and any meta may carry any number of items. Nothing requires
-    /// the sources found there to agree, so all of them are returned, in the
-    /// order scanned: rows in the order the query pins, items in the order
-    /// they are encoded. Nothing is deduplicated or reordered.
-    /// An empty vec means the subject carries no dotrain source.
+    /// `subject` is the keccak256 of the source itself, which is what someone
+    /// looking a source up holds and can derive it from. A metaboard takes
+    /// anything from anyone under any subject, so being indexed under one is
+    /// no claim to be it - the hash is. Every scanned item is checked and only
+    /// the ones that match are returned, so an emitter can put whatever they
+    /// like under someone else's subject without it being answered with.
     ///
-    /// A metaboard enforces the magic number and nothing else, so anyone may
-    /// emit bytes under any subject that carry the prefix and are otherwise
-    /// junk, and per `IMetaBoardV1_2` discarding those is this side's job.
-    /// The unit discarded is one emission, because one emission is one
-    /// emitter: a row that does not decode is dropped, and so is a row that
-    /// decodes but puts something under the dotrain magic that is not a
-    /// source — taking the readable half of that row would accept selected
-    /// data from an emitter who just sent junk under the magic being read.
+    /// Every row and every item in each is scanned, since any number of
+    /// emitters may emit under one subject and any emission may carry any
+    /// number of items. What comes back is therefore repeats of one source
+    /// rather than a choice between several, in the order scanned: rows as
+    /// the query pins them, items as they are encoded. How many there are is
+    /// the caller's to read, so nothing is deduplicated or reordered. An empty
+    /// vec means nothing under the subject is the subject.
     ///
-    /// Strictness stops at the emission for the same reason. Dropping a row
-    /// costs only whoever emitted it, and they can emit again; failing the
-    /// call would let any one emitter deny every source under the subject to
-    /// every caller, permanently, on an append-only board. Errors reaching
-    /// the metaboard still surface.
+    /// What fails is skipped, not raised: anyone can emit anything under any
+    /// subject, so failing would let one emitter deny the subject to every
+    /// caller, permanently, on an append-only board. Within one emission the
+    /// unit skipped is the whole emission - an item that cannot be read is not
+    /// recoverable and nothing else that emission carries is taken either.
+    /// Across emissions only the offending one goes, a separate emission being
+    /// a separate event and possibly just a mistake. Errors reaching the
+    /// metaboard still surface.
     ///
     /// The query is not paginated, so what is scanned is the subgraph's first
     /// page of metas under the subject in that order, currently 100 rows.
@@ -81,7 +83,12 @@ impl DotrainSourceV1 {
                 .map(DotrainSourceV1::try_from)
                 .collect();
             if let Ok(row) = row {
-                sources.extend(row);
+                // The subject is the keccak256 of the source itself, so a
+                // source either hashes back to what was asked for or is not
+                // it. The hash is over the content the emitter supplied,
+                // which is what anyone looking a source up holds and can
+                // derive the subject from; nothing here re-encodes anything.
+                sources.extend(row.into_iter().filter(|source| source.hash() == subject));
             }
         }
         Ok(sources)
@@ -120,6 +127,12 @@ impl TryFrom<RainMetaDocumentV1Item> for DotrainSourceV1 {
 mod tests {
     use super::*;
     use crate::meta::KnownMagic;
+
+    /// The subject someone looking a source up holds. They have the source
+    /// text and nothing else, so the subject they can ask for is its hash.
+    fn subject_of(source: &str) -> [u8; 32] {
+        DotrainSourceV1(source.to_string()).hash().0
+    }
 
     fn dotrain_meta(sources: &[&str]) -> Vec<u8> {
         let items: Vec<RainMetaDocumentV1Item> = sources
@@ -319,8 +332,8 @@ mod tests {
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
 
-        let subject = [0x42; 32];
         let dotrain_code = "/* test dotrain code */";
+        let subject = subject_of(dotrain_code);
         let dotrain_source = DotrainSourceV1(dotrain_code.to_string());
         let document: RainMetaDocumentV1Item = dotrain_source.into();
         let cbor_bytes = document.cbor_encode().unwrap();
@@ -498,20 +511,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_returns_every_item_in_one_meta() {
+    async fn test_fetch_by_subject_takes_only_the_item_the_subject_addresses() {
         use httpmock::prelude::*;
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
-        let subject = [0x42; 32];
+        let subject = subject_of("wanted");
 
-        // One blob carrying two different sources: both come back, in
-        // encoding order. Neither position nor content picks a winner.
+        // One emission carrying two sources. Every item is scanned, and the
+        // one the subject addresses is the one returned - position picks
+        // nothing, and neither does being the only dotrain item present.
         let mock = server.mock(|when, then| {
             when.method(POST).path("/").body_contains("subject");
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(metas_response(
-                    &[dotrain_meta(&["first", "second"])],
+                    &[dotrain_meta(&["not wanted", "wanted"])],
                     subject,
                 ));
         });
@@ -521,24 +535,33 @@ mod tests {
             .unwrap();
         assert_eq!(
             sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
-            vec!["first", "second"]
+            vec!["wanted"]
         );
         mock.assert();
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_returns_divergent_metas_in_row_order() {
+    async fn test_fetch_by_subject_rejects_a_source_the_subject_does_not_address() {
         use httpmock::prelude::*;
-        let subject = [0x42; 32];
+        let subject = subject_of("mine");
 
-        // Two metas under one subject holding two different sources is
-        // ordinary valid data, not a conflict to resolve: every source is
-        // returned. Running the same fixture in both row orders pins that the
-        // vec is the rows as they arrive - nothing sorted, nothing dropped.
-        for expected in [vec!["first", "second"], vec!["second", "first"]] {
+        // Anyone can emit anything under anyone's subject, so a metaboard
+        // being asked for a subject is not the metaboard answering for it.
+        // A source that does not hash to what was asked for is not what was
+        // asked for, whichever side of the real one it sits, and no amount of
+        // it displaces the real one.
+        for rows in [
+            vec![dotrain_meta(&["mine"]), dotrain_meta(&["theirs"])],
+            vec![dotrain_meta(&["theirs"]), dotrain_meta(&["mine"])],
+            vec![dotrain_meta(&["theirs"])],
+        ] {
+            let expected: Vec<&str> = if rows.len() == 1 {
+                vec![]
+            } else {
+                vec!["mine"]
+            };
             let server = MockServer::start();
             let mock_url = Url::parse(&server.url("/")).unwrap();
-            let rows: Vec<Vec<u8>> = expected.iter().map(|s| dotrain_meta(&[*s])).collect();
             let mock = server.mock(|when, then| {
                 when.method(POST).path("/").body_contains("subject");
                 then.status(200)
@@ -562,7 +585,7 @@ mod tests {
         use httpmock::prelude::*;
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
-        let subject = [0x42; 32];
+        let subject = subject_of("agreed");
 
         // Two emissions of the same source are two metas, and how many there
         // are is the caller's to read: they are not collapsed into one.
@@ -591,7 +614,7 @@ mod tests {
         use httpmock::prelude::*;
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
-        let subject = [0x42; 32];
+        let subject = subject_of("only one");
 
         let mock = server.mock(|when, then| {
             when.method(POST).path("/").body_contains("subject");
@@ -616,7 +639,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_by_subject_junk_row_does_not_deny_the_subject() {
         use httpmock::prelude::*;
-        let subject = [0x42; 32];
+        let subject = subject_of("legit");
 
         // Anyone can emit junk carrying the magic number under anyone's
         // subject, so a junk row must not decide what the rest of the subject
@@ -649,7 +672,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_by_subject_non_utf8_dotrain_does_not_deny_the_subject() {
         use httpmock::prelude::*;
-        let subject = [0x42; 32];
+        let subject = subject_of("legit");
 
         // An emission putting something under the dotrain magic that is not a
         // source is dropped whole, and dropping it does not reach the rows
@@ -721,18 +744,19 @@ mod tests {
         use httpmock::prelude::*;
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
-        let subject = [0x42; 32];
+        let subject = subject_of("wanted");
 
-        // The row it is dropped from is the only row it costs.
+        // The emission it is dropped from is the only one it costs: the rows
+        // either side of it still answer.
         let mock = server.mock(|when, then| {
             when.method(POST).path("/").body_contains("subject");
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(metas_response(
                     &[
-                        meta_of(vec![source_item("first")]),
-                        meta_of(vec![source_item("dropped"), non_utf8_dotrain_item()]),
-                        meta_of(vec![source_item("last")]),
+                        meta_of(vec![source_item("wanted")]),
+                        meta_of(vec![source_item("wanted"), non_utf8_dotrain_item()]),
+                        meta_of(vec![source_item("wanted")]),
                     ],
                     subject,
                 ));
@@ -743,7 +767,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
-            vec!["first", "last"]
+            vec!["wanted", "wanted"]
         );
         mock.assert();
     }
