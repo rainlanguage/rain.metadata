@@ -144,20 +144,26 @@ mod tests {
         junk
     }
 
-    /// Also emittable by anyone: a well formed document whose dotrain item
-    /// carries a payload that is not utf-8, so it decodes but cannot be a
-    /// source.
-    fn non_utf8_dotrain_meta() -> Vec<u8> {
-        let item = RainMetaDocumentV1Item {
+    /// Also emittable by anyone: an item claiming the dotrain magic over a
+    /// payload that is not utf-8, so it decodes but cannot be a source.
+    fn non_utf8_dotrain_item() -> RainMetaDocumentV1Item {
+        RainMetaDocumentV1Item {
             payload: serde_bytes::ByteBuf::from(vec![0xff, 0xfe]),
             magic: KnownMagic::DotrainSourceV1,
             content_type: ContentType::OctetStream,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::None,
             schema: None,
-        };
-        RainMetaDocumentV1Item::cbor_encode_seq(&vec![item], KnownMagic::RainMetaDocumentV1)
-            .unwrap()
+        }
+    }
+
+    /// One emission, carrying whatever items it is given.
+    fn meta_of(items: Vec<RainMetaDocumentV1Item>) -> Vec<u8> {
+        RainMetaDocumentV1Item::cbor_encode_seq(&items, KnownMagic::RainMetaDocumentV1).unwrap()
+    }
+
+    fn source_item(source: &str) -> RainMetaDocumentV1Item {
+        DotrainSourceV1(source.to_string()).into()
     }
 
     fn metas_response(metas: &[Vec<u8>], subject: [u8; 32]) -> serde_json::Value {
@@ -638,13 +644,22 @@ mod tests {
         use httpmock::prelude::*;
         let subject = [0x42; 32];
 
-        // The same emitter can send a document that decodes and claims the
-        // dotrain magic but whose payload is not a source. It is skipped, not
-        // returned and not fatal - in its own row, and beside a real source
-        // inside one row.
+        // An item that decodes and claims the dotrain magic but whose payload
+        // is not a source is skipped, not returned and not fatal. Both places
+        // it can sit, and both orders in each: in its own row beside a row
+        // carrying a real source, and beside a real source inside one row -
+        // the row loop and the item loop skip independently.
         for rows in [
-            vec![dotrain_meta(&["legit"]), non_utf8_dotrain_meta()],
-            vec![non_utf8_dotrain_meta(), dotrain_meta(&["legit"])],
+            vec![
+                meta_of(vec![source_item("legit")]),
+                meta_of(vec![non_utf8_dotrain_item()]),
+            ],
+            vec![
+                meta_of(vec![non_utf8_dotrain_item()]),
+                meta_of(vec![source_item("legit")]),
+            ],
+            vec![meta_of(vec![source_item("legit"), non_utf8_dotrain_item()])],
+            vec![meta_of(vec![non_utf8_dotrain_item(), source_item("legit")])],
         ] {
             let server = MockServer::start();
             let mock_url = Url::parse(&server.url("/")).unwrap();
