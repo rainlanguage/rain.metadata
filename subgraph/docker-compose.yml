@@ -2,5 +2,10 @@ version: '3'
 services:
   matchstick:
     image: rainprotocol/matchstick:main
+    # Matchstick reuses `tests/.bin/*.wasm` unless an mtime says a source is
+    # newer, and an mtime is not a fact about content, so without `-r` the run
+    # can execute a cached binary instead of the sources in the tree.
+    environment:
+      ARGS: -r
     volumes:
       - ..:/matchstick
