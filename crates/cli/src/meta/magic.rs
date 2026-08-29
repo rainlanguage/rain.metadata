@@ -14,8 +14,9 @@
 #[serde(rename_all = "kebab-case")]
 #[repr(u64)]
 pub enum KnownMagic {
-    /// Prefixes every rain meta document, and as an item's own magic marks a
-    /// payload that is itself a complete rain meta document
+    /// Prefixes every rain meta document. This is the only place it appears:
+    /// an item claiming it as its own magic is malformed, not a nested
+    /// document, and does not decode.
     RainMetaDocumentV1 = 0xff0a89c674ee7874,
 
     /// Ops meta v1
