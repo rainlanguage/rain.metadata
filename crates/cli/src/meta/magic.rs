@@ -14,8 +14,9 @@
 #[serde(rename_all = "kebab-case")]
 #[repr(u64)]
 pub enum KnownMagic {
-    /// Prefixes every rain meta document, and as an item's own magic marks a
-    /// payload that is itself a complete rain meta document
+    /// Prefixes every rain meta document. This is the only place it appears:
+    /// an item claiming it as its own magic is malformed, not a nested
+    /// document, and does not decode.
     RainMetaDocumentV1 = 0xff0a89c674ee7874,
 
     /// Ops meta v1
@@ -76,7 +77,12 @@ impl TryFrom<u64> for KnownMagic {
             v if v == KnownMagic::AuthoringMetaV1 as u64 => Ok(KnownMagic::AuthoringMetaV1),
             v if v == KnownMagic::AuthoringMetaV2 as u64 => Ok(KnownMagic::AuthoringMetaV2),
             v if v == KnownMagic::AddressList as u64 => Ok(KnownMagic::AddressList),
-            v if v == KnownMagic::RainMetaDocumentV1 as u64 => Ok(KnownMagic::RainMetaDocumentV1),
+            // NOT RainMetaDocumentV1. That number is the document prefix, and
+            // this conversion is only ever reached for an item's own magic
+            // (cbor key 1). An item claiming to be a document is structurally
+            // invalid rather than a type nothing supports, so it is corrupt
+            // here and the meta carrying it does not decode. Nothing in this
+            // workspace emits one. rainlanguage/rain.metadata#204.
             v if v == KnownMagic::InterpreterCallerMetaV1 as u64 => {
                 Ok(KnownMagic::InterpreterCallerMetaV1)
             }
@@ -331,9 +337,24 @@ mod tests {
     fn test_try_from_u64_roundtrip_all() {
         use strum::IntoEnumIterator;
         for magic in KnownMagic::iter() {
+            // The document magic is the exception: this conversion reads an
+            // item's own magic, and an item cannot be a document.
+            if magic == KnownMagic::RainMetaDocumentV1 {
+                continue;
+            }
             let from_u64 = KnownMagic::try_from(magic as u64).unwrap();
             assert_eq!(magic, from_u64);
         }
+    }
+
+    /// The document magic is a prefix, never an item's own magic, so it does
+    /// not convert back. rainlanguage/rain.metadata#204.
+    #[test]
+    fn test_try_from_u64_rejects_the_document_magic() {
+        assert!(matches!(
+            KnownMagic::try_from(KnownMagic::RainMetaDocumentV1 as u64),
+            Err(crate::error::Error::UnknownMagic)
+        ));
     }
 
     /// Values that are not known magic numbers map to Error::UnknownMagic.
