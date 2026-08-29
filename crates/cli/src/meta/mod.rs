@@ -1,5 +1,4 @@
 use super::error::Error;
-use super::subgraph::KnownSubgraphs;
 use alloy::primitives::{hex, keccak256};
 use futures::future;
 use graphql_client::GraphQLQuery;
@@ -360,9 +359,13 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                             3 => content_encoding = Some(map.next_value()?),
                             4 => content_language = Some(map.next_value()?),
                             OA_SCHEMA_KEY => schema = Some(map.next_value()?),
-                            other => Err(serde::de::Error::custom(format!(
-                                "found unexpected key in the map: {other}"
-                            )))?,
+                            // the map structure exists so later conventions can
+                            // add indexes that older tooling adopts "or not" in
+                            // a backwards compatible way, so an index this
+                            // version does not know is skipped, not an error
+                            _ => {
+                                map.next_value::<serde::de::IgnoredAny>()?;
+                            }
                         };
                         true
                     }
@@ -539,11 +542,8 @@ impl NPE2Deployer {
 /// use rain_metadata::Store;
 /// use std::collections::HashMap;
 ///
-/// // to instantiate without any default subgraphs
+/// // to instantiate with an empty subgraph list
 /// let mut store = Store::new();
-///
-/// // to instantiate with default rain subgraphs included
-/// let mut store = Store::default();
 ///
 /// // or to instantiate with initial values
 /// let mut store = Store::create(
@@ -551,14 +551,13 @@ impl NPE2Deployer {
 ///     &HashMap::new(),
 ///     &HashMap::new(),
 ///     &HashMap::new(),
-///     true,
 /// );
 ///
 /// // add a new subgraph endpoint url to the subgraph list
 /// store.add_subgraphs(&vec!["sg-url-2".to_string()]);
 ///
 /// // merge another Store into this one
-/// store.merge(&Store::default());
+/// store.merge(&Store::new());
 ///
 /// // updates the meta store with a new meta hash and bytes
 /// let hash = vec![0u8, 1u8, 2u8];
@@ -595,18 +594,12 @@ pub struct Store {
 
 impl Default for Store {
     fn default() -> Self {
-        Store {
-            cache: HashMap::new(),
-            dotrain_cache: HashMap::new(),
-            deployer_cache: HashMap::new(),
-            subgraphs: KnownSubgraphs::NPE2.map(|url| url.to_string()).to_vec(),
-            deployer_hash_map: HashMap::new(),
-        }
+        Store::new()
     }
 }
 
 impl Store {
-    /// lazily creates a new instance
+    /// lazily creates a new instance with no subgraphs
     /// it is recommended to use create() instead with initial values
     pub fn new() -> Store {
         Store {
@@ -625,14 +618,8 @@ impl Store {
         cache: &HashMap<Vec<u8>, Vec<u8>>,
         deployer_cache: &HashMap<Vec<u8>, NPE2Deployer>,
         dotrain_cache: &HashMap<String, Vec<u8>>,
-        include_rain_subgraphs: bool,
     ) -> Store {
-        let mut store;
-        if include_rain_subgraphs {
-            store = Store::default();
-        } else {
-            store = Store::new();
-        }
+        let mut store = Store::new();
         store.add_subgraphs(subgraphs);
         for (hash, bytes) in cache {
             store.update_with(hash, bytes);
@@ -807,6 +794,7 @@ impl Store {
     }
 
     /// lazilly merges another Store to the current one, avoids duplicates
+    /// every map keeps the entry this Store already has on a key collision
     pub fn merge(&mut self, other: &Store) {
         self.add_subgraphs(&other.subgraphs);
         for (hash, bytes) in &other.cache {
@@ -819,8 +807,10 @@ impl Store {
                 self.deployer_cache.insert(hash.clone(), deployer.clone());
             }
         }
-        for (hash, tx_hash) in &other.deployer_hash_map {
-            self.deployer_hash_map.insert(hash.clone(), tx_hash.clone());
+        for (tx_hash, hash) in &other.deployer_hash_map {
+            if !self.deployer_hash_map.contains_key(tx_hash) {
+                self.deployer_hash_map.insert(tx_hash.clone(), hash.clone());
+            }
         }
         for (uri, hash) in &other.dotrain_cache {
             if !self.dotrain_cache.contains_key(uri) {
@@ -924,10 +914,17 @@ impl Store {
 }
 
 /// converts string to bytes32
+///
+/// Right padding with `0u8` is the encoding, so [`bytes32_to_str`] ends the
+/// string at the first `0u8` and cannot carry one. An input holding a nul is
+/// rejected rather than round tripped into a shorter string.
 pub fn str_to_bytes32(text: &str) -> Result<[u8; 32], Error> {
     let bytes: &[u8] = text.as_bytes();
     if bytes.len() > 32 {
         return Err(Error::BiggerThan32Bytes);
+    }
+    if bytes.contains(&0u8) {
+        return Err(Error::NulByteInInput);
     }
     let mut b32 = [0u8; 32];
     b32[..bytes.len()].copy_from_slice(bytes);
@@ -1298,6 +1295,46 @@ mod tests {
         ));
     }
 
+    /// A nul cannot survive the padding convention bytes32_to_str decodes, so
+    /// it is rejected on the way in wherever it sits, including the pair the
+    /// issue collides ("a" and "a\0").
+    #[test]
+    fn test_str_to_bytes32_rejects_nul() {
+        for text in [
+            "\0",
+            "\0a",
+            "a\0",
+            "a\0b",
+            "abcdefghijklmnopqrstuvwxyz01234\0",
+        ] {
+            assert!(
+                matches!(str_to_bytes32(text), Err(Error::NulByteInInput)),
+                "nul bearing input {:?} accepted",
+                text
+            );
+        }
+    }
+
+    /// Everything str_to_bytes32 accepts comes back out of bytes32_to_str
+    /// unchanged, and no two of them share a bytes32.
+    #[test]
+    fn test_str_to_bytes32_round_trip() -> Result<(), Error> {
+        let mut seen: Vec<[u8; 32]> = vec![];
+        for text in [
+            "",
+            "a",
+            "stack",
+            "!@#$%^&*(),./;'[]",
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345",
+        ] {
+            let bytes = str_to_bytes32(text)?;
+            assert_eq!(bytes32_to_str(&bytes)?, text);
+            assert!(!seen.contains(&bytes), "input {:?} collided", text);
+            seen.push(bytes);
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_implements_i_describe_by_meta_v1() {
         // makes new server/client with success response for erc165 check
@@ -1453,10 +1490,31 @@ mod tests {
         Ok(())
     }
 
-    /// Any magic number other than OaSchema used as an extra map key must
-    /// still be rejected on decode
+    /// A map key this version has no meaning for is a future index, so it is
+    /// skipped and the rest of the map decodes
     #[test]
-    fn non_oa_schema_extra_map_key_errors() -> Result<(), Error> {
+    fn unknown_map_key_index_is_ignored() -> Result<(), Error> {
+        let mut bytes: Vec<u8> = vec![
+            // cbor map with 3 keys
+            0xa3, // key 0, bytes payload of length 0
+            0x00, 0x40, // key 1, unsigned integer magic number
+            0x01, 0x1b,
+        ];
+        bytes.extend_from_slice(&KnownMagic::DotrainSourceV1.to_prefix_bytes());
+        // key 5, a plausible future index, unsigned integer value 7
+        bytes.extend_from_slice(&[0x05, 0x07]);
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0], plain_item(KnownMagic::DotrainSourceV1, vec![]));
+
+        Ok(())
+    }
+
+    /// A magic number other than OaSchema used as an extra map key is a future
+    /// magic keyed entry, skipped the same way, and leaves schema unset
+    #[test]
+    fn non_oa_schema_extra_map_key_is_ignored() -> Result<(), Error> {
         // build a map identical to a valid 2 key meta map but with an extra
         // OaHashList magic key carrying a text string
         let mut bytes: Vec<u8> = vec![
@@ -1472,10 +1530,83 @@ mod tests {
         // text string value of length 2
         bytes.extend_from_slice(&[0x62, 0x68, 0x69]);
 
-        let result = RainMetaDocumentV1Item::cbor_decode(&bytes);
-        assert!(matches!(result, Err(Error::SerdeCborError(_))));
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        assert_eq!(decoded.len(), 1);
+        let expected = plain_item(KnownMagic::OaStructure, vec![0xff]);
+        assert_eq!(decoded[0], expected);
+        assert_eq!(decoded[0].schema, None);
 
         Ok(())
+    }
+
+    /// The whole value of an unknown key is consumed however nested, so the
+    /// item that follows it in the sequence still decodes
+    #[test]
+    fn unknown_map_key_consumes_its_whole_value() -> Result<(), Error> {
+        let mut bytes: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        // key 5, value {42: [1, 2]}
+        bytes.extend_from_slice(&[0x05, 0xa1, 0x18, 0x2a, 0x82, 0x01, 0x02]);
+        bytes.extend_from_slice(&handwritten_map());
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        assert_eq!(decoded.len(), 2);
+        let expected = plain_item(KnownMagic::DotrainV1, vec![0x01]);
+        assert_eq!(decoded[0], expected);
+        assert_eq!(decoded[1], expected);
+
+        Ok(())
+    }
+
+    /// An ignored key is not re-encoded, so the item's hash is the hash of what
+    /// this version can represent and not of the bytes it decoded
+    #[test]
+    fn ignored_map_key_is_absent_from_the_reencoding() -> Result<(), Error> {
+        let mut bytes: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        bytes.extend_from_slice(&[0x05, 0x07]);
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        assert_eq!(decoded[0].cbor_encode()?, handwritten_map());
+        assert_eq!(decoded[0].hash(false)?, keccak256(handwritten_map()).0);
+        assert_ne!(decoded[0].hash(false)?, keccak256(&bytes).0);
+
+        Ok(())
+    }
+
+    /// Only integer keys are indexes. The spec rules out the HTTP header names
+    /// as keys, so a key that is not an unsigned integer is not a future index
+    /// to skip over
+    #[test]
+    fn non_integer_map_key_errors() {
+        let mut text_key: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        text_key.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        // key "5", unsigned integer value 7
+        text_key.extend_from_slice(&[0x61, 0x35, 0x07]);
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&text_key),
+            Err(Error::SerdeCborError(_))
+        ));
+
+        let mut negative_key: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        negative_key.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        // key -1, unsigned integer value 7
+        negative_key.extend_from_slice(&[0x20, 0x07]);
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&negative_key),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// An unknown key is skipped, never counted as one of the mandatory keys
+    #[test]
+    fn unknown_map_key_does_not_stand_in_for_a_mandatory_key() {
+        let mut bytes: Vec<u8> = vec![0xa2, 0x05, 0x07, 0x01, 0x1b];
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
     }
 
     fn plain_item(magic: KnownMagic, payload: Vec<u8>) -> RainMetaDocumentV1Item {
@@ -1617,6 +1748,67 @@ mod tests {
         assert!(matches!(
             RainMetaDocumentV1Item::cbor_decode(&bytes),
             Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// A handwritten item map carrying the rain meta document magic under key
+    /// 1 decodes, so accepting the document magic as an item magic is the
+    /// decoder's own behaviour and not an artefact of this crate's encoder.
+    #[test]
+    fn test_cbor_decode_handwritten_document_magic_item() -> Result<(), Error> {
+        let bytes: Vec<u8> = vec![
+            0xa2, // map(2)
+            0x00, // key 0
+            0x41, 0x01, // bytes(1) 0x01
+            0x01, // key 1
+            0x1b, 0xff, 0x0a, 0x89, 0xc6, 0x74, 0xee, 0x78, 0x74, // u64 RainMetaDocumentV1
+        ];
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes)?,
+            vec![plain_item(KnownMagic::RainMetaDocumentV1, vec![0x01])]
+        );
+        Ok(())
+    }
+
+    /// The document magic as an item's own magic marks a payload that is
+    /// itself a complete rain meta document, which
+    /// `OrderBuilderStateV1::extract_from_meta` recurses into, so the codec
+    /// must carry such an item in both directions and leave its payload byte
+    /// for byte intact.
+    #[test]
+    fn test_document_magic_item_carries_a_nested_document() -> Result<(), Error> {
+        let inner = plain_item(KnownMagic::DotrainV1, vec![0x01]);
+        let inner_doc = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![inner.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )?;
+        let outer = plain_item(KnownMagic::RainMetaDocumentV1, inner_doc.clone());
+        let outer_doc = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![outer.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )?;
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&outer_doc)?;
+        assert_eq!(decoded, vec![outer]);
+        assert_eq!(decoded[0].payload.as_ref(), inner_doc.as_slice());
+        assert_eq!(
+            RainMetaDocumentV1Item::cbor_decode(decoded[0].payload.as_ref())?,
+            vec![inner]
+        );
+        Ok(())
+    }
+
+    /// Nesting is not a leaf meta type: the unpack layer rejects the document
+    /// magic so that no payload conversion is ever handed a whole document.
+    #[test]
+    fn test_document_magic_item_is_not_unpackable() {
+        assert!(matches!(
+            KnownMeta::try_from(KnownMagic::RainMetaDocumentV1),
+            Err(Error::UnsupportedMeta)
+        ));
+        assert!(matches!(
+            plain_item(KnownMagic::RainMetaDocumentV1, vec![0x01]).unpack_into::<Vec<u8>>(),
+            Err(Error::UnsupportedMeta)
         ));
     }
 
@@ -2076,18 +2268,26 @@ mod tests {
         }
     }
 
-    /// Store::default() carries the known NPE2 subgraphs; Store::new() starts
-    /// with none.
-    #[test]
-    fn test_store_default_vs_new_subgraphs() {
-        assert_eq!(
-            Store::default().subgraphs(),
-            &KnownSubgraphs::NPE2.map(|url| url.to_string()).to_vec()
-        );
+    /// No constructor injects a subgraph the caller did not ask for, and a
+    /// store with none resolves every network lookup to None rather than
+    /// reaching the select_ok panic.
+    #[tokio::test]
+    async fn test_store_constructors_inject_no_subgraphs() {
         assert!(Store::new().subgraphs().is_empty());
+        assert!(Store::default().subgraphs().is_empty());
+        assert!(
+            Store::create(&vec![], &HashMap::new(), &HashMap::new(), &HashMap::new())
+                .subgraphs()
+                .is_empty()
+        );
+
+        let hash = [0u8; 32];
+        let mut store = Store::default();
+        assert!(store.update(&hash).await.is_none());
+        assert!(store.search_deployer(&hash).await.is_none());
     }
 
-    /// create() honors include_rain_subgraphs, validates cache entries via
+    /// create() takes only the given subgraphs, validates cache entries via
     /// the keccak gate, and keeps a dotrain uri only when its hash is present
     /// in the cache.
     #[test]
@@ -2111,15 +2311,12 @@ mod tests {
             &cache,
             &deployer_cache,
             &dotrain_cache,
-            true,
         );
 
-        for sg in KnownSubgraphs::NPE2 {
-            assert!(store.subgraphs().contains(&sg.to_string()));
-        }
-        assert!(store
-            .subgraphs()
-            .contains(&"https://example.com/custom-sg".to_string()));
+        assert_eq!(
+            store.subgraphs(),
+            &vec!["https://example.com/custom-sg".to_string()]
+        );
         assert_eq!(store.get_meta(&good_hash), Some(&doc));
         assert_eq!(store.get_meta(&bad_hash), None);
         assert_eq!(store.get_deployer(&deployer_key), Some(&deployer));
@@ -2349,20 +2546,21 @@ mod tests {
         assert!(store.get_meta(&hash_again).is_some());
     }
 
-    /// merge keeps existing meta cache, deployer cache and dotrain entries,
-    /// while the tx-hash map takes the other store's mappings, and subgraphs
-    /// union.
+    /// merge keeps this store's entry in every map on a key collision, takes
+    /// the keys it does not already hold, and unions the subgraphs.
     #[test]
     fn test_store_merge_semantics() {
         let shared_meta_hash = vec![0x5Au8; 32];
         let deployer_ours = sample_deployer(&shared_meta_hash, b"ours");
         let deployer_theirs = sample_deployer(&shared_meta_hash, b"theirs");
         let shared_tx = vec![0x0Fu8; 32];
+        let their_tx = vec![0x1Eu8; 32];
 
         let mut ours = Store::new();
         let mut theirs = Store::new();
         ours.set_deployer(&[0x01u8; 32], &deployer_ours, Some(&shared_tx));
         theirs.set_deployer(&[0x02u8; 32], &deployer_theirs, Some(&shared_tx));
+        theirs.set_deployer(&[0x02u8; 32], &deployer_theirs, Some(&their_tx));
 
         // same deployer cache key in both stores
         let contested_key = vec![0x03u8; 32];
@@ -2383,8 +2581,10 @@ mod tests {
         assert_eq!(ours.get_meta(&shared_meta_hash), Some(&b"ours".to_vec()));
         // deployer cache: existing entry wins
         assert_eq!(ours.get_deployer(&contested_key), Some(&deployer_a));
-        // tx-hash map: the other store's mapping overwrites
-        assert_eq!(ours.get_deployer(&shared_tx), Some(&deployer_theirs));
+        // tx-hash map: existing mapping wins
+        assert_eq!(ours.get_deployer(&shared_tx), Some(&deployer_ours));
+        // tx-hash map: a mapping only the other store holds is taken
+        assert_eq!(ours.get_deployer(&their_tx), Some(&deployer_theirs));
         // dotrain: existing uri mapping wins
         assert_eq!(ours.get_dotrain_hash("x.rain"), Some(&hash_ours));
         // subgraphs merged

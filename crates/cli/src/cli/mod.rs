@@ -10,7 +10,6 @@ pub mod magic;
 pub mod schema;
 pub mod schema_check;
 pub mod output;
-pub mod subgraph;
 pub mod validate;
 pub mod generate;
 
@@ -34,8 +33,6 @@ pub enum Meta {
     Build(build::Build),
     #[command(subcommand)]
     Solc(solc::Solc),
-    #[command(subcommand)]
-    Subgraph(subgraph::Sg),
     Generate(generate::Generate),
 }
 
@@ -43,7 +40,6 @@ pub async fn dispatch(meta: Meta) -> anyhow::Result<()> {
     match meta {
         Meta::Build(build) => build::build(build),
         Meta::Solc(solc) => solc::dispatch(solc),
-        Meta::Subgraph(sg) => subgraph::dispatch(sg),
         Meta::Magic(magic) => magic::dispatch(magic),
         Meta::Schema(schema) => schema::dispatch(schema),
         Meta::Validate(validate) => validate::validate(validate),
