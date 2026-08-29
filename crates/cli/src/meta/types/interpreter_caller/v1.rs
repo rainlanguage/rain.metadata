@@ -21,10 +21,10 @@ type AbiPath = RainString;
 pub struct InterpreterCallerMeta {
     #[validate]
     pub name: RainTitle,
-    /// Name of the contract corresponding to `contractName` feild in the abi.
+    /// Name of the contract corresponding to `contractName` field in the abi.
     #[validate]
     pub abi_name: SolidityIdentifier,
-    /// Name of the caller corresponding to `contractName` feild in the abi.
+    /// Description of the caller.
     #[serde(default)]
     #[validate]
     pub desc: Description,
