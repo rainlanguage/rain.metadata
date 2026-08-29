@@ -72,7 +72,6 @@ pub(crate) mod solc;
 pub mod meta;
 pub mod metaboard;
 pub mod error;
-pub(crate) mod subgraph;
 
 #[cfg(feature = "cli")]
 pub mod cli;
@@ -82,4 +81,3 @@ pub use solc::*;
 pub use meta::*;
 pub use metaboard::*;
 pub use error::*;
-pub use subgraph::*;
