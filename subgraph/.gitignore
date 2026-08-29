@@ -2,4 +2,5 @@ build
 cache
 generated
 node_modules
+tests/.bin
 typechain
