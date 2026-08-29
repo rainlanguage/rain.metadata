@@ -118,7 +118,7 @@ impl MetaboardSubgraphClient {
         for meta in data.meta_v1_s {
             meta_bytes.push(decode(&meta.meta.0).map_err(|e| {
                 MetaboardSubgraphClientError::FromHexError {
-                    metahash: encode(&meta.meta_hash.0),
+                    metahash: meta.meta_hash.0.clone(),
                     source: e,
                 }
             })?);
@@ -557,11 +557,7 @@ mod tests {
     }
 
     /// Same failure on the subject path: a FromHexError, keyed by the
-    /// offending meta's own hash rather than by the subject.
-    /// NOTE: the exact key text is NOT pinned here because the current
-    /// implementation hex-encodes the UTF-8 bytes of the (already hex) hash
-    /// string; see the audit issue on the double encoding. The variant and a
-    /// non-empty key are the undisputed part of the contract.
+    /// offending meta's own hash verbatim rather than by the subject.
     #[tokio::test]
     async fn test_get_metabytes_by_subject_invalid_hex_meta() {
         let server = MockServer::start_async().await;
@@ -594,7 +590,7 @@ mod tests {
 
         match result {
             Err(MetaboardSubgraphClientError::FromHexError { metahash, .. }) => {
-                assert!(!metahash.is_empty());
+                assert_eq!(metahash, "0xabcd");
             }
             other => panic!("unexpected result: {:?}", other),
         }
