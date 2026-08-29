@@ -52,7 +52,7 @@ contract CopyArtifactsTest is Test {
         // `contracts()` and the committed directory MUST name each other
         // exactly.
         //
-        // The `copy-artifacts` CI job proves every committed artifact is
+        // The `git-clean` CI job proves every committed artifact is
         // FRESH, which cannot see a name DROPPED from the list: the committed
         // copy stays behind as an orphan the copy script no longer maintains,
         // silently going stale under the rust crate that still compiles
@@ -95,7 +95,7 @@ contract CopyArtifactsTest is Test {
         // else, the two bytecode objects reduced to `object` alone, and every
         // kept value equal to the live artifact's.
         //
-        // The `copy-artifacts` CI job regenerates and compares the committed
+        // The `git-clean` CI job regenerates and compares the committed
         // copy against `extractStable`, so a filter that drifts — keeping the
         // whole non-deterministic bytecode object, dropping the `abi` key
         // `alloy::sol!` reads — regenerates and re-reads its own drift and
