@@ -48,10 +48,15 @@ const otherTransactionHash =
   "0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
 // Spelled out rather than built the way `handleMetaV1_2` builds them, so the
 // id scheme is pinned to something outside the mapping.
-const FIRST_BOARD_META_ID = "0xfb8437aefbb8031064e274527c5fc08e30ac6928-0";
-const FIRST_BOARD_SECOND_META_ID =
-  "0xfb8437aefbb8031064e274527c5fc08e30ac6928-1";
-const OTHER_BOARD_META_ID = "0x4a9b0f6c1e3d2a5b8c7d6e9f0a1b2c3d4e5f6a7b-0";
+const FIRST_BOARD_META_ID = Bytes.fromHexString(
+  "0xfb8437aefbb8031064e274527c5fc08e30ac69280000000000000000000000000000000000000000000000000000000000000000",
+);
+const FIRST_BOARD_SECOND_META_ID = Bytes.fromHexString(
+  "0xfb8437aefbb8031064e274527c5fc08e30ac69280000000000000000000000000000000000000000000000000000000000000001",
+);
+const OTHER_BOARD_META_ID = Bytes.fromHexString(
+  "0x4a9b0f6c1e3d2a5b8c7d6e9f0a1b2c3d4e5f6a7b0000000000000000000000000000000000000000000000000000000000000000",
+);
 
 describe("Test meta event", () => {
   afterEach(() => {
@@ -116,7 +121,7 @@ describe("Test meta event", () => {
     assert.bytesEquals(meta, metaV1Event.params.meta);
   });
   test("Returns null when calling entity.load() if an entity doesn't exist", () => {
-    let retrievedMetaV1 = MetaV1Entity.load("1");
+    let retrievedMetaV1 = MetaV1Entity.load(FIRST_BOARD_META_ID);
     assert.assertNull(retrievedMetaV1);
   });
 
@@ -390,6 +395,90 @@ describe("Test MetaV1 ids are scoped to their metaboard", () => {
 
     const board = MetaBoard.load(CONTRACT_ADDRESS) as MetaBoard;
     assert.bigIntEquals(board.nextMetaId, BigInt.fromI32(2));
+  });
+});
+
+function metaPayload(index: i32): Bytes {
+  return Bytes.fromHexString(metaString + index.toString(16).padStart(2, "0"));
+}
+
+function metaWithPayload(metas: MetaV1Entity[], payload: Bytes): MetaV1Entity {
+  for (let i = 0; i < metas.length; i++) {
+    if (metas[i].meta == payload) {
+      return metas[i];
+    }
+  }
+  throw new Error("no meta carrying " + payload.toHexString());
+}
+
+// The MetaV1 id ends in the board's `nextMetaId` counter, and `orderBy: id`
+// sorts ids, not counters. While that counter was a decimal string a board's
+// eleventh meta sorted before its third, so a consumer paginating by id read a
+// board's metas out of the order they were emitted in.
+// rainlanguage/rain.metadata#227.
+describe("Test MetaV1 ids sort chronologically", () => {
+  afterEach(() => {
+    clearStore();
+    clearInBlockStore();
+  });
+
+  test("A metaboard's eleventh meta sorts after its third", () => {
+    for (let i = 0; i < 11; i++) {
+      handleMetaV1_2(
+        createNewMetaV1Event(
+          CONTRACT_ADDRESS,
+          sender,
+          subject,
+          metaPayload(i),
+          transactionHash,
+          transactionBlockNumber,
+          transactionTimestamp,
+        ),
+      );
+    }
+
+    const metas = (MetaBoard.load(CONTRACT_ADDRESS) as MetaBoard).metas.load();
+    assert.i32Equals(metas.length, 11);
+
+    const third = metaWithPayload(metas, metaPayload(2));
+    const eleventh = metaWithPayload(metas, metaPayload(10));
+    assert.assertTrue(third.id.toHexString() < eleventh.id.toHexString());
+  });
+});
+
+// `metas: [MetaV1!] @derivedFrom(field: "metaBoard")` resolves
+// `metaV1.metaBoard` against MetaBoard ids, so that field has to carry the
+// board's id. The handler writes a board's `id` and its `address` from the same
+// `event.address`, so a board whose two differ is the only store state that
+// tells the two fields apart. rainlanguage/rain.metadata#227.
+describe("Test MetaV1 metaBoard relation", () => {
+  afterEach(() => {
+    clearStore();
+    clearInBlockStore();
+  });
+
+  test("The relation is the metaboard's id, not its address field", () => {
+    const board = new MetaBoard(CONTRACT_ADDRESS);
+    board.address = OTHER_CONTRACT_ADDRESS;
+    board.nextMetaId = BigInt.fromI32(0);
+    board.save();
+
+    handleMetaV1_2(
+      createNewMetaV1Event(
+        CONTRACT_ADDRESS,
+        sender,
+        subject,
+        Bytes.fromHexString(metaString),
+        transactionHash,
+        transactionBlockNumber,
+        transactionTimestamp,
+      ),
+    );
+
+    const metas = (MetaBoard.load(CONTRACT_ADDRESS) as MetaBoard).metas.load();
+    assert.i32Equals(metas.length, 1);
+    assert.bytesEquals(metas[0].id, FIRST_BOARD_META_ID);
+    assert.bytesEquals(metas[0].metaBoard, CONTRACT_ADDRESS);
   });
 });
 

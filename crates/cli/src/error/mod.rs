@@ -18,6 +18,8 @@ pub enum Error {
     InflateError(String),
     InvalidInput(String),
     InvalidUrl(String),
+    CorruptRecord(String),
+    SubgraphError(String),
     Utf8Error(Utf8Error),
     FromUtf8Error(FromUtf8Error),
     ReqwestError(reqwest::Error),
@@ -27,6 +29,7 @@ pub enum Error {
     ValidationErrors(validator::ValidationErrors),
     DecodeHexStringError(alloy::primitives::hex::FromHexError),
     InvalidMetaMagic(KnownMagic, KnownMagic),
+    MetaNestingTooDeep(usize),
     MetaboardSubgraphClientError(MetaboardSubgraphClientError),
 }
 
@@ -45,6 +48,8 @@ impl std::fmt::Display for Error {
             Error::NulByteInInput => f.write_str("unexpected nul byte in input"),
             Error::InvalidInput(v) => write!(f, "invalid input: {}", v),
             Error::InvalidUrl(v) => write!(f, "invalid URL: {}", v),
+            Error::CorruptRecord(v) => write!(f, "corrupt record: {}", v),
+            Error::SubgraphError(v) => write!(f, "subgraph error: {}", v),
             Error::ReqwestError(v) => write!(f, "{}", v),
             Error::InflateError(v) => write!(f, "{}", v),
             Error::Utf8Error(v) => write!(f, "{}", v),
@@ -60,6 +65,9 @@ impl std::fmt::Display for Error {
                     "invalid meta magic: expected {:?}, got {:?}",
                     expected, actual
                 )
+            }
+            Error::MetaNestingTooDeep(max) => {
+                write!(f, "nested meta documents deeper than {} levels", max)
             }
             Error::MetaboardSubgraphClientError(v) => write!(f, "{}", v),
         }
@@ -140,6 +148,14 @@ mod tests {
             "invalid URL: not-a-url"
         );
         assert_eq!(Error::InflateError("boom".to_string()).to_string(), "boom");
+        assert_eq!(
+            Error::CorruptRecord("bytecode is missing".to_string()).to_string(),
+            "corrupt record: bytecode is missing"
+        );
+        assert_eq!(
+            Error::SubgraphError("boom".to_string()).to_string(),
+            "subgraph error: boom"
+        );
     }
 
     /// InvalidMetaMagic renders expected first, actual second.
@@ -149,6 +165,15 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "invalid meta magic: expected RainMetaDocumentV1, got OpMetaV1"
+        );
+    }
+
+    /// MetaNestingTooDeep renders the bound it carries.
+    #[test]
+    fn test_display_meta_nesting_too_deep_carries_the_bound() {
+        assert_eq!(
+            Error::MetaNestingTooDeep(32).to_string(),
+            "nested meta documents deeper than 32 levels"
         );
     }
 
