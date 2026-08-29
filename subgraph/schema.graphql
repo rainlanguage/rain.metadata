@@ -6,7 +6,7 @@ type MetaBoard @entity {
 }
 
 type MetaV1 @entity {
-    id: ID!
+    id: Bytes!
     transaction: Transaction!
 
     metaBoard: MetaBoard!
