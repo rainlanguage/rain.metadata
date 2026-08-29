@@ -13,10 +13,15 @@ export function handleMetaV1_2(event: MetaV1Event): void {
     metaBoard.save();
   }
 
-  let metaV1 = new MetaV1(metaBoard.nextMetaId.toString());
+  let metaV1 = new MetaV1(
+    Bytes.fromHexString(
+      metaBoard.id.toHexString() +
+        metaBoard.nextMetaId.toHexString().slice(2).padStart(64, "0"),
+    ),
+  );
   metaV1.transaction = event.transaction.hash;
 
-  metaV1.metaBoard = metaBoard.address;
+  metaV1.metaBoard = metaBoard.id;
 
   metaV1.sender = event.params.sender;
   metaV1.subject = event.params.subject;
