@@ -1,6 +1,6 @@
 [package]
 name = "rain-metadata-bindings"
-version = "0.1.9"
+version = "0.1.17"
 edition = "2021"
 description = "Solidity bindings for rain metadata."
 license = "LicenseRef-DCL-1.0"
@@ -8,3 +8,9 @@ repository = "https://github.com/rainlanguage/rain.metadata"
 
 [dependencies]
 alloy = { version = "1.0.9", features = ["rand", "json", "json-abi"] }
+
+# Reading the committed artifacts back in tests/committed_abi.rs.
+# `alloy_json_abi::ContractObject` deserializes them, but its own
+# `from_json` needs a feature the `alloy` meta crate does not expose.
+[dev-dependencies]
+serde_json = "1.0.108"
