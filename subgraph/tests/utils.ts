@@ -2,9 +2,9 @@ import { MetaV1_2 } from "../generated/metaboard0/MetaBoard";
 import { ethereum, Address, BigInt, Bytes } from "@graphprotocol/graph-ts";
 import { newMockEvent } from "matchstick-as";
 import { handleMetaV1_2 } from "../src/metaBoard";
-import { CONTRACT_ADDRESS } from "./address";
 
 export function createNewMetaV1Event(
+  board: Address,
   sender: string,
   subject: Bytes,
   meta: Bytes,
@@ -15,7 +15,7 @@ export function createNewMetaV1Event(
   // Create a mock ethereum.Event instance
   const metaV1Event = changetype<MetaV1_2>(newMockEvent());
   metaV1Event.parameters = new Array();
-  metaV1Event.address = CONTRACT_ADDRESS;
+  metaV1Event.address = board;
 
   // Set up transaction data
   metaV1Event.transaction.hash = Bytes.fromHexString(transactionHash);
@@ -48,4 +48,4 @@ export function handleNewMetaV1Events(events: MetaV1_2[]): void {
   });
 }
 
-export { CONTRACT_ADDRESS } from "./address";
+export { CONTRACT_ADDRESS, OTHER_CONTRACT_ADDRESS } from "./address";
