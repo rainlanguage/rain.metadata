@@ -359,9 +359,13 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                             3 => content_encoding = Some(map.next_value()?),
                             4 => content_language = Some(map.next_value()?),
                             OA_SCHEMA_KEY => schema = Some(map.next_value()?),
-                            other => Err(serde::de::Error::custom(format!(
-                                "found unexpected key in the map: {other}"
-                            )))?,
+                            // the map structure exists so later conventions can
+                            // add indexes that older tooling adopts "or not" in
+                            // a backwards compatible way, so an index this
+                            // version does not know is skipped, not an error
+                            _ => {
+                                map.next_value::<serde::de::IgnoredAny>()?;
+                            }
                         };
                         true
                     }
@@ -1486,10 +1490,31 @@ mod tests {
         Ok(())
     }
 
-    /// Any magic number other than OaSchema used as an extra map key must
-    /// still be rejected on decode
+    /// A map key this version has no meaning for is a future index, so it is
+    /// skipped and the rest of the map decodes
     #[test]
-    fn non_oa_schema_extra_map_key_errors() -> Result<(), Error> {
+    fn unknown_map_key_index_is_ignored() -> Result<(), Error> {
+        let mut bytes: Vec<u8> = vec![
+            // cbor map with 3 keys
+            0xa3, // key 0, bytes payload of length 0
+            0x00, 0x40, // key 1, unsigned integer magic number
+            0x01, 0x1b,
+        ];
+        bytes.extend_from_slice(&KnownMagic::DotrainSourceV1.to_prefix_bytes());
+        // key 5, a plausible future index, unsigned integer value 7
+        bytes.extend_from_slice(&[0x05, 0x07]);
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0], plain_item(KnownMagic::DotrainSourceV1, vec![]));
+
+        Ok(())
+    }
+
+    /// A magic number other than OaSchema used as an extra map key is a future
+    /// magic keyed entry, skipped the same way, and leaves schema unset
+    #[test]
+    fn non_oa_schema_extra_map_key_is_ignored() -> Result<(), Error> {
         // build a map identical to a valid 2 key meta map but with an extra
         // OaHashList magic key carrying a text string
         let mut bytes: Vec<u8> = vec![
@@ -1505,10 +1530,83 @@ mod tests {
         // text string value of length 2
         bytes.extend_from_slice(&[0x62, 0x68, 0x69]);
 
-        let result = RainMetaDocumentV1Item::cbor_decode(&bytes);
-        assert!(matches!(result, Err(Error::SerdeCborError(_))));
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        assert_eq!(decoded.len(), 1);
+        let expected = plain_item(KnownMagic::OaStructure, vec![0xff]);
+        assert_eq!(decoded[0], expected);
+        assert_eq!(decoded[0].schema, None);
 
         Ok(())
+    }
+
+    /// The whole value of an unknown key is consumed however nested, so the
+    /// item that follows it in the sequence still decodes
+    #[test]
+    fn unknown_map_key_consumes_its_whole_value() -> Result<(), Error> {
+        let mut bytes: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        // key 5, value {42: [1, 2]}
+        bytes.extend_from_slice(&[0x05, 0xa1, 0x18, 0x2a, 0x82, 0x01, 0x02]);
+        bytes.extend_from_slice(&handwritten_map());
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        assert_eq!(decoded.len(), 2);
+        let expected = plain_item(KnownMagic::DotrainV1, vec![0x01]);
+        assert_eq!(decoded[0], expected);
+        assert_eq!(decoded[1], expected);
+
+        Ok(())
+    }
+
+    /// An ignored key is not re-encoded, so the item's hash is the hash of what
+    /// this version can represent and not of the bytes it decoded
+    #[test]
+    fn ignored_map_key_is_absent_from_the_reencoding() -> Result<(), Error> {
+        let mut bytes: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        bytes.extend_from_slice(&[0x05, 0x07]);
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        assert_eq!(decoded[0].cbor_encode()?, handwritten_map());
+        assert_eq!(decoded[0].hash(false)?, keccak256(handwritten_map()).0);
+        assert_ne!(decoded[0].hash(false)?, keccak256(&bytes).0);
+
+        Ok(())
+    }
+
+    /// Only integer keys are indexes. The spec rules out the HTTP header names
+    /// as keys, so a key that is not an unsigned integer is not a future index
+    /// to skip over
+    #[test]
+    fn non_integer_map_key_errors() {
+        let mut text_key: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        text_key.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        // key "5", unsigned integer value 7
+        text_key.extend_from_slice(&[0x61, 0x35, 0x07]);
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&text_key),
+            Err(Error::SerdeCborError(_))
+        ));
+
+        let mut negative_key: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        negative_key.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        // key -1, unsigned integer value 7
+        negative_key.extend_from_slice(&[0x20, 0x07]);
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&negative_key),
+            Err(Error::SerdeCborError(_))
+        ));
+    }
+
+    /// An unknown key is skipped, never counted as one of the mandatory keys
+    #[test]
+    fn unknown_map_key_does_not_stand_in_for_a_mandatory_key() {
+        let mut bytes: Vec<u8> = vec![0xa2, 0x05, 0x07, 0x01, 0x1b];
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::SerdeCborError(_))
+        ));
     }
 
     fn plain_item(magic: KnownMagic, payload: Vec<u8>) -> RainMetaDocumentV1Item {
