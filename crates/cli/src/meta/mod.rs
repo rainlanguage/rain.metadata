@@ -1609,14 +1609,15 @@ mod tests {
         ));
     }
 
-    /// An unknown key is skipped, never counted as one of the mandatory keys
+    /// An unknown key is skipped, never counted as one of the mandatory keys,
+    /// so this item is dropped for omitting key 0 and no item is left to return
     #[test]
     fn unknown_map_key_does_not_stand_in_for_a_mandatory_key() {
         let mut bytes: Vec<u8> = vec![0xa2, 0x05, 0x07, 0x01, 0x1b];
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
         assert!(matches!(
             RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::SerdeCborError(_))
+            Err(Error::CorruptMeta)
         ));
     }
 
