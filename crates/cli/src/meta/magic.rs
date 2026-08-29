@@ -14,7 +14,8 @@
 #[serde(rename_all = "kebab-case")]
 #[repr(u64)]
 pub enum KnownMagic {
-    /// Prefixes every rain meta document
+    /// Prefixes every rain meta document, and as an item's own magic marks a
+    /// payload that is itself a complete rain meta document
     RainMetaDocumentV1 = 0xff0a89c674ee7874,
 
     /// Ops meta v1

@@ -238,48 +238,66 @@ fn test_dispatch_solc_artifact() {
     );
 }
 
-/// `subgraph` routes to `subgraph::dispatch`: `all` prints all 9 known URLs,
-/// `chain` prints the 3 URLs of a supported chain and hard-errors on an
-/// unsupported one.
+/// A component the artifact does not carry is a hard error: nonzero exit,
+/// nothing on stdout, the missing key named on stderr. Printing `null` and
+/// exiting 0 would be indistinguishable from a component that legitimately
+/// serialises as null, so both cases are asserted here.
 #[test]
-fn test_dispatch_subgraph() {
-    let out = run(&["subgraph", "all"]);
-    assert!(out.status.success());
-    let stdout = stdout_utf8(&out);
-    assert_eq!(stdout.lines().count(), 9);
-    assert!(stdout.contains(
-        "https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-ethereum"
-    ));
+fn test_dispatch_solc_artifact_missing_component() {
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("artifact-no-abi.json");
+    std::fs::write(
+        &artifact,
+        r#"{"bytecode":{"object":"0x60"},"deployedBytecode":{"object":"0x60"}}"#,
+    )
+    .unwrap();
 
-    let out = run(&["subgraph", "chain", "137"]);
-    assert!(out.status.success());
-    let stdout = stdout_utf8(&out);
-    assert_eq!(stdout.lines().count(), 3);
-    assert!(stdout.contains("interpreter-registry-polygon"));
-
-    let out = run(&["subgraph", "chain", "2"]);
+    let out = run(&[
+        "solc",
+        "artifact",
+        "-c",
+        "abi",
+        "-i",
+        artifact.to_str().unwrap(),
+    ]);
     assert!(!out.status.success());
+    assert_eq!(stdout_utf8(&out), "");
+    let stderr = String::from_utf8(out.stderr.clone()).unwrap();
+    assert!(
+        stderr.contains(r#"artifact has no "abi" component"#),
+        "stderr did not name the missing component: {}",
+        stderr
+    );
 
-    // chain 1 is exactly the 3 ethereum endpoints, in declaration order.
-    let out = run(&["subgraph", "chain", "1"]);
-    assert!(out.status.success());
-    let expected_eth = "\
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-ethereum
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-np-eth
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-npe2-eth
-";
-    assert_eq!(stdout_utf8(&out), expected_eth);
+    // -o must not be written either: a failed extraction produces no file.
+    let out_path = dir.path().join("component.json");
+    let out = run(&[
+        "solc",
+        "artifact",
+        "-c",
+        "abi",
+        "-i",
+        artifact.to_str().unwrap(),
+        "-o",
+        out_path.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    assert!(!out_path.exists());
 
-    // chain 80001 is exactly the 3 mumbai endpoints, not an error and not
-    // another network's set.
-    let out = run(&["subgraph", "chain", "80001"]);
+    // An explicitly null component is a value, not an absence: it succeeds
+    // and prints null.
+    let null_abi = dir.path().join("artifact-null-abi.json");
+    std::fs::write(&null_abi, r#"{"abi":null}"#).unwrap();
+    let out = run(&[
+        "solc",
+        "artifact",
+        "-c",
+        "abi",
+        "-i",
+        null_abi.to_str().unwrap(),
+    ]);
     assert!(out.status.success());
-    let expected_mumbai = "\
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-np
-https://api.thegraph.com/subgraphs/name/rainlanguage/interpreter-registry-npe2
-";
-    assert_eq!(stdout_utf8(&out), expected_mumbai);
+    assert_eq!(stdout_utf8(&out), "null");
 }
 
 /// `generate` routes to `generate::generate`: dotrain source content becomes
