@@ -8,3 +8,4 @@ remappings.txt
 .pre-commit-config.yaml
 .claude
 target
+metaboard.graphql.generated
