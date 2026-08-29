@@ -636,7 +636,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_abi_decode_validate_rejects_words_outside_the_symbol_grammar() {
-        for word in ["A", "a0A", "0a", "-a", "_", "a b", "a.b"] {
+        for word in ["A", "a0A", "0a", "-a", "a-", "a--b", "_", "a b", "a.b"] {
             let encoded = AuthoringMetasV2Sol::abi_encode(&vec![symbol_sol(word, "")]);
 
             assert!(
@@ -657,7 +657,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_abi_decode_validate_accepts_the_full_symbol_grammar() {
-        for word in ["a", "a-", "a-a", "a0", "abc-def-0"] {
+        for word in ["a", "a-a", "a0", "abc-def-0"] {
             let encoded = AuthoringMetasV2Sol::abi_encode(&vec![symbol_sol(word, "")]);
             assert!(
                 AuthoringMetaV2::abi_decode_validate(&encoded).is_ok(),
