@@ -1922,9 +1922,8 @@ mod tests {
             for repeated in [value, other_value] {
                 let mut duplicated = entries.clone();
                 duplicated.push((key.clone(), repeated.clone()));
-                let error =
-                    RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&duplicated))
-                        .unwrap_err();
+                let error = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&duplicated))
+                    .unwrap_err();
                 assert!(
                     matches!(error, Error::SerdeCborError(_)),
                     "{key:?} {error:?}"
