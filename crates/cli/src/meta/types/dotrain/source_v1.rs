@@ -42,11 +42,18 @@ impl DotrainSourceV1 {
     ///
     /// A metaboard enforces the magic number and nothing else, so anyone may
     /// emit bytes under any subject that carry the prefix and are otherwise
-    /// junk, and per `IMetaBoardV1_2` discarding those is this side's job. A
-    /// row that does not decode, and an item whose payload is not the utf-8 a
-    /// dotrain source is, are therefore skipped rather than failing the
-    /// lookup: one such emission would otherwise deny every source under the
-    /// subject to every caller. Errors reaching the metaboard still surface.
+    /// junk, and per `IMetaBoardV1_2` discarding those is this side's job.
+    /// The unit discarded is one emission, because one emission is one
+    /// emitter: a row that does not decode is dropped, and so is a row that
+    /// decodes but puts something under the dotrain magic that is not a
+    /// source — taking the readable half of that row would accept selected
+    /// data from an emitter who just sent junk under the magic being read.
+    ///
+    /// Strictness stops at the emission for the same reason. Dropping a row
+    /// costs only whoever emitted it, and they can emit again; failing the
+    /// call would let any one emitter deny every source under the subject to
+    /// every caller, permanently, on an append-only board. Errors reaching
+    /// the metaboard still surface.
     ///
     /// The query is not paginated, so what is scanned is the subgraph's first
     /// page of metas under the subject in that order, currently 100 rows.
@@ -68,13 +75,13 @@ impl DotrainSourceV1 {
             let Ok(items) = RainMetaDocumentV1Item::cbor_decode(&meta_bytes) else {
                 continue;
             };
-            for item in items {
-                if item.magic != KnownMagic::DotrainSourceV1 {
-                    continue;
-                }
-                if let Ok(source) = DotrainSourceV1::try_from(item) {
-                    sources.push(source);
-                }
+            let row: Result<Vec<Self>, Error> = items
+                .into_iter()
+                .filter(|item| item.magic == KnownMagic::DotrainSourceV1)
+                .map(DotrainSourceV1::try_from)
+                .collect();
+            if let Ok(row) = row {
+                sources.extend(row);
             }
         }
         Ok(sources)
@@ -644,11 +651,10 @@ mod tests {
         use httpmock::prelude::*;
         let subject = [0x42; 32];
 
-        // An item that decodes and claims the dotrain magic but whose payload
-        // is not a source is skipped, not returned and not fatal. Both places
-        // it can sit, and both orders in each: in its own row beside a row
-        // carrying a real source, and beside a real source inside one row -
-        // the row loop and the item loop skip independently.
+        // An emission putting something under the dotrain magic that is not a
+        // source is dropped whole, and dropping it does not reach the rows
+        // around it. Both orders: the source survives whether the unreadable
+        // emission sorts before or after it.
         for rows in [
             vec![
                 meta_of(vec![source_item("legit")]),
@@ -658,8 +664,6 @@ mod tests {
                 meta_of(vec![non_utf8_dotrain_item()]),
                 meta_of(vec![source_item("legit")]),
             ],
-            vec![meta_of(vec![source_item("legit"), non_utf8_dotrain_item()])],
-            vec![meta_of(vec![non_utf8_dotrain_item(), source_item("legit")])],
         ] {
             let server = MockServer::start();
             let mock_url = Url::parse(&server.url("/")).unwrap();
@@ -679,6 +683,69 @@ mod tests {
             );
             mock.assert();
         }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_takes_nothing_from_an_emission_it_cannot_read() {
+        use httpmock::prelude::*;
+        let subject = [0x42; 32];
+
+        // One emission is one emitter. An emitter that puts something under
+        // the dotrain magic that is not a source does not get the rest of
+        // that emission read: no item of it is returned, whichever side of
+        // the unreadable one the readable one sits. Only that emitter loses
+        // anything, so there is no reason to keep half of what they sent.
+        for rows in [
+            vec![meta_of(vec![source_item("legit"), non_utf8_dotrain_item()])],
+            vec![meta_of(vec![non_utf8_dotrain_item(), source_item("legit")])],
+        ] {
+            let server = MockServer::start();
+            let mock_url = Url::parse(&server.url("/")).unwrap();
+            let mock = server.mock(|when, then| {
+                when.method(POST).path("/").body_contains("subject");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body(metas_response(&rows, subject));
+            });
+
+            assert!(DotrainSourceV1::fetch_by_subject(subject, mock_url)
+                .await
+                .unwrap()
+                .is_empty());
+            mock.assert();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_unreadable_emission_does_not_reach_other_rows() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+        let subject = [0x42; 32];
+
+        // The row it is dropped from is the only row it costs.
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("subject");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(metas_response(
+                    &[
+                        meta_of(vec![source_item("first")]),
+                        meta_of(vec![source_item("dropped"), non_utf8_dotrain_item()]),
+                        meta_of(vec![source_item("last")]),
+                    ],
+                    subject,
+                ));
+        });
+
+        let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap();
+        assert_eq!(
+            sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            vec!["first", "last"]
+        );
+        mock.assert();
     }
 
     #[tokio::test]
