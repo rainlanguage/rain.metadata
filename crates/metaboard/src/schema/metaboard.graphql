@@ -1,3 +1,21 @@
+"""
+creates a virtual field on the entity that may be queried but cannot be set manually through the mappings API.
+"""
+directive @derivedFrom(field: String!) on FIELD_DEFINITION
+
+"""
+Marks the GraphQL type as indexable entity.  Each type that should be an entity is required to be annotated with this directive.
+"""
+directive @entity on OBJECT
+
+"""Defined a Subgraph ID for an object type"""
+directive @subgraphId(id: String!) on OBJECT
+
+enum Aggregation_interval {
+  day
+  hour
+}
+
 scalar BigDecimal
 
 scalar BigInt
@@ -21,341 +39,466 @@ scalar Bytes
 scalar Int8
 
 type MetaBoard {
-  id: Bytes!
   address: Bytes!
-  metas(
-    skip: Int = 0
-    first: Int = 100
-    orderBy: MetaV1_orderBy
-    orderDirection: OrderDirection
-    where: MetaV1_filter
-  ): [MetaV1!]
+  id: Bytes!
+  metas(first: Int = 100, orderBy: MetaV1_orderBy, orderDirection: OrderDirection, skip: Int = 0, where: MetaV1_filter): [MetaV1!]
   nextMetaId: BigInt!
 }
 
 input MetaBoard_filter {
-  id: Bytes
-  id_not: Bytes
-  id_gt: Bytes
-  id_lt: Bytes
-  id_gte: Bytes
-  id_lte: Bytes
-  id_in: [Bytes!]
-  id_not_in: [Bytes!]
-  id_contains: Bytes
-  id_not_contains: Bytes
+  """Filter for the block changed event."""
+  _change_block: BlockChangedFilter
   address: Bytes
-  address_not: Bytes
-  address_gt: Bytes
-  address_lt: Bytes
-  address_gte: Bytes
-  address_lte: Bytes
-  address_in: [Bytes!]
-  address_not_in: [Bytes!]
   address_contains: Bytes
+  address_gt: Bytes
+  address_gte: Bytes
+  address_in: [Bytes!]
+  address_lt: Bytes
+  address_lte: Bytes
+  address_not: Bytes
   address_not_contains: Bytes
+  address_not_in: [Bytes!]
+  and: [MetaBoard_filter]
+  id: Bytes
+  id_contains: Bytes
+  id_gt: Bytes
+  id_gte: Bytes
+  id_in: [Bytes!]
+  id_lt: Bytes
+  id_lte: Bytes
+  id_not: Bytes
+  id_not_contains: Bytes
+  id_not_in: [Bytes!]
   metas_: MetaV1_filter
   nextMetaId: BigInt
-  nextMetaId_not: BigInt
   nextMetaId_gt: BigInt
-  nextMetaId_lt: BigInt
   nextMetaId_gte: BigInt
-  nextMetaId_lte: BigInt
   nextMetaId_in: [BigInt!]
+  nextMetaId_lt: BigInt
+  nextMetaId_lte: BigInt
+  nextMetaId_not: BigInt
   nextMetaId_not_in: [BigInt!]
-  """
-  Filter for the block changed event.
-  """
-  _change_block: BlockChangedFilter
-  and: [MetaBoard_filter]
   or: [MetaBoard_filter]
 }
 
 enum MetaBoard_orderBy {
-  id
   address
+  id
   metas
   nextMetaId
 }
 
 type MetaV1 {
-  id: ID!
-  transaction: Transaction!
+  id: Bytes!
+  meta: Bytes!
   metaBoard: MetaBoard!
+  metaHash: Bytes!
   sender: Bytes!
   subject: Bytes!
-  metaHash: Bytes!
-  meta: Bytes!
-}
-
-type Transaction {
-  id: Bytes!
-  timestamp: BigInt!
-  blockNumber: BigInt!
-  from: Bytes!
+  transaction: Transaction!
 }
 
 input MetaV1_filter {
-  id: ID
-  id_not: ID
-  id_gt: ID
-  id_lt: ID
-  id_gte: ID
-  id_lte: ID
-  id_in: [ID!]
-  id_not_in: [ID!]
-  metaBoard: String
-  metaBoard_not: String
-  metaBoard_gt: String
-  metaBoard_lt: String
-  metaBoard_gte: String
-  metaBoard_lte: String
-  metaBoard_in: [String!]
-  metaBoard_not_in: [String!]
-  metaBoard_contains: String
-  metaBoard_contains_nocase: String
-  metaBoard_not_contains: String
-  metaBoard_not_contains_nocase: String
-  metaBoard_starts_with: String
-  metaBoard_starts_with_nocase: String
-  metaBoard_not_starts_with: String
-  metaBoard_not_starts_with_nocase: String
-  metaBoard_ends_with: String
-  metaBoard_ends_with_nocase: String
-  metaBoard_not_ends_with: String
-  metaBoard_not_ends_with_nocase: String
-  metaBoard_: MetaBoard_filter
-  sender: Bytes
-  sender_not: Bytes
-  sender_gt: Bytes
-  sender_lt: Bytes
-  sender_gte: Bytes
-  sender_lte: Bytes
-  sender_in: [Bytes!]
-  sender_not_in: [Bytes!]
-  sender_contains: Bytes
-  sender_not_contains: Bytes
-  subject: Bytes
-  subject_not: Bytes
-  subject_gt: Bytes
-  subject_lt: Bytes
-  subject_gte: Bytes
-  subject_lte: Bytes
-  subject_in: [Bytes!]
-  subject_not_in: [Bytes!]
-  subject_contains: Bytes
-  subject_not_contains: Bytes
-  metaHash: Bytes
-  metaHash_not: Bytes
-  metaHash_gt: Bytes
-  metaHash_lt: Bytes
-  metaHash_gte: Bytes
-  metaHash_lte: Bytes
-  metaHash_in: [Bytes!]
-  metaHash_not_in: [Bytes!]
-  metaHash_contains: Bytes
-  metaHash_not_contains: Bytes
-  meta: Bytes
-  meta_not: Bytes
-  meta_gt: Bytes
-  meta_lt: Bytes
-  meta_gte: Bytes
-  meta_lte: Bytes
-  meta_in: [Bytes!]
-  meta_not_in: [Bytes!]
-  meta_contains: Bytes
-  meta_not_contains: Bytes
-  """
-  Filter for the block changed event.
-  """
+  """Filter for the block changed event."""
   _change_block: BlockChangedFilter
   and: [MetaV1_filter]
+  id: Bytes
+  id_contains: Bytes
+  id_gt: Bytes
+  id_gte: Bytes
+  id_in: [Bytes!]
+  id_lt: Bytes
+  id_lte: Bytes
+  id_not: Bytes
+  id_not_contains: Bytes
+  id_not_in: [Bytes!]
+  meta: Bytes
+  metaBoard: String
+  metaBoard_: MetaBoard_filter
+  metaBoard_contains: String
+  metaBoard_contains_nocase: String
+  metaBoard_ends_with: String
+  metaBoard_ends_with_nocase: String
+  metaBoard_gt: String
+  metaBoard_gte: String
+  metaBoard_in: [String!]
+  metaBoard_lt: String
+  metaBoard_lte: String
+  metaBoard_not: String
+  metaBoard_not_contains: String
+  metaBoard_not_contains_nocase: String
+  metaBoard_not_ends_with: String
+  metaBoard_not_ends_with_nocase: String
+  metaBoard_not_in: [String!]
+  metaBoard_not_starts_with: String
+  metaBoard_not_starts_with_nocase: String
+  metaBoard_starts_with: String
+  metaBoard_starts_with_nocase: String
+  metaHash: Bytes
+  metaHash_contains: Bytes
+  metaHash_gt: Bytes
+  metaHash_gte: Bytes
+  metaHash_in: [Bytes!]
+  metaHash_lt: Bytes
+  metaHash_lte: Bytes
+  metaHash_not: Bytes
+  metaHash_not_contains: Bytes
+  metaHash_not_in: [Bytes!]
+  meta_contains: Bytes
+  meta_gt: Bytes
+  meta_gte: Bytes
+  meta_in: [Bytes!]
+  meta_lt: Bytes
+  meta_lte: Bytes
+  meta_not: Bytes
+  meta_not_contains: Bytes
+  meta_not_in: [Bytes!]
   or: [MetaV1_filter]
+  sender: Bytes
+  sender_contains: Bytes
+  sender_gt: Bytes
+  sender_gte: Bytes
+  sender_in: [Bytes!]
+  sender_lt: Bytes
+  sender_lte: Bytes
+  sender_not: Bytes
+  sender_not_contains: Bytes
+  sender_not_in: [Bytes!]
+  subject: Bytes
+  subject_contains: Bytes
+  subject_gt: Bytes
+  subject_gte: Bytes
+  subject_in: [Bytes!]
+  subject_lt: Bytes
+  subject_lte: Bytes
+  subject_not: Bytes
+  subject_not_contains: Bytes
+  subject_not_in: [Bytes!]
+  transaction: String
+  transaction_: Transaction_filter
+  transaction_contains: String
+  transaction_contains_nocase: String
+  transaction_ends_with: String
+  transaction_ends_with_nocase: String
+  transaction_gt: String
+  transaction_gte: String
+  transaction_in: [String!]
+  transaction_lt: String
+  transaction_lte: String
+  transaction_not: String
+  transaction_not_contains: String
+  transaction_not_contains_nocase: String
+  transaction_not_ends_with: String
+  transaction_not_ends_with_nocase: String
+  transaction_not_in: [String!]
+  transaction_not_starts_with: String
+  transaction_not_starts_with_nocase: String
+  transaction_starts_with: String
+  transaction_starts_with_nocase: String
 }
 
 enum MetaV1_orderBy {
   id
+  meta
   metaBoard
-  metaBoard__id
   metaBoard__address
+  metaBoard__id
   metaBoard__nextMetaId
+  metaHash
   sender
   subject
-  metaHash
-  meta
+  transaction
+  transaction__blockNumber
+  transaction__from
+  transaction__id
+  transaction__timestamp
 }
 
-"""
-Defines the order direction, either ascending or descending
-"""
+"""Defines the order direction, either ascending or descending"""
 enum OrderDirection {
   asc
   desc
 }
 
 type Query {
+  """Access to subgraph metadata"""
+  _meta(block: Block_height): _Meta_
   metaBoard(
-    id: ID!
     """
     The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
     """
     block: Block_height
+    id: ID!
+
     """
     Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
     """
     subgraphError: _SubgraphErrorPolicy_! = deny
   ): MetaBoard
   metaBoards(
-    skip: Int = 0
-    first: Int = 100
-    orderBy: MetaBoard_orderBy
-    orderDirection: OrderDirection
-    where: MetaBoard_filter
     """
     The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
     """
     block: Block_height
+    first: Int = 100
+    orderBy: MetaBoard_orderBy
+    orderDirection: OrderDirection
+    skip: Int = 0
+
     """
     Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
     """
     subgraphError: _SubgraphErrorPolicy_! = deny
+    where: MetaBoard_filter
   ): [MetaBoard!]!
   metaV1(
-    id: ID!
     """
     The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
     """
     block: Block_height
+    id: ID!
+
     """
     Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
     """
     subgraphError: _SubgraphErrorPolicy_! = deny
   ): MetaV1
   metaV1S(
-    skip: Int = 0
-    first: Int = 100
-    orderBy: MetaV1_orderBy
-    orderDirection: OrderDirection
-    where: MetaV1_filter
     """
     The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
     """
     block: Block_height
+    first: Int = 100
+    orderBy: MetaV1_orderBy
+    orderDirection: OrderDirection
+    skip: Int = 0
+
     """
     Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
     """
     subgraphError: _SubgraphErrorPolicy_! = deny
+    where: MetaV1_filter
   ): [MetaV1!]!
-  """
-  Access to subgraph metadata
-  """
-  _meta(block: Block_height): _Meta_
+  transaction(
+    """
+    The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
+    """
+    block: Block_height
+    id: ID!
+
+    """
+    Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
+    """
+    subgraphError: _SubgraphErrorPolicy_! = deny
+  ): Transaction
+  transactions(
+    """
+    The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
+    """
+    block: Block_height
+    first: Int = 100
+    orderBy: Transaction_orderBy
+    orderDirection: OrderDirection
+    skip: Int = 0
+
+    """
+    Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
+    """
+    subgraphError: _SubgraphErrorPolicy_! = deny
+    where: Transaction_filter
+  ): [Transaction!]!
 }
 
 type Subscription {
+  """Access to subgraph metadata"""
+  _meta(block: Block_height): _Meta_
   metaBoard(
-    id: ID!
     """
     The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
     """
     block: Block_height
+    id: ID!
+
     """
     Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
     """
     subgraphError: _SubgraphErrorPolicy_! = deny
   ): MetaBoard
   metaBoards(
-    skip: Int = 0
-    first: Int = 100
-    orderBy: MetaBoard_orderBy
-    orderDirection: OrderDirection
-    where: MetaBoard_filter
     """
     The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
     """
     block: Block_height
+    first: Int = 100
+    orderBy: MetaBoard_orderBy
+    orderDirection: OrderDirection
+    skip: Int = 0
+
     """
     Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
     """
     subgraphError: _SubgraphErrorPolicy_! = deny
+    where: MetaBoard_filter
   ): [MetaBoard!]!
   metaV1(
-    id: ID!
     """
     The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
     """
     block: Block_height
+    id: ID!
+
     """
     Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
     """
     subgraphError: _SubgraphErrorPolicy_! = deny
   ): MetaV1
   metaV1S(
-    skip: Int = 0
-    first: Int = 100
-    orderBy: MetaV1_orderBy
-    orderDirection: OrderDirection
-    where: MetaV1_filter
     """
     The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
     """
     block: Block_height
+    first: Int = 100
+    orderBy: MetaV1_orderBy
+    orderDirection: OrderDirection
+    skip: Int = 0
+
     """
     Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
     """
     subgraphError: _SubgraphErrorPolicy_! = deny
+    where: MetaV1_filter
   ): [MetaV1!]!
-  """
-  Access to subgraph metadata
-  """
-  _meta(block: Block_height): _Meta_
+  transaction(
+    """
+    The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
+    """
+    block: Block_height
+    id: ID!
+
+    """
+    Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
+    """
+    subgraphError: _SubgraphErrorPolicy_! = deny
+  ): Transaction
+  transactions(
+    """
+    The block at which the query should be executed. Can either be a `{ hash: Bytes }` value containing a block hash, a `{ number: Int }` containing the block number, or a `{ number_gte: Int }` containing the minimum block number. In the case of `number_gte`, the query will be executed on the latest block only if the subgraph has progressed to or past the minimum block number. Defaults to the latest block when omitted.
+    """
+    block: Block_height
+    first: Int = 100
+    orderBy: Transaction_orderBy
+    orderDirection: OrderDirection
+    skip: Int = 0
+
+    """
+    Set to `allow` to receive data even if the subgraph has skipped over errors while syncing.
+    """
+    subgraphError: _SubgraphErrorPolicy_! = deny
+    where: Transaction_filter
+  ): [Transaction!]!
+}
+
+"""
+A string representation of microseconds UNIX timestamp (16 digits)
+
+"""
+scalar Timestamp
+
+type Transaction {
+  blockNumber: BigInt!
+  from: Bytes!
+  id: Bytes!
+  timestamp: BigInt!
+}
+
+input Transaction_filter {
+  """Filter for the block changed event."""
+  _change_block: BlockChangedFilter
+  and: [Transaction_filter]
+  blockNumber: BigInt
+  blockNumber_gt: BigInt
+  blockNumber_gte: BigInt
+  blockNumber_in: [BigInt!]
+  blockNumber_lt: BigInt
+  blockNumber_lte: BigInt
+  blockNumber_not: BigInt
+  blockNumber_not_in: [BigInt!]
+  from: Bytes
+  from_contains: Bytes
+  from_gt: Bytes
+  from_gte: Bytes
+  from_in: [Bytes!]
+  from_lt: Bytes
+  from_lte: Bytes
+  from_not: Bytes
+  from_not_contains: Bytes
+  from_not_in: [Bytes!]
+  id: Bytes
+  id_contains: Bytes
+  id_gt: Bytes
+  id_gte: Bytes
+  id_in: [Bytes!]
+  id_lt: Bytes
+  id_lte: Bytes
+  id_not: Bytes
+  id_not_contains: Bytes
+  id_not_in: [Bytes!]
+  or: [Transaction_filter]
+  timestamp: BigInt
+  timestamp_gt: BigInt
+  timestamp_gte: BigInt
+  timestamp_in: [BigInt!]
+  timestamp_lt: BigInt
+  timestamp_lte: BigInt
+  timestamp_not: BigInt
+  timestamp_not_in: [BigInt!]
+}
+
+enum Transaction_orderBy {
+  blockNumber
+  from
+  id
+  timestamp
 }
 
 type _Block_ {
-  """
-  The hash of the block
-  """
+  """The hash of the block"""
   hash: Bytes
-  """
-  The block number
-  """
+
+  """The block number"""
   number: Int!
-  """
-  Integer representation of the timestamp stored in blocks for the chain
-  """
+
+  """The hash of the parent block"""
+  parentHash: Bytes
+
+  """Integer representation of the timestamp stored in blocks for the chain"""
   timestamp: Int
 }
 
-"""
-The type for the top-level _meta field
-"""
+"""The type for the top-level _meta field"""
 type _Meta_ {
   """
   Information about a specific subgraph block. The hash of the block
   will be null if the _meta field has a block constraint that asks for
   a block number. It will be filled if the _meta field has no block constraint
   and therefore asks for the latest  block
-
+  
   """
   block: _Block_!
-  """
-  The deployment ID
-  """
+
+  """The deployment ID"""
   deployment: String!
-  """
-  If `true`, the subgraph encountered indexing errors at some past block
-  """
+
+  """If `true`, the subgraph encountered indexing errors at some past block"""
   hasIndexingErrors: Boolean!
 }
 
 enum _SubgraphErrorPolicy_ {
-  """
-  Data will be returned even if the subgraph has indexing errors
-  """
+  """Data will be returned even if the subgraph has indexing errors"""
   allow
+
   """
   If the subgraph has indexing errors, data will be omitted. The default.
   """
   deny
 }
-
