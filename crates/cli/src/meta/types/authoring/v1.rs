@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use alloy::sol_types::SolType;
 use alloy::sol;
 use serde::{Serialize, Deserialize};
@@ -124,10 +125,9 @@ impl Validate for AuthoringMeta {
     fn validate(&self) -> Result<(), ValidationErrors> {
         for (index, item) in self.0.iter().enumerate() {
             if let Err(mut e) = item.validate() {
-                e.add(
-                    Box::leak(format!("at index {}", index).into_boxed_str()),
-                    ValidationError::new(""),
-                );
+                let mut annotation = ValidationError::new("index");
+                annotation.add_param(Cow::from("index"), &index);
+                e.add("at index", annotation);
                 return Err(e);
             }
         }
@@ -170,6 +170,8 @@ impl TryFrom<RainMetaDocumentV1Item> for AuthoringMeta {
 mod tests {
     use alloy::sol_types::SolType;
     use alloy::sol;
+    use serde_json::json;
+    use validator::ValidationErrorsKind;
     use super::{AuthoringMeta, AuthoringMetaItem};
     use crate::{meta::str_to_bytes32, error::Error};
 
@@ -286,26 +288,46 @@ mod tests {
 
     #[test]
     fn test_array_validate_rejects_and_annotates_offending_index() {
-        let am = AuthoringMeta(vec![
-            AuthoringMetaItem {
-                word: "stack".to_string(),
-                operand_parser_offset: 0u8,
-                description: "fine description.".to_string(),
-            },
-            AuthoringMetaItem {
-                word: "Bad Word".to_string(),
-                operand_parser_offset: 0u8,
-                description: "fine description.".to_string(),
-            },
-        ]);
-        match am.abi_encode_validate() {
-            Err(Error::ValidationErrors(v)) => {
-                let errors = v.errors();
-                assert!(errors.contains_key("at index 1"));
-                assert!(!errors.contains_key("at index 0"));
-            }
-            other => panic!("expected ValidationErrors, got {:?}", other.err()),
-        }
+        let good = AuthoringMetaItem {
+            word: "stack".to_string(),
+            operand_parser_offset: 0u8,
+            description: "fine description.".to_string(),
+        };
+        let bad = AuthoringMetaItem {
+            word: "Bad Word".to_string(),
+            operand_parser_offset: 0u8,
+            description: "fine description.".to_string(),
+        };
+        let annotated_index =
+            |items: Vec<AuthoringMetaItem>| match AuthoringMeta(items).abi_encode_validate() {
+                Err(Error::ValidationErrors(v)) => {
+                    let errors = v.errors();
+                    // the offending item's own errors, plus exactly one annotation
+                    // under a key that does not vary with the index
+                    assert_eq!(errors.len(), 2);
+                    assert!(errors.contains_key("word"));
+                    match errors.get("at index") {
+                        Some(ValidationErrorsKind::Field(annotations)) => {
+                            assert_eq!(annotations.len(), 1);
+                            annotations[0].params["index"].clone()
+                        }
+                        other => panic!("expected a field annotation, got {:?}", other),
+                    }
+                }
+                other => panic!("expected ValidationErrors, got {:?}", other.err()),
+            };
+        assert_eq!(
+            annotated_index(vec![good.clone(), bad.clone()]),
+            json!(1usize)
+        );
+        assert_eq!(
+            annotated_index(vec![bad.clone(), good.clone()]),
+            json!(0usize)
+        );
+        assert_eq!(
+            annotated_index(vec![good.clone(), good.clone(), bad.clone()]),
+            json!(2usize)
+        );
     }
 
     #[test]
