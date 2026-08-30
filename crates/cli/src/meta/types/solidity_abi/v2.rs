@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use validator::Validate;
 use alloy::json_abi::JsonAbi;
 use validator::{ValidationErrors, ValidationError};
@@ -27,10 +28,9 @@ impl Validate for SolidityAbiMeta {
     fn validate(&self) -> Result<(), ValidationErrors> {
         for (index, item) in self.0.iter().enumerate() {
             if let Err(mut e) = item.validate() {
-                e.add(
-                    Box::leak(format!("at index {}", index).into_boxed_str()),
-                    ValidationError::new(""),
-                );
+                let mut annotation = ValidationError::new("index");
+                annotation.add_param(Cow::from("index"), &index);
+                e.add("at index", annotation);
                 return Err(e);
             }
         }
