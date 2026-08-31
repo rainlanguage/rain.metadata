@@ -14,4 +14,4 @@ set -euo pipefail
 # The `emitMeta` calldata the rust encoders produce, consumed by
 # `test/lib/EmitCalldataFixture.t.sol`, which sends it to a real metaboard. The
 # fixture is how the solidity half gets to judge bytes the rust half built.
-nix develop -c env BLESS=1 cargo test -p rain-metadata --test emit_calldata_fixture
+nix develop -c cargo run -p rain-metadata --example emit-calldata-fixture
