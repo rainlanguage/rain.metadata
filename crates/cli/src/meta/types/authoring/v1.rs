@@ -4,7 +4,7 @@ use alloy::sol;
 use serde::{Serialize, Deserialize};
 use validator::{Validate, ValidationErrors, ValidationError};
 use super::super::{
-    super::{RainMetaDocumentV1Item, str_to_bytes32, bytes32_to_str, Error},
+    super::{KnownMagic, RainMetaDocumentV1Item, str_to_bytes32, bytes32_to_str, Error},
     common::v1::{REGEX_RAIN_SYMBOL, REGEX_RAIN_STRING},
 };
 
@@ -162,6 +162,15 @@ impl TryFrom<&[u8]> for AuthoringMeta {
 impl TryFrom<RainMetaDocumentV1Item> for AuthoringMeta {
     type Error = Error;
     fn try_from(value: RainMetaDocumentV1Item) -> Result<Self, Self::Error> {
+        // The magic is the item's statement of what its payload is. Bytes
+        // that happen to abi decode are not an authoring meta unless the
+        // emitter said so.
+        if value.magic != KnownMagic::AuthoringMetaV1 {
+            return Err(Error::InvalidMetaMagic(
+                KnownMagic::AuthoringMetaV1,
+                value.magic,
+            ));
+        }
         AuthoringMeta::try_from(value.unpack()?)
     }
 }
@@ -173,7 +182,38 @@ mod tests {
     use serde_json::json;
     use validator::ValidationErrorsKind;
     use super::{AuthoringMeta, AuthoringMetaItem};
+    use crate::meta::{
+        ContentEncoding, ContentLanguage, ContentType, KnownMagic, RainMetaDocumentV1Item,
+    };
     use crate::{meta::str_to_bytes32, error::Error};
+
+    /// The magic is checked before the payload is looked at, so an item of
+    /// another type is rejected on its label rather than on whether its bytes
+    /// happen to abi decode as an authoring meta.
+    #[test]
+    fn test_try_from_item_rejects_wrong_magic() {
+        for magic in [
+            KnownMagic::SolidityAbiV2,
+            KnownMagic::AuthoringMetaV2,
+            KnownMagic::OpMetaV1,
+        ] {
+            let item = RainMetaDocumentV1Item {
+                payload: serde_bytes::ByteBuf::from(vec![0u8; 0]),
+                magic,
+                content_type: ContentType::OctetStream,
+                content_encoding: ContentEncoding::None,
+                content_language: ContentLanguage::None,
+                schema: None,
+            };
+            match AuthoringMeta::try_from(item).unwrap_err() {
+                Error::InvalidMetaMagic(expected, actual) => {
+                    assert_eq!(expected, KnownMagic::AuthoringMetaV1);
+                    assert_eq!(actual, magic);
+                }
+                other => panic!("expected InvalidMetaMagic for {:?}, got {:?}", magic, other),
+            }
+        }
+    }
 
     #[test]
     fn test_encode_decode_validate() -> Result<(), Error> {
