@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use validator::Validate;
 use alloy::json_abi::JsonAbi;
 use validator::{ValidationErrors, ValidationError};
@@ -27,10 +28,9 @@ impl Validate for SolidityAbiMeta {
     fn validate(&self) -> Result<(), ValidationErrors> {
         for (index, item) in self.0.iter().enumerate() {
             if let Err(mut e) = item.validate() {
-                e.add(
-                    Box::leak(format!("at index {}", index).into_boxed_str()),
-                    ValidationError::new(""),
-                );
+                let mut annotation = ValidationError::new("index");
+                annotation.add_param(Cow::from("index"), &index);
+                e.add("at index", annotation);
                 return Err(e);
             }
         }
@@ -425,7 +425,7 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
             intermediate_io: &IntermediateIO,
         ) -> Result<SolidityAbiErrorInput, String> {
             if intermediate_io.indexed.is_some() {
-                return Err("indexed found on fn io".into());
+                return Err("indexed found on error input".into());
             }
 
             let components: Option<Vec<SolidityAbiErrorInput>> = match &intermediate_io.components {
@@ -895,7 +895,12 @@ mod tests {
             "type": "error"
         }]);
         let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi);
-        assert!(result.unwrap_err().to_string().contains("indexed found"),);
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("indexed found on error input"),
+            "unexpected message: {}",
+            message
+        );
     }
 
     #[test]
