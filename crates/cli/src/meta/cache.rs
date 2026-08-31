@@ -17,9 +17,10 @@
 //! write goes through [MetaCache::insert_verified] because the type system
 //! offers nothing else, including from code written long after this.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use alloy::primitives::{hex, keccak256};
+use serde::{Deserialize, Deserializer};
 
 use crate::error::Error;
 
@@ -27,9 +28,40 @@ use crate::error::Error;
 ///
 /// The key is not a name for the bytes, it is a digest of them, and this type
 /// exists to make that true by construction rather than by discipline.
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+/// The map is a [BTreeMap] so serializing twice gives the same bytes.
+/// [std::collections::HashMap] iterates in an order randomized per process,
+/// which would make a serialized cache unreproducible for no gain - every
+/// access here is by key.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 pub struct MetaCache {
-    inner: HashMap<Vec<u8>, Vec<u8>>,
+    inner: BTreeMap<Vec<u8>, Vec<u8>>,
+}
+
+/// Deserializing is a way into the cache, so it goes through the same gate.
+///
+/// A derived impl would build `inner` directly, which is how the invariant
+/// leaked the first time this type was written: entries refused by
+/// [MetaCache::insert_verified] were accepted wholesale off the wire. A cache
+/// is only as good as the worst entry in it, so one bad pair rejects the whole
+/// map rather than being dropped quietly - unlike a responder's single answer,
+/// a serialized cache is something this process wrote and should not be able
+/// to get wrong.
+impl<'de> Deserialize<'de> for MetaCache {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            inner: BTreeMap<Vec<u8>, Vec<u8>>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let mut cache = MetaCache::default();
+        for (hash, bytes) in wire.inner {
+            cache
+                .insert_verified(&hash, bytes)
+                .map_err(serde::de::Error::custom)?;
+        }
+        Ok(cache)
+    }
 }
 
 impl MetaCache {
@@ -127,5 +159,54 @@ mod tests {
         // and nothing was cached on the way out
         assert!(cache.is_empty());
         assert!(!cache.contains_key(&wrong_hash));
+    }
+
+    /// Deserializing is a way in, so it is gated too. A derived impl would
+    /// build the map directly and accept off the wire exactly what
+    /// insert_verified refuses in process.
+    #[test]
+    fn test_deserialize_rejects_an_unverified_entry() {
+        #[derive(serde::Serialize)]
+        struct Wire {
+            inner: std::collections::BTreeMap<Vec<u8>, Vec<u8>>,
+        }
+        let planted = Wire {
+            inner: std::collections::BTreeMap::from([(
+                vec![0x99u8; 32],
+                b"not the preimage".to_vec(),
+            )]),
+        };
+
+        let wire = serde_cbor::to_vec(&planted).unwrap();
+        let round: Result<MetaCache, _> = serde_cbor::from_slice(&wire);
+        assert!(round.is_err(), "an unverified entry round tripped in");
+    }
+
+    /// A verified entry survives the round trip, so the gate rejects lies
+    /// rather than everything.
+    #[test]
+    fn test_deserialize_keeps_a_verified_entry() {
+        let bytes = b"content".to_vec();
+        let hash = hashed(&bytes);
+        let mut cache = MetaCache::default();
+        cache.insert_verified(&hash, bytes.clone()).unwrap();
+
+        let wire = serde_cbor::to_vec(&cache).unwrap();
+        let round: MetaCache = serde_cbor::from_slice(&wire).unwrap();
+        assert_eq!(round.get(&hash), Some(&bytes));
+    }
+
+    /// Serializing the same cache twice gives the same bytes, which a
+    /// HashMap would not guarantee across processes.
+    #[test]
+    fn test_serialization_is_deterministic() {
+        let mut cache = MetaCache::default();
+        for content in [b"one".to_vec(), b"two".to_vec(), b"three".to_vec()] {
+            let hash = hashed(&content);
+            cache.insert_verified(&hash, content).unwrap();
+        }
+        let a = serde_cbor::to_vec(&cache).unwrap();
+        let b = serde_cbor::to_vec(&cache.clone()).unwrap();
+        assert_eq!(a, b);
     }
 }
