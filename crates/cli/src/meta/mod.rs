@@ -622,7 +622,7 @@ impl Store {
         let mut store = Store::new();
         store.add_subgraphs(subgraphs);
         for (hash, bytes) in cache {
-            store.update_with(hash, bytes);
+            let _ = store.update_with(hash, bytes);
         }
         for (hash, deployer) in deployer_cache {
             store.set_deployer(hash, deployer, None);
@@ -675,12 +675,14 @@ impl Store {
         }
     }
 
-    /// searches for DeployerNPRecord in the subgraphs given the deployer hash
-    pub async fn search_deployer(&mut self, hash: &[u8]) -> Option<&NPE2Deployer> {
+    /// searches for DeployerNPRecord in the subgraphs given the deployer hash.
+    /// The meta bytes it carries go through [Self::insert_verified] like every
+    /// other write to the meta cache, so a deployer record cannot smuggle in
+    /// bytes that do not hash to the meta hash it claims for them.
+    pub async fn search_deployer(&mut self, hash: &[u8]) -> Result<&NPE2Deployer, Error> {
         match search_deployer(&hex::encode_prefixed(hash), &self.subgraphs).await {
             Ok(res) => {
-                self.cache
-                    .insert(res.meta_hash.clone(), res.meta_bytes.clone());
+                self.insert_verified(&res.meta_hash.clone(), res.meta_bytes.clone())?;
                 let authoring_meta = res.get_authoring_meta();
                 self.deployer_cache.insert(
                     res.bytecode_meta_hash.clone(),
@@ -695,20 +697,20 @@ impl Store {
                     },
                 );
                 self.deployer_hash_map.insert(res.tx_hash, res.meta_hash);
-                self.deployer_cache.get(hash)
+                self.deployer_cache.get(hash).ok_or(Error::NoRecordFound)
             }
-            Err(_e) => None,
+            Err(e) => Err(e),
         }
     }
 
     /// if the NPE2Deployer record already is cached it returns it immediately else
     /// searches for NPE2Deployer in the subgraphs given the deployer hash
-    pub async fn search_deployer_check(&mut self, hash: &[u8]) -> Option<&NPE2Deployer> {
+    pub async fn search_deployer_check(&mut self, hash: &[u8]) -> Result<&NPE2Deployer, Error> {
         if self.deployer_cache.contains_key(hash) {
-            self.get_deployer(hash)
+            self.get_deployer(hash).ok_or(Error::NoRecordFound)
         } else if self.deployer_hash_map.contains_key(hash) {
-            let b_hash = self.deployer_hash_map.get(hash).unwrap();
-            self.get_deployer(b_hash)
+            let b_hash = self.deployer_hash_map.get(hash).unwrap().clone();
+            self.get_deployer(&b_hash).ok_or(Error::NoRecordFound)
         } else {
             self.search_deployer(hash).await
         }
@@ -829,31 +831,37 @@ impl Store {
     /// downstream can stop asking. Every path into the cache goes through here,
     /// so a new one cannot be added without it.
     ///
-    /// Returns the cached bytes, or None when the hash does not match.
-    fn insert_verified(&mut self, hash: &[u8], bytes: Vec<u8>) -> Option<&Vec<u8>> {
+    /// Returns the cached bytes, or [Error::CorruptRecord] when they do not
+    /// hash to `hash`. A mismatch is not absence - the responder answered a
+    /// question about one hash with bytes that are another - so it does not
+    /// share a return with "no such record". rainlanguage/rain.metadata#234
+    /// and #213 settled that distinction for the query layer; this is the same
+    /// distinction one layer up.
+    fn insert_verified(&mut self, hash: &[u8], bytes: Vec<u8>) -> Result<&Vec<u8>, Error> {
         if keccak256(&bytes).0 != hash {
-            return None;
+            return Err(Error::CorruptRecord(format!(
+                "bytes do not hash to the requested {}",
+                hex::encode_prefixed(hash)
+            )));
         }
         self.store_content(&bytes);
         self.cache.insert(hash.to_vec(), bytes);
-        self.get_meta(hash)
+        self.get_meta(hash).ok_or(Error::NoRecordFound)
     }
 
     /// updates the meta cache by searching through all subgraphs for the given
     /// hash, and returns the reference to the meta bytes in the cache if it was
     /// found. Refreshes unconditionally; [Self::update_check] is the variant
     /// that leaves an already cached hash alone.
-    pub async fn update(&mut self, hash: &[u8]) -> Option<&Vec<u8>> {
-        let meta = search(&hex::encode_prefixed(hash), &self.subgraphs)
-            .await
-            .ok()?;
+    pub async fn update(&mut self, hash: &[u8]) -> Result<&Vec<u8>, Error> {
+        let meta = search(&hex::encode_prefixed(hash), &self.subgraphs).await?;
         self.insert_verified(hash, meta.bytes)
     }
 
     /// first checks if the meta is stored, if not will perform update()
-    pub async fn update_check(&mut self, hash: &[u8]) -> Option<&Vec<u8>> {
+    pub async fn update_check(&mut self, hash: &[u8]) -> Result<&Vec<u8>, Error> {
         if self.cache.contains_key(hash) {
-            return self.get_meta(hash);
+            return self.get_meta(hash).ok_or(Error::NoRecordFound);
         }
         self.update(hash).await
     }
@@ -861,9 +869,9 @@ impl Store {
     /// updates the meta cache with the given hash and meta bytes, and returns
     /// the reference to the bytes if they were accepted. Leaves an already
     /// cached hash alone, as [Self::update_check] does for the subgraph path.
-    pub fn update_with(&mut self, hash: &[u8], bytes: &[u8]) -> Option<&Vec<u8>> {
+    pub fn update_with(&mut self, hash: &[u8], bytes: &[u8]) -> Result<&Vec<u8>, Error> {
         if self.cache.contains_key(hash) {
-            return self.get_meta(hash);
+            return self.get_meta(hash).ok_or(Error::NoRecordFound);
         }
         self.insert_verified(hash, bytes.to_vec())
     }
@@ -2299,8 +2307,8 @@ mod tests {
 
         let hash = [0u8; 32];
         let mut store = Store::default();
-        assert!(store.update(&hash).await.is_none());
-        assert!(store.search_deployer(&hash).await.is_none());
+        assert!(store.update(&hash).await.is_err());
+        assert!(store.search_deployer(&hash).await.is_err());
     }
 
     /// create() takes only the given subgraphs, validates cache entries via
@@ -2416,7 +2424,7 @@ mod tests {
         });
         let mut store = Store::new();
         store.add_subgraphs(&vec![server.url("/sg")]);
-        assert!(store.search_deployer(&[0x0Du8; 32]).await.is_none());
+        assert!(store.search_deployer(&[0x0Du8; 32]).await.is_err());
         assert!(store.cache().is_empty());
         assert!(store.deployer_cache().is_empty());
     }
@@ -2433,8 +2441,8 @@ mod tests {
         let key = vec![0x11u8; 32];
         let tx = vec![0x22u8; 32];
         store.set_deployer(&key, &deployer, Some(&tx));
-        assert_eq!(store.search_deployer_check(&key).await, Some(&deployer));
-        assert_eq!(store.search_deployer_check(&tx).await, Some(&deployer));
+        assert_eq!(store.search_deployer_check(&key).await.unwrap(), &deployer);
+        assert_eq!(store.search_deployer_check(&tx).await.unwrap(), &deployer);
 
         // network fallback
         let (_, doc) = sample_authoring_doc();
@@ -2659,8 +2667,8 @@ mod tests {
         let mut cached_store = Store::new();
         let bytes = b"standalone meta bytes".to_vec();
         let hash = keccak256(&bytes).0.to_vec();
-        assert!(cached_store.update_with(&hash, &bytes).is_some());
-        assert_eq!(cached_store.update_check(&hash).await, Some(&bytes));
+        assert!(cached_store.update_with(&hash, &bytes).is_ok());
+        assert_eq!(cached_store.update_check(&hash).await.unwrap(), &bytes);
     }
 
     /// update() applies the same keccak gate as update_with to the subgraph
@@ -2680,11 +2688,11 @@ mod tests {
         });
         let mut store = Store::new();
         store.add_subgraphs(&vec![server.url("/sg")]);
-        assert!(store.update(&requested).await.is_none());
+        assert!(store.update(&requested).await.is_err());
         assert!(store.get_meta(&requested).is_none());
         assert!(store.cache().is_empty());
         // the miss is not cached either, so update_check retries and misses again
-        assert!(store.update_check(&requested).await.is_none());
+        assert!(store.update_check(&requested).await.is_err());
     }
 
     /// Store::new() starts with no subgraphs, so every uncached lookup that
@@ -2693,10 +2701,10 @@ mod tests {
     async fn test_store_no_subgraphs_lookups_return_none() {
         let hash = [0u8; 32];
         let mut store = Store::new();
-        assert!(store.update(&hash).await.is_none());
-        assert!(store.update_check(&hash).await.is_none());
-        assert!(store.search_deployer(&hash).await.is_none());
-        assert!(store.search_deployer_check(&hash).await.is_none());
+        assert!(store.update(&hash).await.is_err());
+        assert!(store.update_check(&hash).await.is_err());
+        assert!(store.search_deployer(&hash).await.is_err());
+        assert!(store.search_deployer_check(&hash).await.is_err());
         assert!(store.cache().is_empty());
         assert!(store.deployer_cache().is_empty());
     }
@@ -2710,11 +2718,24 @@ mod tests {
         let mut store = Store::new();
         let bytes = b"payload bytes".to_vec();
         let wrong_hash = vec![0x99u8; 32];
-        assert!(store.update_with(&wrong_hash, &bytes).is_none());
+        // A mismatch is CorruptRecord, not NoRecordFound: the responder
+        // answered about one hash with bytes that are another, which is not
+        // the same fact as the hash being absent. #234 and #213 settled that
+        // distinction for the query layer.
+        match store.update_with(&wrong_hash, &bytes).unwrap_err() {
+            Error::CorruptRecord(message) => {
+                assert!(
+                    message.contains(&hex::encode_prefixed(&wrong_hash)),
+                    "{}",
+                    message
+                )
+            }
+            other => panic!("expected CorruptRecord, got {:?}", other),
+        }
         assert!(store.get_meta(&wrong_hash).is_none());
         // valid pair stored
         let hash = keccak256(&bytes).0.to_vec();
-        assert_eq!(store.update_with(&hash, &bytes), Some(&bytes));
+        assert_eq!(store.update_with(&hash, &bytes).unwrap(), &bytes);
 
         // existing entry is returned untouched, not overwritten
         let mut seeded = Store::new();
@@ -2723,8 +2744,8 @@ mod tests {
         let planted = sample_deployer(&content_hash, b"planted value");
         seeded.set_deployer(&[0x77u8; 32], &planted, None);
         assert_eq!(
-            seeded.update_with(&content_hash, &content),
-            Some(&b"planted value".to_vec())
+            seeded.update_with(&content_hash, &content).unwrap(),
+            &b"planted value".to_vec()
         );
         assert_eq!(
             seeded.get_meta(&content_hash),
@@ -2735,7 +2756,7 @@ mod tests {
         let (_, doc) = sample_authoring_doc();
         let doc_hash = keccak256(&doc).0.to_vec();
         let mut doc_store = Store::new();
-        assert!(doc_store.update_with(&doc_hash, &doc).is_some());
+        assert!(doc_store.update_with(&doc_hash, &doc).is_ok());
         let inner = doc[8..].to_vec();
         assert_eq!(store_inner_lookup(&doc_store, &inner), Some(inner.clone()));
 
@@ -2746,7 +2767,7 @@ mod tests {
         let seq = [item_a.clone(), item_b].concat();
         let seq_hash = keccak256(&seq).0.to_vec();
         let mut seq_store = Store::new();
-        assert!(seq_store.update_with(&seq_hash, &seq).is_some());
+        assert!(seq_store.update_with(&seq_hash, &seq).is_ok());
         assert_eq!(store_inner_lookup(&seq_store, &item_a), None);
     }
 
