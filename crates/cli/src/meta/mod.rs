@@ -1,7 +1,7 @@
 use super::error::Error;
 
 pub mod cache;
-use cache::MetaCache;
+use cache::{DeployerCache, MetaCache};
 use alloy::primitives::{hex, keccak256};
 use futures::future;
 use graphql_client::GraphQLQuery;
@@ -591,7 +591,7 @@ pub struct Store {
     subgraphs: Vec<String>,
     cache: MetaCache,
     dotrain_cache: HashMap<String, Vec<u8>>,
-    deployer_cache: HashMap<Vec<u8>, NPE2Deployer>,
+    deployer_cache: DeployerCache,
     deployer_hash_map: HashMap<Vec<u8>, Vec<u8>>,
 }
 
@@ -609,7 +609,7 @@ impl Store {
             subgraphs: vec![],
             cache: MetaCache::default(),
             dotrain_cache: HashMap::new(),
-            deployer_cache: HashMap::new(),
+            deployer_cache: DeployerCache::default(),
             deployer_hash_map: HashMap::new(),
         }
     }
@@ -618,16 +618,16 @@ impl Store {
     /// it checks the validity of each item of the provided values and only stores those that are valid
     pub fn create(
         subgraphs: &Vec<String>,
-        cache: &HashMap<Vec<u8>, Vec<u8>>,
-        deployer_cache: &HashMap<Vec<u8>, NPE2Deployer>,
+        cache: &MetaCache,
+        deployer_cache: &DeployerCache,
         dotrain_cache: &HashMap<String, Vec<u8>>,
     ) -> Store {
         let mut store = Store::new();
         store.add_subgraphs(subgraphs);
-        for (hash, bytes) in cache {
+        for (hash, bytes) in cache.iter() {
             let _ = store.update_with(hash, bytes);
         }
-        for (hash, deployer) in deployer_cache {
+        for (hash, deployer) in deployer_cache.iter() {
             let _ = store.set_deployer(hash, deployer, None);
         }
         for (uri, hash) in dotrain_cache {
@@ -663,7 +663,7 @@ impl Store {
     }
 
     /// getter method for the whole authoring meta cache
-    pub fn deployer_cache(&self) -> &HashMap<Vec<u8>, NPE2Deployer> {
+    pub fn deployer_cache(&self) -> &DeployerCache {
         &self.deployer_cache
     }
 
@@ -687,8 +687,8 @@ impl Store {
             Ok(res) => {
                 self.insert_verified(&res.meta_hash.clone(), res.meta_bytes.clone())?;
                 let authoring_meta = res.get_authoring_meta();
-                self.deployer_cache.insert(
-                    res.bytecode_meta_hash.clone(),
+                self.deployer_cache.insert_verified(
+                    &res.bytecode_meta_hash.clone(),
                     NPE2Deployer {
                         meta_hash: res.meta_hash.clone(),
                         meta_bytes: res.meta_bytes,
@@ -698,7 +698,7 @@ impl Store {
                         interpreter: res.interpreter,
                         authoring_meta,
                     },
-                );
+                )?;
                 self.deployer_hash_map.insert(res.tx_hash, res.meta_hash);
                 self.deployer_cache.get(hash).ok_or(Error::NoRecordFound)
             }
@@ -743,7 +743,7 @@ impl Store {
         self.deployer_hash_map
             .insert(tx_hash, bytecode_meta_hash.clone());
         self.deployer_cache
-            .insert(bytecode_meta_hash, result.clone());
+            .insert_verified(&bytecode_meta_hash, result.clone())?;
         Ok(result)
     }
 
@@ -758,7 +758,7 @@ impl Store {
         self.cache
             .insert_verified(&npe2_deployer.meta_hash, npe2_deployer.meta_bytes.clone())?;
         self.deployer_cache
-            .insert(hash.to_vec(), npe2_deployer.clone());
+            .insert_verified(hash, npe2_deployer.clone())?;
         if let Some(v) = tx_hash {
             self.deployer_hash_map.insert(v.to_vec(), hash.to_vec());
         }
@@ -810,9 +810,10 @@ impl Store {
                 let _ = self.cache.insert_verified(hash, bytes.clone());
             }
         }
-        for (hash, deployer) in &other.deployer_cache {
+        for (hash, deployer) in other.deployer_cache.iter() {
             if !self.deployer_cache.contains_key(hash) {
-                self.deployer_cache.insert(hash.clone(), deployer.clone());
+                // verified by construction in the other store
+                let _ = self.deployer_cache.insert_verified(hash, deployer.clone());
             }
         }
         for (tx_hash, hash) in &other.deployer_hash_map {
@@ -847,6 +848,11 @@ impl Store {
 
     /// first checks if the meta is stored, if not will perform update()
     pub async fn update_check(&mut self, hash: &[u8]) -> Result<&Vec<u8>, Error> {
+        // The NoRecordFound arm is unreachable, contains_key having just
+        // proved the key is present. It is spelled this way rather than as
+        // `if let Some(cached) = self.get_meta(hash)` because that holds an
+        // immutable borrow of self across the mutable call below it, which
+        // the borrow checker refuses.
         if self.cache.contains_key(hash) {
             return self.get_meta(hash).ok_or(Error::NoRecordFound);
         }
@@ -857,6 +863,11 @@ impl Store {
     /// the reference to the bytes if they were accepted. Leaves an already
     /// cached hash alone, as [Self::update_check] does for the subgraph path.
     pub fn update_with(&mut self, hash: &[u8], bytes: &[u8]) -> Result<&Vec<u8>, Error> {
+        // The NoRecordFound arm is unreachable, contains_key having just
+        // proved the key is present. It is spelled this way rather than as
+        // `if let Some(cached) = self.get_meta(hash)` because that holds an
+        // immutable borrow of self across the mutable call below it, which
+        // the borrow checker refuses.
         if self.cache.contains_key(hash) {
             return self.get_meta(hash).ok_or(Error::NoRecordFound);
         }
@@ -2293,11 +2304,14 @@ mod tests {
     async fn test_store_constructors_inject_no_subgraphs() {
         assert!(Store::new().subgraphs().is_empty());
         assert!(Store::default().subgraphs().is_empty());
-        assert!(
-            Store::create(&vec![], &HashMap::new(), &HashMap::new(), &HashMap::new())
-                .subgraphs()
-                .is_empty()
-        );
+        assert!(Store::create(
+            &vec![],
+            &MetaCache::default(),
+            &DeployerCache::default(),
+            &HashMap::new()
+        )
+        .subgraphs()
+        .is_empty());
 
         let hash = [0u8; 32];
         let mut store = Store::default();
@@ -2305,21 +2319,25 @@ mod tests {
         assert!(store.search_deployer(&hash).await.is_err());
     }
 
-    /// create() takes only the given subgraphs, validates cache entries via
-    /// the keccak gate, and keeps a dotrain uri only when its hash is present
-    /// in the cache.
+    /// create() takes only the given subgraphs, and keeps a dotrain uri only
+    /// when its hash is present in the cache.
+    ///
+    /// This used to assert create() dropped a cache entry whose bytes did not
+    /// hash to its key. That entry is no longer constructible: create() takes
+    /// a [MetaCache], which has no way to hold one, so there is nothing left
+    /// for create() to validate.
     #[test]
     fn test_store_create_validates_entries() {
         let (_, doc) = sample_authoring_doc();
         let good_hash = keccak256(&doc).0.to_vec();
-        let bad_hash = vec![0xEEu8; 32];
-        let mut cache = HashMap::new();
-        cache.insert(good_hash.clone(), doc.clone());
-        cache.insert(bad_hash.clone(), b"does not hash to bad_hash".to_vec());
-        let mut deployer_cache = HashMap::new();
+        let mut cache = MetaCache::default();
+        cache.insert_verified(&good_hash, doc.clone()).unwrap();
+        let mut deployer_cache = DeployerCache::default();
         let deployer = sample_deployer(b"dep-meta");
         let deployer_key = vec![0x33u8; 32];
-        deployer_cache.insert(deployer_key.clone(), deployer.clone());
+        deployer_cache
+            .insert_verified(&deployer_key, deployer.clone())
+            .unwrap();
         let mut dotrain_cache = HashMap::new();
         dotrain_cache.insert("a.rain".to_string(), good_hash.clone());
         dotrain_cache.insert("missing.rain".to_string(), vec![0x44u8; 32]);
@@ -2336,7 +2354,6 @@ mod tests {
             &vec!["https://example.com/custom-sg".to_string()]
         );
         assert_eq!(store.get_meta(&good_hash), Some(&doc));
-        assert_eq!(store.get_meta(&bad_hash), None);
         assert_eq!(store.get_deployer(&deployer_key), Some(&deployer));
         assert_eq!(store.get_dotrain_hash("a.rain"), Some(&good_hash));
         assert_eq!(store.get_dotrain_hash("missing.rain"), None);
