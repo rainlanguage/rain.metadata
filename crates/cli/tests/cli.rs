@@ -33,6 +33,7 @@ fn magic_ls_prints_all_known_magic_numbers() {
 0xffa15ef0fc437099 dotrain-source-v1
 0xffda7b2fb167c286 order-builder-state-v1
 0xff7a1507ba4419ca raindex-signed-context-oracle-v1
+0xff5dcce9b571ba42 web-data-v1
 0xffa8e8a9b9cf4a31 oa-schema
 0xff9fae3cc645f463 oa-hash-list
 0xffc47a6299e8a911 oa-structure

@@ -1755,7 +1755,7 @@ mod tests {
     /// 1 decodes, so accepting the document magic as an item magic is the
     /// decoder's own behaviour and not an artefact of this crate's encoder.
     #[test]
-    fn test_cbor_decode_handwritten_document_magic_item() -> Result<(), Error> {
+    fn test_cbor_decode_handwritten_document_magic_item() {
         let bytes: Vec<u8> = vec![
             0xa2, // map(2)
             0x00, // key 0
@@ -1763,11 +1763,10 @@ mod tests {
             0x01, // key 1
             0x1b, 0xff, 0x0a, 0x89, 0xc6, 0x74, 0xee, 0x78, 0x74, // u64 RainMetaDocumentV1
         ];
-        assert_eq!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes)?,
-            vec![plain_item(KnownMagic::RainMetaDocumentV1, vec![0x01])]
-        );
-        Ok(())
+        // The document magic in an item's magic position is structurally
+        // invalid, so the meta carrying it does not decode.
+        // rainlanguage/rain.metadata#204.
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
     }
 
     /// The document magic as an item's own magic marks a payload that is
@@ -1788,11 +1787,14 @@ mod tests {
             KnownMagic::RainMetaDocumentV1,
         )?;
 
-        let decoded = RainMetaDocumentV1Item::cbor_decode(&outer_doc)?;
-        assert_eq!(decoded, vec![outer]);
-        assert_eq!(decoded[0].payload.as_ref(), inner_doc.as_slice());
+        // Encoding can still write the document magic into an item's magic
+        // position, and the payload really is a whole document. Decoding
+        // refuses it anyway: a nested document is not a shape to descend into,
+        // it is a corrupt meta, and the usable item inside does not rescue it.
+        // rainlanguage/rain.metadata#204.
+        assert!(RainMetaDocumentV1Item::cbor_decode(&outer_doc).is_err());
         assert_eq!(
-            RainMetaDocumentV1Item::cbor_decode(decoded[0].payload.as_ref())?,
+            RainMetaDocumentV1Item::cbor_decode(&inner_doc)?,
             vec![inner]
         );
         Ok(())
@@ -1827,8 +1829,8 @@ mod tests {
         Ok(())
     }
 
-    /// The 13 meta magics unpack; the document magic and the Oa magics are
-    /// rejected with UnsupportedMeta.
+    /// The 13 meta magics unpack; the document magic, the web data magic and
+    /// the Oa magics are rejected with UnsupportedMeta.
     #[test]
     fn test_unpack_into_whitelist() {
         use strum::IntoEnumIterator;
@@ -1853,6 +1855,7 @@ mod tests {
         }
         let unsupported = [
             KnownMagic::RainMetaDocumentV1,
+            KnownMagic::WebDataV1,
             KnownMagic::OaSchema,
             KnownMagic::OaHashList,
             KnownMagic::OaStructure,
@@ -2009,6 +2012,7 @@ mod tests {
         }
         for magic in [
             KnownMagic::RainMetaDocumentV1,
+            KnownMagic::WebDataV1,
             KnownMagic::OaSchema,
             KnownMagic::OaHashList,
             KnownMagic::OaStructure,
@@ -2177,6 +2181,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(response.meta_bytes, doc);
+    }
+
+    /// An empty subgraph list has nothing to fan out to, so both searches
+    /// report a miss rather than reaching futures::select_ok, which panics on
+    /// an empty iterator.
+    #[tokio::test]
+    async fn test_search_empty_subgraphs_is_a_miss() {
+        let hash = format!("0x{}", "33".repeat(32));
+        assert!(matches!(
+            search(&hash, &vec![]).await,
+            Err(Error::NoRecordFound)
+        ));
+        assert!(matches!(
+            search_deployer(&hash, &vec![]).await,
+            Err(Error::NoRecordFound)
+        ));
     }
 
     /// When the erc165 probe answers false or errors, the result is false
@@ -2629,6 +2649,20 @@ mod tests {
         let hash = keccak256(&bytes).0.to_vec();
         assert!(cached_store.update_with(&hash, &bytes).is_some());
         assert_eq!(cached_store.update_check(&hash).await, Some(&bytes));
+    }
+
+    /// Store::new() starts with no subgraphs, so every uncached lookup that
+    /// reaches the network on it resolves to None instead of panicking.
+    #[tokio::test]
+    async fn test_store_no_subgraphs_lookups_return_none() {
+        let hash = [0u8; 32];
+        let mut store = Store::new();
+        assert!(store.update(&hash).await.is_none());
+        assert!(store.update_check(&hash).await.is_none());
+        assert!(store.search_deployer(&hash).await.is_none());
+        assert!(store.search_deployer_check(&hash).await.is_none());
+        assert!(store.cache().is_empty());
+        assert!(store.deployer_cache().is_empty());
     }
 
     /// update_with enforces keccak(bytes) == hash, leaves an existing entry
