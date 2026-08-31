@@ -1,7 +1,7 @@
 use validator::Validate;
 use serde::{Serialize, Deserialize};
 use super::super::{
-    super::{RainMetaDocumentV1Item, Error},
+    super::{KnownMagic, RainMetaDocumentV1Item, Error},
     common::v1::{RainTitle, RainSymbol, RainString, Description, SolidityIdentifier},
 };
 
@@ -66,6 +66,12 @@ impl TryFrom<&[u8]> for InterpreterCallerMeta {
 impl TryFrom<RainMetaDocumentV1Item> for InterpreterCallerMeta {
     type Error = Error;
     fn try_from(value: RainMetaDocumentV1Item) -> Result<Self, Self::Error> {
+        if value.magic != KnownMagic::InterpreterCallerMetaV1 {
+            return Err(Error::InvalidMetaMagic(
+                KnownMagic::InterpreterCallerMetaV1,
+                value.magic,
+            ));
+        }
         Self::try_from(value.unpack()?)
     }
 }
@@ -389,6 +395,34 @@ mod tests {
         let parsed = InterpreterCallerMeta::try_from(item).unwrap();
         assert_eq!(parsed.name.value, "Test Caller");
         assert_eq!(parsed.methods.len(), 1);
+    }
+
+    /// The magic is the item's type discriminator, so a payload that parses
+    /// as InterpreterCallerMeta is still not an InterpreterCallerMeta item
+    /// under any other magic.
+    #[test]
+    fn test_try_from_meta_item_rejects_wrong_magic() {
+        for magic in [
+            KnownMagic::SolidityAbiV2,
+            KnownMagic::OpMetaV1,
+            KnownMagic::RainMetaDocumentV1,
+        ] {
+            let item = RainMetaDocumentV1Item {
+                payload: serde_bytes::ByteBuf::from(serde_json::to_vec(&valid_json()).unwrap()),
+                magic,
+                content_type: ContentType::Json,
+                content_encoding: ContentEncoding::None,
+                content_language: ContentLanguage::En,
+                schema: None,
+            };
+            match InterpreterCallerMeta::try_from(item).unwrap_err() {
+                Error::InvalidMetaMagic(expected, actual) => {
+                    assert_eq!(expected, KnownMagic::InterpreterCallerMetaV1);
+                    assert_eq!(actual, magic);
+                }
+                other => panic!("Expected InvalidMetaMagic for {:?}, got {:?}", magic, other),
+            }
+        }
     }
 
     /// Unknown fields are rejected.
