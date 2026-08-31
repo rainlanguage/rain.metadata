@@ -46,8 +46,7 @@ contract EmitCalldataFixtureTest is Test {
         // verbatim. Decoding the log against the calldata rather than against a
         // literal keeps this test about the seam and not about the encoding.
         (bytes32 subjectArg, bytes memory metaArg) = abi.decode(_args(callData), (bytes32, bytes));
-        (address sender, bytes32 subject, bytes memory meta) =
-            abi.decode(logs[0].data, (address, bytes32, bytes));
+        (address sender, bytes32 subject, bytes memory meta) = abi.decode(logs[0].data, (address, bytes32, bytes));
         assertEq(sender, address(this), string.concat("sender for ", key));
         assertEq(subject, subjectArg, string.concat("subject for ", key));
         assertEq(meta, metaArg, string.concat("meta for ", key));
