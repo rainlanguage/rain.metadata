@@ -46,7 +46,8 @@ fn main() {
     let dotrain = generate_dotrain_source_emit_tx_data("#main _ _: int-add(1 2);").unwrap();
     cases.insert("dotrain_source".to_string(), dotrain.calldata.into());
 
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/emit-calldata.json");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/emit-calldata.json");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         &path,
