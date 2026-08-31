@@ -59,11 +59,6 @@ pub struct OrderBuilderStateV1 {
 #[cfg(target_family = "wasm")]
 impl_wasm_traits!(OrderBuilderStateV1);
 
-/// Meta bytes reaching [OrderBuilderStateV1::extract_from_meta] are attacker
-/// influenceable, so its walk into nested documents is bounded by a budget
-/// rather than by the stack.
-pub const MAX_NESTED_DOCUMENT_DEPTH: usize = 32;
-
 impl OrderBuilderStateV1 {
     /// Get the template hash
     pub fn dotrain_hash(&self) -> B256 {
@@ -91,35 +86,21 @@ impl OrderBuilderStateV1 {
     /// This function attempts to decode CBOR data and find a OrderBuilderStateV1 document
     /// among potentially multiple metadata items.
     ///
+    /// The walk is flat. An item claiming the document magic as its own is
+    /// structurally invalid rather than a document to descend into, so it is
+    /// rejected while decoding and never reaches here — there is no nesting to
+    /// recurse through, and so no depth to bound.
+    ///
     /// Returns:
     /// - Ok(Some(OrderBuilderStateV1)) if found and successfully parsed
     /// - Ok(None) if no OrderBuilderStateV1 document found in the meta bytes
-    /// - Err(Error) if there are parsing/decoding errors, or if nested
-    ///   documents run deeper than [MAX_NESTED_DOCUMENT_DEPTH]
+    /// - Err(Error) if there are parsing/decoding errors
     pub fn extract_from_meta(meta_bytes: &[u8]) -> Result<Option<Self>, Error> {
-        OrderBuilderStateV1::extract_from_meta_within(meta_bytes, MAX_NESTED_DOCUMENT_DEPTH)
-    }
-
-    fn extract_from_meta_within(
-        meta_bytes: &[u8],
-        remaining_depth: usize,
-    ) -> Result<Option<Self>, Error> {
         // Try to decode CBOR data
         let decoded_items = RainMetaDocumentV1Item::cbor_decode(meta_bytes)?;
 
         // Look for OrderBuilderStateV1 among the decoded items
         for item in decoded_items {
-            if item.magic == KnownMagic::RainMetaDocumentV1 {
-                let inner_depth = remaining_depth
-                    .checked_sub(1)
-                    .ok_or(Error::MetaNestingTooDeep(MAX_NESTED_DOCUMENT_DEPTH))?;
-                if let Some(instance) = OrderBuilderStateV1::extract_from_meta_within(
-                    item.payload.as_ref(),
-                    inner_depth,
-                )? {
-                    return Ok(Some(instance));
-                }
-            }
             if item.magic == KnownMagic::OrderBuilderStateV1 {
                 let instance = OrderBuilderStateV1::try_from(item)?;
                 return Ok(Some(instance));
@@ -420,39 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_from_meta_nested_rain_document() {
-        // A decoded item whose magic is RainMetaDocumentV1 carries a complete
-        // prefixed document as payload; extract_from_meta must recurse into
-        // it and surface the instance found inside.
-        let original_instance = create_test_instance();
-        let inner_item: RainMetaDocumentV1Item = original_instance.clone().try_into().unwrap();
-        let inner_doc_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
-            &vec![inner_item],
-            KnownMagic::RainMetaDocumentV1,
-        )
-        .unwrap();
-
-        let outer_item = RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from(inner_doc_bytes),
-            magic: KnownMagic::RainMetaDocumentV1,
-            content_type: ContentType::OctetStream,
-            content_encoding: ContentEncoding::None,
-            content_language: ContentLanguage::None,
-            schema: None,
-        };
-        let outer_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
-            &vec![outer_item],
-            KnownMagic::RainMetaDocumentV1,
-        )
-        .unwrap();
-
-        let extracted = OrderBuilderStateV1::extract_from_meta(&outer_bytes)
-            .unwrap()
-            .unwrap();
-        assert_eq!(extracted, original_instance);
-    }
-
-    #[test]
     fn test_try_from_unpacks_content_encoding() {
         let instance = create_test_instance();
         let cbor_bytes = serde_cbor::to_vec(&instance).unwrap();
@@ -469,9 +417,8 @@ mod tests {
         assert_eq!(recovered, instance);
     }
 
-    /// A document carrying `leaf` under `depth` levels of RainMetaDocumentV1
-    /// nesting, so `extract_from_meta` needs exactly `depth` descents to reach
-    /// it.
+    /// A document carrying `leaf` under `depth` items that claim the document
+    /// magic as their own.
     fn nest_document(leaf: RainMetaDocumentV1Item, depth: usize) -> Vec<u8> {
         let mut bytes =
             RainMetaDocumentV1Item::cbor_encode_seq(&vec![leaf], KnownMagic::RainMetaDocumentV1)
@@ -494,48 +441,33 @@ mod tests {
         bytes
     }
 
+    /// The document magic is a prefix, not an item's own magic. An item
+    /// claiming it is structurally invalid rather than a document to descend
+    /// into, so it does not decode and the meta carrying it is corrupt - even
+    /// though something usable sits inside it. rainlanguage/rain.metadata#204.
     #[test]
-    fn test_extract_from_meta_at_the_nesting_bound() {
-        let original_instance = create_test_instance();
-        let leaf: RainMetaDocumentV1Item = original_instance.clone().try_into().unwrap();
-        let bytes = nest_document(leaf, MAX_NESTED_DOCUMENT_DEPTH);
-
-        let extracted = OrderBuilderStateV1::extract_from_meta(&bytes)
-            .unwrap()
-            .unwrap();
-        assert_eq!(extracted, original_instance);
-    }
-
-    #[test]
-    fn test_extract_from_meta_past_the_nesting_bound() {
+    fn test_extract_from_meta_nested_document_is_corrupt() {
         let leaf: RainMetaDocumentV1Item = create_test_instance().try_into().unwrap();
-        let bytes = nest_document(leaf, MAX_NESTED_DOCUMENT_DEPTH + 1);
+        let bytes = nest_document(leaf, 1);
 
-        match OrderBuilderStateV1::extract_from_meta(&bytes).unwrap_err() {
-            Error::MetaNestingTooDeep(max) => assert_eq!(max, MAX_NESTED_DOCUMENT_DEPTH),
-            other => panic!("Expected MetaNestingTooDeep, got {:?}", other),
-        }
+        assert!(OrderBuilderStateV1::extract_from_meta(&bytes).is_err());
     }
 
-    /// The bound is what keeps attacker-shaped nesting off the stack: 5000
-    /// levels drive 5000 frames unbounded, so this runs on a stack far too
-    /// small to hold them and must still return an error rather than abort.
+    /// Rejecting nesting at the outermost item is what makes attacker-shaped
+    /// nesting free to refuse: 5000 levels cost one decode rather than 5000
+    /// frames. Run on a stack far too small to hold them, so any descent at
+    /// all would abort rather than return.
     #[test]
-    fn test_extract_from_meta_deep_nesting_does_not_exhaust_the_stack() {
+    fn test_extract_from_meta_deep_nesting_costs_one_decode() {
         let leaf: RainMetaDocumentV1Item = DotrainSourceV1("leaf".to_string()).into();
         let bytes = nest_document(leaf, 5000);
 
-        let extracted = std::thread::Builder::new()
+        let rejected = std::thread::Builder::new()
             .stack_size(512 * 1024)
-            .spawn(move || {
-                matches!(
-                    OrderBuilderStateV1::extract_from_meta(&bytes),
-                    Err(Error::MetaNestingTooDeep(_))
-                )
-            })
+            .spawn(move || OrderBuilderStateV1::extract_from_meta(&bytes).is_err())
             .unwrap()
             .join()
             .unwrap();
-        assert!(extracted);
+        assert!(rejected);
     }
 }

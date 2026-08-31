@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use validator::{Validate, ValidationError, ValidationErrors};
 use super::super::{
-    super::{RainMetaDocumentV1Item, Error},
+    super::{KnownMagic, RainMetaDocumentV1Item, Error},
     common::v1::{RainSymbol, RainString, Description},
 };
 
@@ -143,6 +143,9 @@ impl TryFrom<Vec<u8>> for OpMeta {
 impl TryFrom<RainMetaDocumentV1Item> for OpMeta {
     type Error = Error;
     fn try_from(value: RainMetaDocumentV1Item) -> Result<Self, Self::Error> {
+        if value.magic != KnownMagic::OpMetaV1 {
+            return Err(Error::InvalidMetaMagic(KnownMagic::OpMetaV1, value.magic));
+        }
         Self::try_from(value.unpack()?)
     }
 }
@@ -403,5 +406,33 @@ mod tests {
         };
         let meta = OpMeta::try_from(item).unwrap();
         assert_eq!(meta.name.value, "add");
+    }
+
+    #[test]
+    fn test_opmeta_try_from_item_rejects_wrong_magic() {
+        // The magic is the item's type discriminator, so a payload that
+        // parses as OpMeta is still not an OpMeta item under any other
+        // magic.
+        for magic in [
+            KnownMagic::SolidityAbiV2,
+            KnownMagic::InterpreterCallerMetaV1,
+            KnownMagic::RainMetaDocumentV1,
+        ] {
+            let item = RainMetaDocumentV1Item {
+                payload: serde_bytes::ByteBuf::from(br#"{"name":"add"}"#.to_vec()),
+                magic,
+                content_type: ContentType::Json,
+                content_encoding: ContentEncoding::None,
+                content_language: ContentLanguage::None,
+                schema: None,
+            };
+            match OpMeta::try_from(item).unwrap_err() {
+                Error::InvalidMetaMagic(expected, actual) => {
+                    assert_eq!(expected, KnownMagic::OpMetaV1);
+                    assert_eq!(actual, magic);
+                }
+                other => panic!("Expected InvalidMetaMagic for {:?}, got {:?}", magic, other),
+            }
+        }
     }
 }
