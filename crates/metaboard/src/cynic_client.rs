@@ -12,6 +12,11 @@ pub enum CynicClientError {
     GraphqlError(Vec<GraphQlError>),
     #[error("Subgraph query returned no data")]
     Empty,
+    #[error("Subgraph query returned HTTP status {status}, body: {body}")]
+    Status {
+        status: reqwest::StatusCode,
+        body: String,
+    },
     #[error("Request Error: {0}")]
     Request(#[from] reqwest::Error),
 }
@@ -36,12 +41,24 @@ pub trait CynicClient {
             .send()
             .await?;
 
+        let status = response.status();
+        if !status.is_success() {
+            return Err(CynicClientError::Status {
+                status,
+                body: response.text().await?,
+            });
+        }
+
         let response_deserialized: GraphQlResponse<R> =
             response.json::<GraphQlResponse<R>>().await?;
 
-        match response_deserialized.errors {
-            Some(errors) => Err(CynicClientError::GraphqlError(errors)),
-            None => response_deserialized.data.ok_or(CynicClientError::Empty),
+        // An empty errors array satisfies cynic's "either data or errors must
+        // be present" deserializer while carrying neither an error nor data,
+        // so it is the only response shape that can reach Empty.
+        match (response_deserialized.data, response_deserialized.errors) {
+            (_, Some(errors)) if !errors.is_empty() => Err(CynicClientError::GraphqlError(errors)),
+            (Some(data), _) => Ok(data),
+            (None, _) => Err(CynicClientError::Empty),
         }
     }
 }

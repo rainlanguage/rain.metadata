@@ -12,6 +12,7 @@ use alloy::sol;
 use rain_metaboard_subgraph::metaboard_client::*;
 use serde::{Deserialize, Serialize};
 use crate::meta::{KnownMagic, RainMetaDocumentV1Item};
+use rain_erc::erc165::Erc165Error;
 use rain_metadata_bindings::IDescribedByMetaV1;
 use thiserror::Error;
 use super::super::super::implements_i_described_by_meta_v1;
@@ -68,6 +69,8 @@ pub enum AuthoringMetaV2Error {
     MetaError(#[from] crate::error::Error),
     #[error("Contract has no words")]
     HasNoWords,
+    #[error(transparent)]
+    Erc165Error(#[from] Erc165Error),
     #[error("no RPC URLs provided")]
     NoRpcs,
     #[error("Metaboard meta bytes hash {actual} does not match describedByMetaV1 hash {expected}")]
@@ -132,9 +135,7 @@ impl AuthoringMetaV2 {
     ) -> Result<[u8; 32], AuthoringMetaV2Error> {
         let provider = ProviderBuilder::new().connect_http(rpc.parse()?);
 
-        // an RPC that cannot answer the erc165 probe is indistinguishable here
-        // from a contract that has no words, so both land on HasNoWords
-        if !implements_i_described_by_meta_v1(&provider, contract_address).await {
+        if !implements_i_described_by_meta_v1(&provider, contract_address).await? {
             return Err(AuthoringMetaV2Error::HasNoWords);
         }
 
@@ -182,6 +183,11 @@ impl AuthoringMetaV2 {
                     metahash = Some(hash);
                     break;
                 }
+                // The contract not implementing the interface is an answer, not
+                // a failed read, and it is the same answer on every RPC of the
+                // chain. Asking the rest cannot change it, and continuing would
+                // replace it with whichever transport error the last RPC gave.
+                Err(error @ AuthoringMetaV2Error::HasNoWords) => return Err(wrap_error(error)),
                 Err(error) => rpc_error = error,
             }
         }
@@ -649,6 +655,77 @@ mod tests {
         }
     }
 
+    /// A transport failure of the erc165 probe - the first of the two, which
+    /// rain-erc runs - is "answer unknown" for the same reason as the second,
+    /// and was flattened by its own `unwrap_or(false)`.
+    #[tokio::test]
+    async fn test_fetch_for_contract_erc165_transport_error_is_not_has_no_words() {
+        let rpc_server = MockServer::start_async().await;
+        let probe = rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a701ffc9a7");
+            then.status(500).body("rpc down");
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+        probe.assert();
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::Erc165Error(_) => {}
+            other => panic!("expected Erc165Error, got {:?}", other),
+        }
+    }
+
+    /// A transport failure of the IDescribedByMetaV1 supportsInterface call is
+    /// "answer unknown", so it must surface as the erc165 error and never as
+    /// the definitive HasNoWords.
+    #[tokio::test]
+    async fn test_fetch_for_contract_described_by_probe_error_is_not_has_no_words() {
+        let rpc_server = MockServer::start_async().await;
+        let sel = encode(IDescribedByMetaV1::describedByMetaV1Call::SELECTOR);
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a701ffc9a7");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(true)
+            }));
+        });
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a7ffffffff");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(false)
+            }));
+        });
+        let probe = rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(format!("01ffc9a7{}", sel));
+            then.status(500).body("rpc down");
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+        probe.assert();
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::Erc165Error(_) => {}
+            other => panic!("expected Erc165Error, got {:?}", other),
+        }
+    }
+
     #[tokio::test]
     async fn test_fetch_for_contract_abi_decode_error_on_describe_call() {
         let rpc_server = MockServer::start_async().await;
@@ -874,6 +951,43 @@ mod tests {
 
         assert_eq!(meta.words.len(), 3);
         assert_eq!(meta.words[1].description, "description 2");
+    }
+
+    /// A contract that says it does not implement the interface has answered,
+    /// and the answer is a property of the contract, so it is the same on every
+    /// RPC of the chain. The later RPCs are not asked, and HasNoWords is
+    /// reported rather than being overwritten by whatever the last RPC said.
+    ///
+    /// Failing over here was harmless only while a dead RPC also produced
+    /// HasNoWords. Once #175 and #154 made a failed probe its own error, the
+    /// two stopped being the same thing.
+    #[tokio::test]
+    async fn test_fetch_for_contract_does_not_fall_over_a_contract_without_words() {
+        let rpc_server = MockServer::start_async().await;
+        // erc165 check1 answers false, so the contract declines the interface
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a701ffc9a7");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(false)
+            }));
+        });
+        let unused_rpc_server = MockServer::start_async().await;
+        let unused_rpc = mock_dead_rpc(&unused_rpc_server);
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/"), unused_rpc_server.url("/")],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+
+        assert_eq!(unused_rpc.hits(), 0, "a later rpc was asked anyway");
+        match result.unwrap_err().error {
+            AuthoringMetaV2Error::HasNoWords => {}
+            other => panic!("expected HasNoWords, got {:?}", other),
+        }
     }
 
     #[tokio::test]
