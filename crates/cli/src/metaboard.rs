@@ -16,9 +16,17 @@ fn generate_emit_data_calldata(subject: FixedBytes<32>, data: Vec<u8>) -> Vec<u8
 }
 
 /// Generate calldata for IMetaBoardV1_2.emitMeta() function from any RainMetaDocumentV1Item
+///
+/// The subject stays the BARE cbor item hash — the key `Store` caches inner
+/// items under — while the emitted bytes are the magic-prefixed cbor-seq that
+/// `IMetaBoardV1_2.emitMeta` reverts `NotRainMetaV1` without. Two digests, on
+/// purpose.
 pub fn generate_emit_meta_calldata(meta: RainMetaDocumentV1Item) -> Result<Vec<u8>, Error> {
-    let meta_bytes = meta.cbor_encode()?;
     let hash = meta.hash(false)?;
+    let meta_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+        &vec![meta],
+        crate::KnownMagic::RainMetaDocumentV1,
+    )?;
     Ok(generate_emit_data_calldata(hash.into(), meta_bytes))
 }
 
@@ -98,10 +106,35 @@ mod tests {
         // Decode and verify structure
         let decoded = emitMetaCall::abi_decode(&calldata).unwrap();
         let expected_hash = meta.hash(false).unwrap();
-        let expected_meta_bytes = meta.cbor_encode().unwrap();
+        let expected_meta_bytes =
+            RainMetaDocumentV1Item::cbor_encode_seq(&vec![meta], KnownMagic::RainMetaDocumentV1)
+                .unwrap();
 
         assert_eq!(decoded.subject, FixedBytes::from(expected_hash));
         assert_eq!(decoded.meta.as_ref(), expected_meta_bytes.as_slice());
+    }
+
+    /// `IMetaBoardV1_2.emitMeta` reverts `NotRainMetaV1` on anything that is
+    /// not magic-prefixed (`LibMeta.checkMetaUnhashedV1`), so calldata this
+    /// function builds is only submittable if the meta carries the prefix.
+    #[test]
+    fn test_emit_meta_bytes_are_a_rain_meta_document() {
+        let meta = create_test_meta("test content");
+        let calldata = generate_emit_meta_calldata(meta.clone()).unwrap();
+        let emitted = emitMetaCall::abi_decode(&calldata).unwrap().meta;
+
+        // The magic number as the eight wire bytes, independent of KnownMagic.
+        assert_eq!(hex::encode(&emitted[..8]), "ff0a89c674ee7874");
+
+        // Prefix and nothing else: the item still round-trips out of it.
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&emitted).unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0], meta);
+
+        // The bare item map is what the subject is over, not what is emitted.
+        let bare = meta.cbor_encode().unwrap();
+        assert_ne!(emitted.as_ref(), bare.as_slice());
+        assert_eq!(&emitted[8..], bare.as_slice());
     }
 
     #[test]
