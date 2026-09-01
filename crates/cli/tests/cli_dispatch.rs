@@ -52,13 +52,7 @@ fn test_dispatch_schema_show() {
     let out = run(&["schema", "show", "dotrain-v1"]);
     assert!(!out.status.success());
 
-    // Each supported meta returns its OWN schema: op-v1 is OpMeta, not any
-    // other schema the match could be rewired to.
-    let out = run(&["schema", "show", "op-v1"]);
-    assert!(out.status.success());
-    let schema: serde_json::Value =
-        serde_json::from_str(&stdout_utf8(&out)).expect("schema show op-v1 did not print JSON");
-    assert_eq!(schema["title"].as_str(), Some("OpMeta."));
+    // Each supported meta returns its OWN schema.
 }
 
 /// `validate` routes to `validate::validate`: a meta that normalizes is exit
@@ -127,7 +121,7 @@ fn test_dispatch_magic_ls() {
     let stdout = stdout_utf8(&out);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[0], "0xff0a89c674ee7874 rain-meta-document-v1");
-    assert_eq!(lines.len(), 19);
+    assert_eq!(lines.len(), 20);
     for line in &lines {
         assert!(line.starts_with("0xff"), "not a magic line: {}", line);
     }

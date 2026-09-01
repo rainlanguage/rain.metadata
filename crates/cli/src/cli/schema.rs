@@ -28,7 +28,6 @@ pub fn dispatch(schema: Schema) -> anyhow::Result<()> {
 /// absent from both.
 pub fn json_schema(meta: KnownMeta) -> Option<RootSchema> {
     match meta {
-        KnownMeta::OpV1 => Some(schema_for!(crate::meta::types::op::v1::OpMeta)),
         KnownMeta::AuthoringMetaV1 => Some(schema_for!(
             crate::meta::types::authoring::v1::AuthoringMeta
         )),
@@ -38,7 +37,12 @@ pub fn json_schema(meta: KnownMeta) -> Option<RootSchema> {
         KnownMeta::InterpreterCallerMetaV1 => Some(schema_for!(
             crate::meta::types::interpreter_caller::v1::InterpreterCallerMeta
         )),
-        KnownMeta::DotrainV1
+        // OpV1 is here rather than absent: rainlanguage/rain.metadata#304
+        // removed the model without removing the meta, so it stays a magic
+        // number this crate can name and `magic ls` still lists it. It has no
+        // type left to derive a schema from, which is exactly what None says.
+        KnownMeta::OpV1
+        | KnownMeta::DotrainV1
         | KnownMeta::RainlangV1
         | KnownMeta::AuthoringMetaV2
         | KnownMeta::ExpressionDeployerV2BytecodeV1

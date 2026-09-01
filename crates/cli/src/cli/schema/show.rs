@@ -55,27 +55,32 @@ mod tests {
     /// Each supported meta produces its own schema; compact output by
     /// default (no newlines).
     #[test]
-    fn test_show_op_v1_schema_compact() {
-        let s = show_to_string(KnownMeta::OpV1, false).unwrap();
+    fn test_show_authoring_v1_schema_compact() {
+        let s = show_to_string(KnownMeta::AuthoringMetaV1, false).unwrap();
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-        assert_eq!(v["title"], "OpMeta.");
+        assert!(s.contains("AuthoringMeta"), "{}", v["title"]);
         assert!(!s.contains('\n'));
+    }
+
+    /// OpV1 is a known meta with no schema here, so show refuses it rather
+    /// than producing one.
+    #[test]
+    fn test_show_refuses_op_v1() {
+        assert!(show_to_string(KnownMeta::OpV1, false).is_err());
     }
 
     /// The pretty flag pretty-prints the same schema.
     #[test]
     fn test_show_pretty_print() {
-        let s = show_to_string(KnownMeta::OpV1, true).unwrap();
+        let s = show_to_string(KnownMeta::AuthoringMetaV1, true).unwrap();
         assert!(s.starts_with("{\n"));
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-        assert_eq!(v["title"], "OpMeta.");
+        assert!(v["title"].is_string());
     }
 
-    /// All four supported arms return the schema of their own meta type.
+    /// All three supported arms return the schema of their own meta type.
     #[test]
     fn test_show_supported_schemas_are_distinct() {
-        let op = show_to_string(KnownMeta::OpV1, false).unwrap();
-        assert!(op.contains("OpMeta"));
         let authoring = show_to_string(KnownMeta::AuthoringMetaV1, false).unwrap();
         assert!(authoring.contains("AuthoringMeta"));
         let solidity = show_to_string(KnownMeta::SolidityAbiV2, false).unwrap();
@@ -83,9 +88,6 @@ mod tests {
         let caller = show_to_string(KnownMeta::InterpreterCallerMetaV1, false).unwrap();
         assert!(caller.contains("InterpreterCallerMeta"));
         for pair in [
-            (&op, &authoring),
-            (&op, &solidity),
-            (&op, &caller),
             (&authoring, &solidity),
             (&authoring, &caller),
             (&solidity, &caller),

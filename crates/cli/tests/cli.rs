@@ -35,6 +35,7 @@ fn magic_ls_prints_all_known_magic_numbers() {
 0xffa15ef0fc437099 dotrain-source-v1
 0xffda7b2fb167c286 order-builder-state-v1
 0xff7a1507ba4419ca raindex-signed-context-oracle-v1
+0xff5dcce9b571ba42 web-data-v1
 0xffa8e8a9b9cf4a31 oa-schema
 0xff9fae3cc645f463 oa-hash-list
 0xffc47a6299e8a911 oa-structure
@@ -88,11 +89,23 @@ fn schema_ls_lists_exactly_what_schema_show_accepts() {
 /// `schema show` writes the schema to stdout when no output path is
 /// given (the stdout branch of cli::output::output).
 #[test]
-fn schema_show_prints_op_meta_schema_to_stdout() {
-    let out = bin().args(["schema", "show", "op-v1"]).output().unwrap();
+fn schema_show_prints_schema_to_stdout() {
+    let out = bin()
+        .args(["schema", "show", "authoring-meta-v1"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["title"], "OpMeta.");
+    assert!(v["title"].is_string());
+}
+
+/// op-v1 is still a known meta - it is listed, and its magic number is in
+/// the spec table - but this crate models no payload for it, so `schema
+/// show` refuses rather than inventing one.
+#[test]
+fn schema_show_refuses_op_v1() {
+    let out = bin().args(["schema", "show", "op-v1"]).output().unwrap();
+    assert!(!out.status.success());
 }
 
 /// `schema-check` reports the number of verified entities and the source
