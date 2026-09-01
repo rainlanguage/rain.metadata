@@ -29,7 +29,6 @@ pub enum Error {
     ValidationErrors(validator::ValidationErrors),
     DecodeHexStringError(alloy::primitives::hex::FromHexError),
     InvalidMetaMagic(KnownMagic, KnownMagic),
-    MetaNestingTooDeep(usize),
     MetaboardSubgraphClientError(MetaboardSubgraphClientError),
 }
 
@@ -65,9 +64,6 @@ impl std::fmt::Display for Error {
                     "invalid meta magic: expected {:?}, got {:?}",
                     expected, actual
                 )
-            }
-            Error::MetaNestingTooDeep(max) => {
-                write!(f, "nested meta documents deeper than {} levels", max)
             }
             Error::MetaboardSubgraphClientError(v) => write!(f, "{}", v),
         }
@@ -165,15 +161,6 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "invalid meta magic: expected RainMetaDocumentV1, got OpMetaV1"
-        );
-    }
-
-    /// MetaNestingTooDeep renders the bound it carries.
-    #[test]
-    fn test_display_meta_nesting_too_deep_carries_the_bound() {
-        assert_eq!(
-            Error::MetaNestingTooDeep(32).to_string(),
-            "nested meta documents deeper than 32 levels"
         );
     }
 
