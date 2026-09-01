@@ -231,13 +231,33 @@ pub struct DeployerCache {
 }
 
 impl DeployerCache {
-    /// Caches `deployer` under `key`, and only if its own meta bytes hash to
-    /// the meta hash it claims for them.
+    /// Caches `deployer` under `key`, and only if the key is a hash, every
+    /// field needed to reproduce the deployer is present, and its own meta
+    /// bytes hash to the meta hash it claims for them.
+    ///
+    /// The key check has no counterpart in [MetaCache], which gets it for
+    /// free: there the key is a digest of the value, so a key of the wrong
+    /// length cannot equal one. Here the key is a bytecode meta hash while the
+    /// value carries a constructor meta of its own, so nothing about the value
+    /// constrains the key and the length is checked outright.
     pub fn insert_verified(
         &mut self,
         key: &[u8],
         deployer: NPE2Deployer,
     ) -> Result<&NPE2Deployer, Error> {
+        if key.len() != 32 {
+            return Err(Error::CorruptRecord(format!(
+                "deployer key {} is {} bytes, not a 32 byte hash",
+                hex::encode_prefixed(key),
+                key.len()
+            )));
+        }
+        if let Some(field) = deployer.corrupt_field() {
+            return Err(Error::CorruptRecord(format!(
+                "deployer {} is empty, so it cannot be reproduced",
+                field
+            )));
+        }
         if keccak256(&deployer.meta_bytes).0.as_slice() != deployer.meta_hash.as_slice() {
             return Err(Error::CorruptRecord(format!(
                 "deployer meta bytes do not hash to its own meta hash {}",
@@ -285,5 +305,155 @@ impl<'de> Deserialize<'de> for DeployerCache {
                 .map_err(serde::de::Error::custom)?;
         }
         Ok(cache)
+    }
+}
+
+#[cfg(test)]
+mod deployer_tests {
+    use super::*;
+
+    /// A deployer whose meta bytes hash to its meta hash and whose every
+    /// reproduction field is populated.
+    fn sound_deployer() -> NPE2Deployer {
+        let meta_bytes = b"constructor meta".to_vec();
+        NPE2Deployer {
+            meta_hash: keccak256(&meta_bytes).0.to_vec(),
+            meta_bytes,
+            bytecode: vec![0x01],
+            parser: vec![0x02],
+            store: vec![0x03],
+            interpreter: vec![0x04],
+            authoring_meta: None,
+        }
+    }
+
+    fn corrupt_message(result: Result<&NPE2Deployer, Error>) -> String {
+        match result.unwrap_err() {
+            Error::CorruptRecord(message) => message,
+            other => panic!("expected CorruptRecord, got {:?}", other),
+        }
+    }
+
+    /// A sound record under a 32 byte key is cached and readable back.
+    #[test]
+    fn test_deployer_insert_verified_accepts_a_sound_record() {
+        let deployer = sound_deployer();
+        let key = vec![0x11u8; 32];
+        let mut cache = DeployerCache::default();
+
+        assert_eq!(
+            cache.insert_verified(&key, deployer.clone()).unwrap(),
+            &deployer
+        );
+        assert_eq!(cache.get(&key), Some(&deployer));
+    }
+
+    /// The key must be a 32 byte hash. MetaCache gets this for free because
+    /// its key is a digest of its value; here nothing about the value
+    /// constrains the key, so an unchecked gate would take any length.
+    #[test]
+    fn test_deployer_insert_verified_rejects_a_key_that_is_not_a_hash() {
+        let mut cache = DeployerCache::default();
+
+        for key in [vec![], vec![0x11u8; 31], vec![0x11u8; 33]] {
+            let message = corrupt_message(cache.insert_verified(&key, sound_deployer()));
+            assert!(
+                message.contains("not a 32 byte hash"),
+                "{} bytes: {}",
+                key.len(),
+                message
+            );
+            assert!(cache.is_empty());
+        }
+    }
+
+    /// Every field is needed to reproduce the deployer on a local evm, so an
+    /// empty one is refused and the error names which.
+    #[test]
+    fn test_deployer_insert_verified_rejects_a_record_missing_a_field() {
+        let key = vec![0x11u8; 32];
+
+        for field in [
+            "meta_hash",
+            "meta_bytes",
+            "bytecode",
+            "parser",
+            "store",
+            "interpreter",
+        ] {
+            let mut deployer = sound_deployer();
+            match field {
+                "meta_hash" => deployer.meta_hash = vec![],
+                "meta_bytes" => deployer.meta_bytes = vec![],
+                "bytecode" => deployer.bytecode = vec![],
+                "parser" => deployer.parser = vec![],
+                "store" => deployer.store = vec![],
+                "interpreter" => deployer.interpreter = vec![],
+                _ => unreachable!(),
+            }
+
+            let mut cache = DeployerCache::default();
+            let message = corrupt_message(cache.insert_verified(&key, deployer));
+            assert!(message.contains(field), "{}: {}", field, message);
+            assert!(cache.is_empty());
+        }
+    }
+
+    /// Meta bytes that do not hash to the meta hash the record claims for them
+    /// are refused, so the record cannot seed the meta cache off a content
+    /// address that is not the content's.
+    #[test]
+    fn test_deployer_insert_verified_rejects_a_lying_meta_hash() {
+        let mut deployer = sound_deployer();
+        deployer.meta_bytes = b"different bytes".to_vec();
+        let mut cache = DeployerCache::default();
+
+        let message = corrupt_message(cache.insert_verified(&[0x11u8; 32], deployer));
+        assert!(message.contains("do not hash to"), "{}", message);
+        assert!(cache.is_empty());
+    }
+
+    /// Deserializing is a way in, so the same three checks apply off the wire.
+    #[test]
+    fn test_deployer_deserialize_rejects_an_unverified_entry() {
+        #[derive(serde::Serialize)]
+        struct Wire {
+            inner: BTreeMap<Vec<u8>, NPE2Deployer>,
+        }
+
+        for (key, deployer) in [
+            (vec![0x11u8; 31], sound_deployer()),
+            (vec![0x11u8; 32], {
+                let mut d = sound_deployer();
+                d.parser = vec![];
+                d
+            }),
+            (vec![0x11u8; 32], {
+                let mut d = sound_deployer();
+                d.meta_bytes = b"different bytes".to_vec();
+                d
+            }),
+        ] {
+            let planted = Wire {
+                inner: BTreeMap::from([(key, deployer)]),
+            };
+            let wire = serde_cbor::to_vec(&planted).unwrap();
+            let round: Result<DeployerCache, _> = serde_cbor::from_slice(&wire);
+            assert!(round.is_err(), "an unverified entry round tripped in");
+        }
+    }
+
+    /// A sound entry survives the round trip, so the gate rejects lies rather
+    /// than everything.
+    #[test]
+    fn test_deployer_deserialize_keeps_a_verified_entry() {
+        let deployer = sound_deployer();
+        let key = vec![0x11u8; 32];
+        let mut cache = DeployerCache::default();
+        cache.insert_verified(&key, deployer.clone()).unwrap();
+
+        let wire = serde_cbor::to_vec(&cache).unwrap();
+        let round: DeployerCache = serde_cbor::from_slice(&wire).unwrap();
+        assert_eq!(round.get(&key), Some(&deployer));
     }
 }
