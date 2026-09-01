@@ -52,8 +52,11 @@ fn schema_ls_prints_metas_that_have_a_schema() {
     let out = bin().args(["schema", "ls"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
+    // op-v1 is absent: #304 removed the model, so there is no type left to
+    // derive a schema from. It is still a known meta and `magic ls` still
+    // lists it - having a magic number and having a json schema are different
+    // things, which is the distinction this listing now draws.
     let expected = "\
-op-v1
 solidity-abi-v2
 authoring-meta-v1
 interpreter-caller-meta-v1

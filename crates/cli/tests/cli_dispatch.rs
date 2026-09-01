@@ -27,8 +27,10 @@ fn stdout_utf8(out: &Output) -> String {
 fn test_dispatch_schema_ls() {
     let out = run(&["schema", "ls"]);
     assert!(out.status.success());
+    // op-v1 is absent because #304 removed the model it derived a schema
+    // from, not because it stopped being a known meta - `magic ls` still
+    // lists it.
     let expected = "\
-op-v1
 solidity-abi-v2
 authoring-meta-v1
 interpreter-caller-meta-v1
