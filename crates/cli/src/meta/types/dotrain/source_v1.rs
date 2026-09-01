@@ -30,41 +30,61 @@ impl DotrainSourceV1 {
     pub fn hash(&self) -> B256 {
         keccak256(self.0.as_bytes())
     }
-    /// Fetches the DotrainSourceV1 from the Metaboard by subject
-    /// Returns Ok(Some(DotrainSourceV1)) if found, Ok(None) if not found
+    /// Fetches every `DotrainSourceV1` the metaboard carries under `subject`.
+    ///
+    /// A subject is whatever entity the metadata is about, and both directions
+    /// of that relation are 1:N: any number of senders may emit under one
+    /// subject, and any meta may carry any number of items. Nothing requires
+    /// the sources found there to agree, so all of them are returned, in the
+    /// order scanned: rows in the order the query pins, items in the order
+    /// they are encoded. Nothing is deduplicated or reordered.
+    /// An empty vec means the subject carries no dotrain source.
+    ///
+    /// A metaboard enforces the magic number and nothing else, so anyone may
+    /// emit bytes under any subject that carry the prefix and are otherwise
+    /// junk, and per `IMetaBoardV1_2` discarding those is this side's job.
+    /// The unit discarded is one emission, because one emission is one
+    /// emitter: a row that does not decode is dropped, and so is a row that
+    /// decodes but puts something under the dotrain magic that is not a
+    /// source — taking the readable half of that row would accept selected
+    /// data from an emitter who just sent junk under the magic being read.
+    ///
+    /// Strictness stops at the emission for the same reason. Dropping a row
+    /// costs only whoever emitted it, and they can emit again; failing the
+    /// call would let any one emitter deny every source under the subject to
+    /// every caller, permanently, on an append-only board. Errors reaching
+    /// the metaboard still surface.
+    ///
+    /// The query is not paginated, so what is scanned is the subgraph's first
+    /// page of metas under the subject in that order, currently 100 rows.
     pub async fn fetch_by_subject(
         subject: [u8; 32],
         subgraph_url: Url,
-    ) -> Result<Option<Self>, Error> {
+    ) -> Result<Vec<Self>, Error> {
         let client = MetaboardSubgraphClient::new(subgraph_url);
-        let subject_hex = format!("0x{}", hex::encode(subject));
-        let subject_bytes = Bytes(subject_hex);
+        let subject_bytes = Bytes(format!("0x{}", hex::encode(subject)));
 
-        match client.get_metabytes_by_subject(&subject_bytes).await {
-            Ok(metabytes) => {
-                if metabytes.is_empty() {
-                    return Ok(None);
-                }
-                // Try to decode the first meta
-                let decoded_items = RainMetaDocumentV1Item::cbor_decode(&metabytes[0])?;
+        let metabytes = match client.get_metabytes_by_subject(&subject_bytes).await {
+            Ok(metabytes) => metabytes,
+            Err(MetaboardSubgraphClientError::Empty(_)) => return Ok(vec![]),
+            Err(e) => return Err(Error::MetaboardSubgraphClientError(e)),
+        };
 
-                if decoded_items.is_empty() {
-                    return Ok(None);
-                }
-
-                // Try to convert to DotrainSourceV1
-                let dotrain_source = DotrainSourceV1::try_from(decoded_items[0].clone())?;
-                Ok(Some(dotrain_source))
-            }
-            Err(MetaboardSubgraphClientError::Empty(_)) => {
-                // No meta found for this subject
-                Ok(None)
-            }
-            Err(e) => {
-                // Convert subgraph client error to our error type
-                Err(Error::MetaboardSubgraphClientError(e))
+        let mut sources = Vec::new();
+        for meta_bytes in metabytes {
+            let Ok(items) = RainMetaDocumentV1Item::cbor_decode(&meta_bytes) else {
+                continue;
+            };
+            let row: Result<Vec<Self>, Error> = items
+                .into_iter()
+                .filter(|item| item.magic == KnownMagic::DotrainSourceV1)
+                .map(DotrainSourceV1::try_from)
+                .collect();
+            if let Ok(row) = row {
+                sources.extend(row);
             }
         }
+        Ok(sources)
     }
 }
 
@@ -91,7 +111,7 @@ impl TryFrom<RainMetaDocumentV1Item> for DotrainSourceV1 {
                 value.magic,
             ));
         }
-        let content = String::from_utf8(value.payload.to_vec()).map_err(Error::FromUtf8Error)?;
+        let content = String::from_utf8(value.unpack()?).map_err(Error::FromUtf8Error)?;
         Ok(DotrainSourceV1(content))
     }
 }
@@ -100,6 +120,77 @@ impl TryFrom<RainMetaDocumentV1Item> for DotrainSourceV1 {
 mod tests {
     use super::*;
     use crate::meta::KnownMagic;
+
+    fn dotrain_meta(sources: &[&str]) -> Vec<u8> {
+        let items: Vec<RainMetaDocumentV1Item> = sources
+            .iter()
+            .map(|source| DotrainSourceV1(source.to_string()).into())
+            .collect();
+        RainMetaDocumentV1Item::cbor_encode_seq(&items, KnownMagic::RainMetaDocumentV1).unwrap()
+    }
+
+    fn other_meta() -> Vec<u8> {
+        RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from("test content"),
+            magic: KnownMagic::AuthoringMetaV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        }
+        .cbor_encode()
+        .unwrap()
+    }
+
+    /// The whole of what `LibIMetaBoardV1_2.emitMeta` demands of an emitter:
+    /// `checkMetaUnhashedV1` enforces the magic number and nothing else, so
+    /// this is emittable by anyone under any subject.
+    fn anon_junk_with_magic() -> Vec<u8> {
+        let mut junk = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        junk.extend_from_slice(&[0xff, 0xff, 0xff]);
+        junk
+    }
+
+    /// Also emittable by anyone: an item claiming the dotrain magic over a
+    /// payload that is not utf-8, so it decodes but cannot be a source.
+    fn non_utf8_dotrain_item() -> RainMetaDocumentV1Item {
+        RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(vec![0xff, 0xfe]),
+            magic: KnownMagic::DotrainSourceV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+        }
+    }
+
+    /// One emission, carrying whatever items it is given.
+    fn meta_of(items: Vec<RainMetaDocumentV1Item>) -> Vec<u8> {
+        RainMetaDocumentV1Item::cbor_encode_seq(&items, KnownMagic::RainMetaDocumentV1).unwrap()
+    }
+
+    fn source_item(source: &str) -> RainMetaDocumentV1Item {
+        DotrainSourceV1(source.to_string()).into()
+    }
+
+    fn metas_response(metas: &[Vec<u8>], subject: [u8; 32]) -> serde_json::Value {
+        let rows: Vec<serde_json::Value> = metas
+            .iter()
+            .map(|meta| {
+                serde_json::json!({
+                    "meta": hex::encode_prefixed(meta),
+                    "metaHash": "0x1234567890abcdef",
+                    "sender": "0x1234567890123456789012345678901234567890",
+                    "id": "0x123",
+                    "metaBoard": {
+                        "address": "0x1234567890123456789012345678901234567890"
+                    },
+                    "subject": hex::encode(subject)
+                })
+            })
+            .collect();
+        serde_json::json!({ "data": { "metaV1S": rows } })
+    }
 
     #[test]
     fn test_into_document() {
@@ -265,11 +356,9 @@ mod tests {
         let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
 
         // Verify the result
-        assert!(result.is_ok());
-        let dotrain_source = result.unwrap();
-        assert!(dotrain_source.is_some());
-        let dotrain_source = dotrain_source.unwrap();
-        assert_eq!(dotrain_source.0, dotrain_code);
+        let sources = result.unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].0, dotrain_code);
 
         // Verify the mock was called
         mock.assert();
@@ -304,16 +393,14 @@ mod tests {
         let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
 
         // Verify the result
-        assert!(result.is_ok());
-        let dotrain_source = result.unwrap();
-        assert!(dotrain_source.is_none());
+        assert!(result.unwrap().is_empty());
 
         // Verify the mock was called
         mock.assert();
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_invalid_cbor() {
+    async fn test_fetch_by_subject_undecodable_row_yields_nothing() {
         use httpmock::prelude::*;
 
         // Create a mock server
@@ -330,96 +417,39 @@ mod tests {
                 .body_contains("subject");
             then.status(200)
                 .header("content-type", "application/json")
-                .json_body(serde_json::json!({
-                    "data": {
-                        "metaV1S": [
-                            {
-                                "meta": "0xdeadbeef", // Invalid CBOR
-                                "metaHash": "0x1234567890abcdef",
-                                "sender": "0x1234567890123456789012345678901234567890",
-                                "id": "0x123",
-                                "metaBoard": {
-                                    "address": "0x1234567890123456789012345678901234567890"
-                                },
-                                "subject": hex::encode(subject)
-                            }
-                        ]
-                    }
-                }));
+                .json_body(metas_response(&[vec![0xde, 0xad, 0xbe, 0xef]], subject));
         });
 
-        // Test the function
-        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
-
-        // Verify the result is an error
-        assert!(result.is_err());
+        // A row that does not decode carries no dotrain source. That is not
+        // an error: the metaboard accepts junk from anyone and discarding it
+        // is this side's job.
+        assert!(DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap()
+            .is_empty());
 
         // Verify the mock was called
         mock.assert();
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_wrong_magic() {
+    async fn test_fetch_by_subject_only_other_meta_types_yields_nothing() {
         use httpmock::prelude::*;
-
-        // Create a mock server
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
-
         let subject = [0x42; 32];
 
-        // Create a document with wrong magic
-        let wrong_document = RainMetaDocumentV1Item {
-            payload: serde_bytes::ByteBuf::from("test content"),
-            magic: KnownMagic::AuthoringMetaV1, // Wrong magic
-            content_type: ContentType::OctetStream,
-            content_encoding: ContentEncoding::None,
-            content_language: ContentLanguage::None,
-            schema: None,
-        };
-        let wrong_cbor_bytes = wrong_document.cbor_encode().unwrap();
-        let wrong_cbor_hex = hex::encode(&wrong_cbor_bytes);
-
-        // Mock response with wrong magic
         let mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/")
-                .header("content-type", "application/json")
-                .body_contains("subject");
+            when.method(POST).path("/").body_contains("subject");
             then.status(200)
                 .header("content-type", "application/json")
-                .json_body(serde_json::json!({
-                    "data": {
-                        "metaV1S": [
-                            {
-                                "meta": format!("0x{}", wrong_cbor_hex),
-                                "metaHash": "0x1234567890abcdef",
-                                "sender": "0x1234567890123456789012345678901234567890",
-                                "id": "0x123",
-                                "metaBoard": {
-                                    "address": "0x1234567890123456789012345678901234567890"
-                                },
-                                "subject": hex::encode(subject)
-                            }
-                        ]
-                    }
-                }));
+                .json_body(metas_response(&[other_meta()], subject));
         });
 
-        // Test the function
-        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url).await;
-
-        // Verify the result is an error (wrong magic)
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            Error::InvalidMetaMagic(expected, actual) => {
-                assert_eq!(expected, KnownMagic::DotrainSourceV1);
-                assert_eq!(actual, KnownMagic::AuthoringMetaV1);
-            }
-            _ => panic!("Expected InvalidMetaMagic error"),
-        }
-
-        // Verify the mock was called
+        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap();
+        assert!(result.is_empty());
         mock.assert();
     }
 
@@ -468,50 +498,253 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_by_subject_takes_first_decoded_item() {
+    async fn test_fetch_by_subject_returns_every_item_in_one_meta() {
         use httpmock::prelude::*;
         let server = MockServer::start();
         let mock_url = Url::parse(&server.url("/")).unwrap();
         let subject = [0x42; 32];
 
-        // One meta blob that cbor-decodes to TWO dotrain items: the first
-        // one must win.
-        let first: RainMetaDocumentV1Item = DotrainSourceV1("first".to_string()).into();
-        let second: RainMetaDocumentV1Item = DotrainSourceV1("second".to_string()).into();
-        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
-            &vec![first, second],
-            KnownMagic::RainMetaDocumentV1,
-        )
-        .unwrap();
-        let cbor_hex = hex::encode(&cbor_bytes);
+        // One blob carrying two different sources: both come back, in
+        // encoding order. Neither position nor content picks a winner.
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("subject");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(metas_response(
+                    &[dotrain_meta(&["first", "second"])],
+                    subject,
+                ));
+        });
+
+        let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap();
+        assert_eq!(
+            sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_returns_divergent_metas_in_row_order() {
+        use httpmock::prelude::*;
+        let subject = [0x42; 32];
+
+        // Two metas under one subject holding two different sources is
+        // ordinary valid data, not a conflict to resolve: every source is
+        // returned. Running the same fixture in both row orders pins that the
+        // vec is the rows as they arrive - nothing sorted, nothing dropped.
+        for expected in [vec!["first", "second"], vec!["second", "first"]] {
+            let server = MockServer::start();
+            let mock_url = Url::parse(&server.url("/")).unwrap();
+            let rows: Vec<Vec<u8>> = expected.iter().map(|s| dotrain_meta(&[*s])).collect();
+            let mock = server.mock(|when, then| {
+                when.method(POST).path("/").body_contains("subject");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body(metas_response(&rows, subject));
+            });
+
+            let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+                .await
+                .unwrap();
+            assert_eq!(
+                sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+                expected
+            );
+            mock.assert();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_keeps_duplicate_sources() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+        let subject = [0x42; 32];
+
+        // Two emissions of the same source are two metas, and how many there
+        // are is the caller's to read: they are not collapsed into one.
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("subject");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(metas_response(
+                    &[dotrain_meta(&["agreed"]), dotrain_meta(&["agreed"])],
+                    subject,
+                ));
+        });
+
+        let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap();
+        assert_eq!(
+            sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            vec!["agreed", "agreed"]
+        );
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_ignores_other_meta_types_alongside() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+        let subject = [0x42; 32];
 
         let mock = server.mock(|when, then| {
             when.method(POST).path("/").body_contains("subject");
             then.status(200)
                 .header("content-type", "application/json")
-                .json_body(serde_json::json!({
-                    "data": {
-                        "metaV1S": [
-                            {
-                                "meta": format!("0x{}", cbor_hex),
-                                "metaHash": "0x1234567890abcdef",
-                                "sender": "0x1234567890123456789012345678901234567890",
-                                "id": "0x123",
-                                "metaBoard": {
-                                    "address": "0x1234567890123456789012345678901234567890"
-                                },
-                                "subject": hex::encode(subject)
-                            }
-                        ]
-                    }
-                }));
+                .json_body(metas_response(
+                    &[other_meta(), dotrain_meta(&["only one"])],
+                    subject,
+                ));
         });
 
-        let result = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+        let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
             .await
-            .unwrap()
             .unwrap();
-        assert_eq!(result.0, "first");
+        assert_eq!(
+            sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            vec!["only one"]
+        );
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_junk_row_does_not_deny_the_subject() {
+        use httpmock::prelude::*;
+        let subject = [0x42; 32];
+
+        // Anyone can emit junk carrying the magic number under anyone's
+        // subject, so a junk row must not decide what the rest of the subject
+        // carries. Both orders: the source survives whether the junk sorts
+        // before or after it.
+        for rows in [
+            vec![dotrain_meta(&["legit"]), anon_junk_with_magic()],
+            vec![anon_junk_with_magic(), dotrain_meta(&["legit"])],
+        ] {
+            let server = MockServer::start();
+            let mock_url = Url::parse(&server.url("/")).unwrap();
+            let mock = server.mock(|when, then| {
+                when.method(POST).path("/").body_contains("subject");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body(metas_response(&rows, subject));
+            });
+
+            let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+                .await
+                .unwrap();
+            assert_eq!(
+                sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+                vec!["legit"]
+            );
+            mock.assert();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_non_utf8_dotrain_does_not_deny_the_subject() {
+        use httpmock::prelude::*;
+        let subject = [0x42; 32];
+
+        // An emission putting something under the dotrain magic that is not a
+        // source is dropped whole, and dropping it does not reach the rows
+        // around it. Both orders: the source survives whether the unreadable
+        // emission sorts before or after it.
+        for rows in [
+            vec![
+                meta_of(vec![source_item("legit")]),
+                meta_of(vec![non_utf8_dotrain_item()]),
+            ],
+            vec![
+                meta_of(vec![non_utf8_dotrain_item()]),
+                meta_of(vec![source_item("legit")]),
+            ],
+        ] {
+            let server = MockServer::start();
+            let mock_url = Url::parse(&server.url("/")).unwrap();
+            let mock = server.mock(|when, then| {
+                when.method(POST).path("/").body_contains("subject");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body(metas_response(&rows, subject));
+            });
+
+            let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+                .await
+                .unwrap();
+            assert_eq!(
+                sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+                vec!["legit"]
+            );
+            mock.assert();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_takes_nothing_from_an_emission_it_cannot_read() {
+        use httpmock::prelude::*;
+        let subject = [0x42; 32];
+
+        // One emission is one emitter. An emitter that puts something under
+        // the dotrain magic that is not a source does not get the rest of
+        // that emission read: no item of it is returned, whichever side of
+        // the unreadable one the readable one sits. Only that emitter loses
+        // anything, so there is no reason to keep half of what they sent.
+        for rows in [
+            vec![meta_of(vec![source_item("legit"), non_utf8_dotrain_item()])],
+            vec![meta_of(vec![non_utf8_dotrain_item(), source_item("legit")])],
+        ] {
+            let server = MockServer::start();
+            let mock_url = Url::parse(&server.url("/")).unwrap();
+            let mock = server.mock(|when, then| {
+                when.method(POST).path("/").body_contains("subject");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body(metas_response(&rows, subject));
+            });
+
+            assert!(DotrainSourceV1::fetch_by_subject(subject, mock_url)
+                .await
+                .unwrap()
+                .is_empty());
+            mock.assert();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_by_subject_unreadable_emission_does_not_reach_other_rows() {
+        use httpmock::prelude::*;
+        let server = MockServer::start();
+        let mock_url = Url::parse(&server.url("/")).unwrap();
+        let subject = [0x42; 32];
+
+        // The row it is dropped from is the only row it costs.
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("subject");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(metas_response(
+                    &[
+                        meta_of(vec![source_item("first")]),
+                        meta_of(vec![source_item("dropped"), non_utf8_dotrain_item()]),
+                        meta_of(vec![source_item("last")]),
+                    ],
+                    subject,
+                ));
+        });
+
+        let sources = DotrainSourceV1::fetch_by_subject(subject, mock_url)
+            .await
+            .unwrap();
+        assert_eq!(
+            sources.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            vec!["first", "last"]
+        );
         mock.assert();
     }
 
@@ -522,7 +755,7 @@ mod tests {
         let mock_url = Url::parse(&server.url("/")).unwrap();
 
         // An HTTP-level failure is not "no meta found": it must surface as
-        // Err(MetaboardSubgraphClientError), never Ok(None).
+        // Err(MetaboardSubgraphClientError), never an empty vec.
         let mock = server.mock(|when, then| {
             when.method(POST).path("/");
             then.status(500);
@@ -537,5 +770,23 @@ mod tests {
             ),
         }
         mock.assert();
+    }
+
+    #[test]
+    fn test_try_from_unpacks_content_encoding() {
+        let dotrain_code = "/* some dotrain code */".to_string();
+        let document_item = RainMetaDocumentV1Item {
+            payload: serde_bytes::ByteBuf::from(
+                ContentEncoding::Deflate.encode(dotrain_code.as_bytes()),
+            ),
+            magic: KnownMagic::DotrainSourceV1,
+            content_type: ContentType::OctetStream,
+            content_encoding: ContentEncoding::Deflate,
+            content_language: ContentLanguage::None,
+            schema: None,
+        };
+
+        let dotrain_source = DotrainSourceV1::try_from(document_item).unwrap();
+        assert_eq!(dotrain_source.0, dotrain_code);
     }
 }

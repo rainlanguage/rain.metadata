@@ -30,6 +30,7 @@ libs = ["dependencies"]
 # `yq` and `git` over `vm.ffi`, which this list does not gate.
 fs_permissions = [
   { access = "read", path = "out/" },
+  { access = "read", path = "test/fixtures/" },
   { access = "read-write", path = "crates/bindings/abi/" },
 ]
 
