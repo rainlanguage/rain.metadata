@@ -2508,8 +2508,8 @@ mod tests {
 
         let record = store.search_deployer_check(&tx).await.cloned().unwrap();
         assert_eq!(record.meta_bytes, doc);
-        assert_eq!(store.search_deployer_check(&tx).await, Some(&record));
-        assert_eq!(store.search_deployer_check(&tx).await, Some(&record));
+        assert_eq!(store.search_deployer_check(&tx).await.unwrap(), &record);
+        assert_eq!(store.search_deployer_check(&tx).await.unwrap(), &record);
         assert_eq!(mock.hits(), 1);
     }
 
