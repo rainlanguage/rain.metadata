@@ -118,7 +118,7 @@ impl MetaboardSubgraphClient {
         for meta in data.meta_v1_s {
             meta_bytes.push(decode(&meta.meta.0).map_err(|e| {
                 MetaboardSubgraphClientError::FromHexError {
-                    metahash: encode(&meta.meta_hash.0),
+                    metahash: meta.meta_hash.0.clone(),
                     source: e,
                 }
             })?);
@@ -271,11 +271,14 @@ mod tests {
 
         // Mock a successful response. body_contains pins the wire shape:
         // the subject Bytes value must be sent verbatim in the request
-        // (not coerced to a number, not stripped of `0x`).
+        // (not coerced to a number, not stripped of `0x`), and the rows must
+        // be ordered by the query rather than left to the indexer.
         server.mock(|when, then| {
             when.method(POST)
                 .path("/")
                 .body_contains("where: {subject: $subject}")
+                .body_contains("orderBy: id")
+                .body_contains("orderDirection: asc")
                 .body_contains("0x7b");
             then.status(200).json_body_obj(&{
                 serde_json::json!({
@@ -577,6 +580,109 @@ mod tests {
         }
     }
 
+    /// A non-2xx response is a Status error naming the code and carrying the
+    /// body, never a decode error indistinguishable from a malformed 200.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_http_error_status() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let hash = [3u8; 32];
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(404).body("no such subgraph");
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_hash(&hash).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::RequestErrorByHash {
+                metahash,
+                source: CynicClientError::Status { status, body },
+            }) => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+                assert_eq!(status.as_u16(), 404);
+                assert_eq!(body, "no such subgraph");
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+
+    /// A non-2xx body that does decode as a graphql response is still a Status
+    /// error: its data is never handed back as if the query had succeeded.
+    #[tokio::test]
+    async fn test_get_metabytes_by_subject_http_error_status_with_decodable_body() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let subject = Bytes("0x7d".to_string());
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(500).json_body_obj(&{
+                serde_json::json!({
+                    "data": {
+                        "metaV1S": [
+                            {
+                                "meta": "0x05",
+                                "metaHash": "0x00",
+                                "sender": "0x00",
+                                "id": "0x00",
+                                "metaBoard": { "address": "0x00" },
+                                "subject": "0x7d",
+                            }
+                        ]
+                    }
+                })
+            });
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_subject(&subject).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::RequestErrorBySubject {
+                subject,
+                source: CynicClientError::Status { status, .. },
+            }) => {
+                assert_eq!(subject, "0x7d");
+                assert_eq!(status.as_u16(), 500);
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+
+    /// The gate is any 2xx, not 200 alone: a 202 carrying a graphql response
+    /// decodes as normal.
+    #[tokio::test]
+    async fn test_get_metaboard_addresses_non_200_success_status() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        server.mock(|when, then| {
+            when.method(POST).path("/").body_contains("metaBoards");
+            then.status(202).json_body_obj(&{
+                serde_json::json!({
+                    "data": {
+                        "metaBoards": [
+                            { "address": "0x0000000000000000000000000000000000000003" }
+                        ]
+                    }
+                })
+            });
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metaboard_addresses(None, None).await.unwrap();
+
+        assert_eq!(
+            result,
+            vec![Address::from_str("0x0000000000000000000000000000000000000003").unwrap()]
+        );
+    }
+
     /// A meta whose hex payload does not decode is a FromHexError keyed by
     /// the queried hash, never silently dropped.
     #[tokio::test]
@@ -618,11 +724,7 @@ mod tests {
     }
 
     /// Same failure on the subject path: a FromHexError, keyed by the
-    /// offending meta's own hash rather than by the subject.
-    /// NOTE: the exact key text is NOT pinned here because the current
-    /// implementation hex-encodes the UTF-8 bytes of the (already hex) hash
-    /// string; see the audit issue on the double encoding. The variant and a
-    /// non-empty key are the undisputed part of the contract.
+    /// offending meta's own hash verbatim rather than by the subject.
     #[tokio::test]
     async fn test_get_metabytes_by_subject_invalid_hex_meta() {
         let server = MockServer::start_async().await;
@@ -655,7 +757,7 @@ mod tests {
 
         match result {
             Err(MetaboardSubgraphClientError::FromHexError { metahash, .. }) => {
-                assert!(!metahash.is_empty());
+                assert_eq!(metahash, "0xabcd");
             }
             other => panic!("unexpected result: {:?}", other),
         }
