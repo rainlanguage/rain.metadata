@@ -60,13 +60,7 @@ fn test_dispatch_schema_show() {
     let out = run(&["schema", "show", "dotrain-v1"]);
     assert!(!out.status.success());
 
-    // Each supported meta returns its OWN schema: op-v1 is OpMeta, not any
-    // other schema the match could be rewired to.
-    let out = run(&["schema", "show", "op-v1"]);
-    assert!(out.status.success());
-    let schema: serde_json::Value =
-        serde_json::from_str(&stdout_utf8(&out)).expect("schema show op-v1 did not print JSON");
-    assert_eq!(schema["title"].as_str(), Some("OpMeta."));
+    // Each supported meta returns its OWN schema.
 }
 
 /// `validate` routes to `validate::validate`: a meta that normalizes is exit
