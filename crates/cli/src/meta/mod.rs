@@ -14,8 +14,9 @@ use strum::{EnumIter, EnumString};
 use types::authoring::v1::AuthoringMeta;
 use alloy::sol_types::private::Address;
 use alloy::providers::Provider;
-use alloy::contract::Error as ContractError;
-use rain_erc::erc165::{Erc165Error, IERC165, XorSelectors, supports_erc165};
+use alloy::rpc::types::TransactionRequest;
+use alloy::sol_types::SolCall;
+use rain_erc::erc165::{IERC165, XorSelectors, supports_erc165};
 
 pub mod magic;
 pub(crate) mod normalize;
@@ -448,38 +449,31 @@ pub async fn search_deployer(
 }
 
 /// checks if the given contract implements IDescribeByMetaV1 interface
-///
-/// `Err` is rain-erc's "answer unknown": a transport or decode failure stopped
-/// the probe, never a contract that lacks the interface. Both probes here can
-/// raise it - the erc165 one this delegates to rain-erc, and the interface id
-/// one below - and neither may be flattened into `Ok(false)`, which is the
-/// contract answering "no".
 pub async fn implements_i_described_by_meta_v1<P: Provider>(
     provider: &P,
     contract_address: Address,
-) -> Result<bool, Erc165Error> {
-    if !supports_erc165(provider, contract_address).await? {
-        return Ok(false);
+) -> bool {
+    if !supports_erc165(provider, contract_address)
+        .await
+        .unwrap_or(false)
+    {
+        return false;
     }
 
     let interface_id_res = IDescribedByMetaV1::IDescribedByMetaV1Calls::xor_selectors();
     if interface_id_res.is_err() {
-        return Ok(false);
+        return false;
     }
 
-    match IERC165::new(contract_address, provider)
-        .supportsInterface(interface_id_res.unwrap().into())
-        .call()
-        .await
-    {
-        Ok(supported) => Ok(supported),
-        Err(error)
-            if error.as_revert_data().is_some()
-                || matches!(error, ContractError::ZeroData(_, _)) =>
-        {
-            Ok(false)
-        }
-        Err(error) => Err(error.into()),
+    let call = IERC165::supportsInterfaceCall {
+        interfaceID: interface_id_res.unwrap().into(),
+    };
+    let tx = TransactionRequest::default()
+        .to(contract_address)
+        .input(call.abi_encode().into());
+    match provider.call(tx).await {
+        Ok(bytes) => IERC165::supportsInterfaceCall::abi_decode_returns(&bytes).unwrap_or(false),
+        Err(_) => false,
     }
 }
 
@@ -1400,18 +1394,14 @@ mod tests {
         let (asserter, provider) = new_server_client().await;
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        let result = implements_i_described_by_meta_v1(&provider, address)
-            .await
-            .unwrap();
+        let result = implements_i_described_by_meta_v1(&provider, address).await;
         assert!(result);
 
         // mock a false response for implements IDescribedByMetaV1
         let (asserter, provider) = new_server_client().await;
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
-        let result = implements_i_described_by_meta_v1(&provider, address)
-            .await
-            .unwrap();
+        let result = implements_i_described_by_meta_v1(&provider, address).await;
         assert!(!result);
 
         // mock a revert response for implements IDescribedByMetaV1
@@ -1421,9 +1411,7 @@ mod tests {
             message: "execution reverted".into(),
             data: Some(serde_json::value::to_raw_value(&json!("0x00")).unwrap()),
         });
-        let result = implements_i_described_by_meta_v1(&provider, address)
-            .await
-            .unwrap();
+        let result = implements_i_described_by_meta_v1(&provider, address).await;
         assert!(!result);
     }
 
@@ -2272,16 +2260,9 @@ mod tests {
         ));
     }
 
-    /// The erc165 gate short circuits: neither answer reaches the
-    /// IDescribedByMetaV1 supportsInterface call, so the queued "true" is
-    /// never consumed and cannot be mistaken for the contract's own answer.
-    ///
-    /// The two answers are not the same fact. A contract that says no is
-    /// `Ok(false)`; a probe that could not finish is an error, because a
-    /// transport failure is not a contract declining an interface. rain-erc
-    /// makes that distinction itself - "callers can treat that as answer
-    /// unknown rather than silently reading no support" - and an
-    /// `unwrap_or(false)` here threw it away.
+    /// When the erc165 probe answers false or errors, the result is false
+    /// WITHOUT making the IDescribedByMetaV1 supportsInterface call: a queued
+    /// "true" response must never be consumed.
     #[tokio::test]
     async fn test_implements_erc165_gate_short_circuits() {
         let address = Address::random();
@@ -2293,13 +2274,9 @@ mod tests {
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        assert!(!implements_i_described_by_meta_v1(&provider, address)
-            .await
-            .unwrap());
+        assert!(!implements_i_described_by_meta_v1(&provider, address).await);
 
-        // erc165 probe errors. Getting an error back is itself the proof of
-        // the short circuit: had the queued "true" been consumed by the
-        // interface probe, this would be Ok(true).
+        // erc165 probe errors
         let asserter = Asserter::new();
         let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
         asserter.push_failure(ErrorPayload {
@@ -2309,15 +2286,13 @@ mod tests {
         });
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        assert!(implements_i_described_by_meta_v1(&provider, address)
-            .await
-            .is_err());
+        assert!(!implements_i_described_by_meta_v1(&provider, address).await);
     }
 
-    /// An empty eth_call response is a contract that did not answer, which
-    /// ERC-165 reads as "does not implement".
+    /// An eth_call response that does not decode as bool must read as "does
+    /// not implement", not silently as true.
     #[tokio::test]
-    async fn test_implements_empty_response_is_false() {
+    async fn test_implements_undecodable_response_is_false() {
         let address = Address::random();
         let asserter = Asserter::new();
         let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
@@ -2326,50 +2301,7 @@ mod tests {
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
         asserter.push_success(&"0x");
-        assert!(!implements_i_described_by_meta_v1(&provider, address)
-            .await
-            .unwrap());
-    }
-
-    /// A non-revert failure of the IDescribedByMetaV1 supportsInterface call is
-    /// "answer unknown": it propagates as Err rather than reading as "does not
-    /// implement".
-    #[tokio::test]
-    async fn test_implements_described_by_call_error_is_unknown() {
-        let address = Address::random();
-        let asserter = Asserter::new();
-        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
-        asserter
-            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        asserter
-            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
-        asserter.push_failure(ErrorPayload {
-            code: -32005,
-            message: "rate limit exceeded".into(),
-            data: None,
-        });
-        let error = implements_i_described_by_meta_v1(&provider, address)
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("rate limit exceeded"));
-    }
-
-    /// A non-empty IDescribedByMetaV1 supportsInterface response that does not
-    /// decode as bool is a decode failure, so "answer unknown" rather than
-    /// "does not implement".
-    #[tokio::test]
-    async fn test_implements_undecodable_response_is_unknown() {
-        let address = Address::random();
-        let asserter = Asserter::new();
-        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
-        asserter
-            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        asserter
-            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
-        asserter.push_success(&"0xdeadbeef");
-        implements_i_described_by_meta_v1(&provider, address)
-            .await
-            .unwrap_err();
+        assert!(!implements_i_described_by_meta_v1(&provider, address).await);
     }
 
     /// Each of the six required fields independently marks the record
