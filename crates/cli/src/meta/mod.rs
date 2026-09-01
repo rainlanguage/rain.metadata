@@ -543,6 +543,7 @@ impl NPE2Deployer {
 ///
 /// ```
 /// use rain_metadata::Store;
+/// use rain_metadata::meta::cache::{DeployerCache, MetaCache};
 /// use std::collections::HashMap;
 ///
 /// // to instantiate with an empty subgraph list
@@ -551,8 +552,8 @@ impl NPE2Deployer {
 /// // or to instantiate with initial values
 /// let mut store = Store::create(
 ///     &vec!["sg-url-1".to_string()],
-///     &HashMap::new(),
-///     &HashMap::new(),
+///     &MetaCache::default(),
+///     &DeployerCache::default(),
 ///     &HashMap::new(),
 /// );
 ///
@@ -562,9 +563,11 @@ impl NPE2Deployer {
 /// // merge another Store into this one
 /// store.merge(&Store::new());
 ///
-/// // updates the meta store with a new meta hash and bytes
-/// let hash = vec![0u8, 1u8, 2u8];
-/// store.update_with(&hash, &vec![0u8, 1u8]);
+/// // updates the meta store with some bytes and the hash they hash to - a
+/// // pair that does not is refused, so the hash is derived rather than picked
+/// let bytes = vec![0u8, 1u8];
+/// let hash = alloy::primitives::keccak256(&bytes).0.to_vec();
+/// store.update_with(&hash, &bytes).unwrap();
 ///
 /// // `Store::update(&hash)` is async; it searches each subgraph for `hash` and
 /// // populates the cache with the result. Call it from an async context with `.await`.
