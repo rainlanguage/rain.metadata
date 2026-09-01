@@ -3537,7 +3537,7 @@ dependencies = [
 
 [[package]]
 name = "rain-metaboard-subgraph"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "alloy",
  "async-trait",
@@ -3553,7 +3553,7 @@ dependencies = [
 
 [[package]]
 name = "rain-metadata"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "alloy",
  "anyhow",
@@ -3590,7 +3590,7 @@ dependencies = [
 
 [[package]]
 name = "rain-metadata-bindings"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "alloy",
  "serde_json",
