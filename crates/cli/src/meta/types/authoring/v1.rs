@@ -1,9 +1,10 @@
+use std::borrow::Cow;
 use alloy::sol_types::SolType;
 use alloy::sol;
 use serde::{Serialize, Deserialize};
 use validator::{Validate, ValidationErrors, ValidationError};
 use super::super::{
-    super::{RainMetaDocumentV1Item, str_to_bytes32, bytes32_to_str, Error},
+    super::{KnownMagic, RainMetaDocumentV1Item, str_to_bytes32, bytes32_to_str, Error},
     common::v1::{REGEX_RAIN_SYMBOL, REGEX_RAIN_STRING},
 };
 
@@ -124,10 +125,9 @@ impl Validate for AuthoringMeta {
     fn validate(&self) -> Result<(), ValidationErrors> {
         for (index, item) in self.0.iter().enumerate() {
             if let Err(mut e) = item.validate() {
-                e.add(
-                    Box::leak(format!("at index {}", index).into_boxed_str()),
-                    ValidationError::new(""),
-                );
+                let mut annotation = ValidationError::new("index");
+                annotation.add_param(Cow::from("index"), &index);
+                e.add("at index", annotation);
                 return Err(e);
             }
         }
@@ -162,6 +162,15 @@ impl TryFrom<&[u8]> for AuthoringMeta {
 impl TryFrom<RainMetaDocumentV1Item> for AuthoringMeta {
     type Error = Error;
     fn try_from(value: RainMetaDocumentV1Item) -> Result<Self, Self::Error> {
+        // The magic is the item's statement of what its payload is. Bytes
+        // that happen to abi decode are not an authoring meta unless the
+        // emitter said so.
+        if value.magic != KnownMagic::AuthoringMetaV1 {
+            return Err(Error::InvalidMetaMagic(
+                KnownMagic::AuthoringMetaV1,
+                value.magic,
+            ));
+        }
         AuthoringMeta::try_from(value.unpack()?)
     }
 }
@@ -170,8 +179,41 @@ impl TryFrom<RainMetaDocumentV1Item> for AuthoringMeta {
 mod tests {
     use alloy::sol_types::SolType;
     use alloy::sol;
+    use serde_json::json;
+    use validator::ValidationErrorsKind;
     use super::{AuthoringMeta, AuthoringMetaItem};
+    use crate::meta::{
+        ContentEncoding, ContentLanguage, ContentType, KnownMagic, RainMetaDocumentV1Item,
+    };
     use crate::{meta::str_to_bytes32, error::Error};
+
+    /// The magic is checked before the payload is looked at, so an item of
+    /// another type is rejected on its label rather than on whether its bytes
+    /// happen to abi decode as an authoring meta.
+    #[test]
+    fn test_try_from_item_rejects_wrong_magic() {
+        for magic in [
+            KnownMagic::SolidityAbiV2,
+            KnownMagic::AuthoringMetaV2,
+            KnownMagic::OpMetaV1,
+        ] {
+            let item = RainMetaDocumentV1Item {
+                payload: serde_bytes::ByteBuf::from(vec![0u8; 0]),
+                magic,
+                content_type: ContentType::OctetStream,
+                content_encoding: ContentEncoding::None,
+                content_language: ContentLanguage::None,
+                schema: None,
+            };
+            match AuthoringMeta::try_from(item).unwrap_err() {
+                Error::InvalidMetaMagic(expected, actual) => {
+                    assert_eq!(expected, KnownMagic::AuthoringMetaV1);
+                    assert_eq!(actual, magic);
+                }
+                other => panic!("expected InvalidMetaMagic for {:?}, got {:?}", magic, other),
+            }
+        }
+    }
 
     #[test]
     fn test_encode_decode_validate() -> Result<(), Error> {
@@ -286,26 +328,46 @@ mod tests {
 
     #[test]
     fn test_array_validate_rejects_and_annotates_offending_index() {
-        let am = AuthoringMeta(vec![
-            AuthoringMetaItem {
-                word: "stack".to_string(),
-                operand_parser_offset: 0u8,
-                description: "fine description.".to_string(),
-            },
-            AuthoringMetaItem {
-                word: "Bad Word".to_string(),
-                operand_parser_offset: 0u8,
-                description: "fine description.".to_string(),
-            },
-        ]);
-        match am.abi_encode_validate() {
-            Err(Error::ValidationErrors(v)) => {
-                let errors = v.errors();
-                assert!(errors.contains_key("at index 1"));
-                assert!(!errors.contains_key("at index 0"));
-            }
-            other => panic!("expected ValidationErrors, got {:?}", other.err()),
-        }
+        let good = AuthoringMetaItem {
+            word: "stack".to_string(),
+            operand_parser_offset: 0u8,
+            description: "fine description.".to_string(),
+        };
+        let bad = AuthoringMetaItem {
+            word: "Bad Word".to_string(),
+            operand_parser_offset: 0u8,
+            description: "fine description.".to_string(),
+        };
+        let annotated_index =
+            |items: Vec<AuthoringMetaItem>| match AuthoringMeta(items).abi_encode_validate() {
+                Err(Error::ValidationErrors(v)) => {
+                    let errors = v.errors();
+                    // the offending item's own errors, plus exactly one annotation
+                    // under a key that does not vary with the index
+                    assert_eq!(errors.len(), 2);
+                    assert!(errors.contains_key("word"));
+                    match errors.get("at index") {
+                        Some(ValidationErrorsKind::Field(annotations)) => {
+                            assert_eq!(annotations.len(), 1);
+                            annotations[0].params["index"].clone()
+                        }
+                        other => panic!("expected a field annotation, got {:?}", other),
+                    }
+                }
+                other => panic!("expected ValidationErrors, got {:?}", other.err()),
+            };
+        assert_eq!(
+            annotated_index(vec![good.clone(), bad.clone()]),
+            json!(1usize)
+        );
+        assert_eq!(
+            annotated_index(vec![bad.clone(), good.clone()]),
+            json!(0usize)
+        );
+        assert_eq!(
+            annotated_index(vec![good.clone(), good.clone(), bad.clone()]),
+            json!(2usize)
+        );
     }
 
     #[test]
