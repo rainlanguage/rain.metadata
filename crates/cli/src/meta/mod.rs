@@ -450,15 +450,15 @@ pub async fn search_deployer(
 /// checks if the given contract implements IDescribeByMetaV1 interface
 ///
 /// `Err` is rain-erc's "answer unknown": a transport or decode failure stopped
-/// the probe, never a contract that lacks the interface.
+/// the probe, never a contract that lacks the interface. Both probes here can
+/// raise it - the erc165 one this delegates to rain-erc, and the interface id
+/// one below - and neither may be flattened into `Ok(false)`, which is the
+/// contract answering "no".
 pub async fn implements_i_described_by_meta_v1<P: Provider>(
     provider: &P,
     contract_address: Address,
 ) -> Result<bool, Erc165Error> {
-    if !supports_erc165(provider, contract_address)
-        .await
-        .unwrap_or(false)
-    {
+    if !supports_erc165(provider, contract_address).await? {
         return Ok(false);
     }
 
@@ -2272,9 +2272,16 @@ mod tests {
         ));
     }
 
-    /// When the erc165 probe answers false or errors, the result is false
-    /// WITHOUT making the IDescribedByMetaV1 supportsInterface call: a queued
-    /// "true" response must never be consumed.
+    /// The erc165 gate short circuits: neither answer reaches the
+    /// IDescribedByMetaV1 supportsInterface call, so the queued "true" is
+    /// never consumed and cannot be mistaken for the contract's own answer.
+    ///
+    /// The two answers are not the same fact. A contract that says no is
+    /// `Ok(false)`; a probe that could not finish is an error, because a
+    /// transport failure is not a contract declining an interface. rain-erc
+    /// makes that distinction itself - "callers can treat that as answer
+    /// unknown rather than silently reading no support" - and an
+    /// `unwrap_or(false)` here threw it away.
     #[tokio::test]
     async fn test_implements_erc165_gate_short_circuits() {
         let address = Address::random();
@@ -2290,7 +2297,9 @@ mod tests {
             .await
             .unwrap());
 
-        // erc165 probe errors
+        // erc165 probe errors. Getting an error back is itself the proof of
+        // the short circuit: had the queued "true" been consumed by the
+        // interface probe, this would be Ok(true).
         let asserter = Asserter::new();
         let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
         asserter.push_failure(ErrorPayload {
@@ -2300,9 +2309,9 @@ mod tests {
         });
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        assert!(!implements_i_described_by_meta_v1(&provider, address)
+        assert!(implements_i_described_by_meta_v1(&provider, address)
             .await
-            .unwrap());
+            .is_err());
     }
 
     /// An empty eth_call response is a contract that did not answer, which

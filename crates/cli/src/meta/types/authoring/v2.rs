@@ -659,6 +659,33 @@ mod tests {
         }
     }
 
+    /// A transport failure of the erc165 probe - the first of the two, which
+    /// rain-erc runs - is "answer unknown" for the same reason as the second,
+    /// and was flattened by its own `unwrap_or(false)`.
+    #[tokio::test]
+    async fn test_fetch_for_contract_erc165_transport_error_is_not_has_no_words() {
+        let rpc_server = MockServer::start_async().await;
+        let probe = rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a701ffc9a7");
+            then.status(500).body("rpc down");
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+        probe.assert();
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::Erc165Error(_) => {}
+            other => panic!("expected Erc165Error, got {:?}", other),
+        }
+    }
+
     /// A transport failure of the IDescribedByMetaV1 supportsInterface call is
     /// "answer unknown", so it must surface as the erc165 error and never as
     /// the definitive HasNoWords.
