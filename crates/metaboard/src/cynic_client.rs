@@ -12,6 +12,11 @@ pub enum CynicClientError {
     GraphqlError(Vec<GraphQlError>),
     #[error("Subgraph query returned no data")]
     Empty,
+    #[error("Subgraph query returned HTTP status {status}, body: {body}")]
+    Status {
+        status: reqwest::StatusCode,
+        body: String,
+    },
     #[error("Request Error: {0}")]
     Request(#[from] reqwest::Error),
 }
@@ -35,6 +40,14 @@ pub trait CynicClient {
             .json(&request_body)
             .send()
             .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(CynicClientError::Status {
+                status,
+                body: response.text().await?,
+            });
+        }
 
         let response_deserialized: GraphQlResponse<R> =
             response.json::<GraphQlResponse<R>>().await?;
