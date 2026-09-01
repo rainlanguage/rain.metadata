@@ -9,7 +9,12 @@ use rain_metadata_bindings::IDescribedByMetaV1;
 use reqwest::Client;
 use serde::de::{Deserialize, Deserializer, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
-use std::{collections::HashMap, convert::TryFrom, fmt::Debug, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    convert::TryFrom,
+    fmt::Debug,
+    sync::Arc,
+};
 use strum::{EnumIter, EnumString};
 use types::authoring::v1::AuthoringMeta;
 use alloy::sol_types::private::Address;
@@ -256,13 +261,12 @@ impl RainMetaDocumentV1Item {
             true => serde_cbor::Deserializer::from_slice(&data[8..]),
             false => serde_cbor::Deserializer::from_slice(data),
         };
-        while match serde_cbor::Value::deserialize(&mut deserializer) {
-            Ok(cbor_map) => {
+        // straight off the stream, not via serde_cbor::Value, whose BTreeMap
+        // silently collapses the duplicate keys the visitor has to reject
+        while match Self::deserialize(&mut deserializer) {
+            Ok(meta) => {
                 consumed = deserializer.byte_offset();
-                match serde_cbor::value::from_value(cbor_map) {
-                    Ok(meta) => metas.push(meta),
-                    Err(error) => Err(Error::SerdeCborError(error))?,
-                };
+                metas.push(meta);
                 true
             }
             Err(error) => {
@@ -332,6 +336,20 @@ impl Serialize for RainMetaDocumentV1Item {
 
 impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        /// RFC 8949 §5.6: a map with duplicate keys is not valid, so a second
+        /// sighting of a key is an error rather than an overwrite.
+        fn set_once<V, E: serde::de::Error>(
+            slot: &mut Option<V>,
+            value: V,
+            field: &'static str,
+        ) -> Result<(), E> {
+            if slot.is_some() {
+                return Err(serde::de::Error::duplicate_field(field));
+            }
+            *slot = Some(value);
+            Ok(())
+        }
+
         struct EncodedMap;
         impl<'de> Visitor<'de> for EncodedMap {
             type Value = RainMetaDocumentV1Item;
@@ -351,20 +369,40 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                 let mut content_encoding = None;
                 let mut content_language = None;
                 let mut schema = None;
+                // the recognised keys guard themselves through set_once; an
+                // unknown key has no slot to be occupied, so its repeats are
+                // tracked here
+                let mut unknown_keys: BTreeSet<u64> = BTreeSet::new();
                 while match map.next_key::<u64>() {
                     Ok(Some(key)) => {
                         match key {
-                            0 => payload = Some(map.next_value()?),
-                            1 => magic = Some(map.next_value()?),
-                            2 => content_type = Some(map.next_value()?),
-                            3 => content_encoding = Some(map.next_value()?),
-                            4 => content_language = Some(map.next_value()?),
-                            OA_SCHEMA_KEY => schema = Some(map.next_value()?),
+                            0 => set_once(&mut payload, map.next_value()?, "payload")?,
+                            1 => set_once(&mut magic, map.next_value()?, "magic number")?,
+                            2 => set_once(&mut content_type, map.next_value()?, "content type")?,
+                            3 => set_once(
+                                &mut content_encoding,
+                                map.next_value()?,
+                                "content encoding",
+                            )?,
+                            4 => set_once(
+                                &mut content_language,
+                                map.next_value()?,
+                                "content language",
+                            )?,
+                            OA_SCHEMA_KEY => set_once(&mut schema, map.next_value()?, "schema")?,
                             // the map structure exists so later conventions can
                             // add indexes that older tooling adopts "or not" in
                             // a backwards compatible way, so an index this
-                            // version does not know is skipped, not an error
+                            // version does not know is skipped, not an error.
+                            // §5.6 does not ask whether the decoder understands
+                            // a key, so the repeat of one is still invalid even
+                            // though the value behind it is never read.
                             _ => {
+                                if !unknown_keys.insert(key) {
+                                    return Err(serde::de::Error::custom(format!(
+                                        "duplicate map key: {key}"
+                                    )));
+                                }
                                 map.next_value::<serde::de::IgnoredAny>()?;
                             }
                         };
@@ -1797,6 +1835,154 @@ mod tests {
             RainMetaDocumentV1Item::cbor_decode(&bytes),
             Err(Error::SerdeCborError(_))
         ));
+    }
+
+    /// A cbor map header plus the given already encoded key/value pairs,
+    /// written per the cbor spec rather than through the encoder, so a map can
+    /// carry a key twice which no encoder emits.
+    fn handwritten_entries(entries: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
+        assert!(entries.len() < 24);
+        let mut bytes = vec![0xa0 | entries.len() as u8];
+        for (key, value) in entries {
+            bytes.extend_from_slice(key);
+            bytes.extend_from_slice(value);
+        }
+        bytes
+    }
+
+    /// cbor unsigned integer of the magic number, as a map key or a value.
+    fn handwritten_magic(magic: KnownMagic) -> Vec<u8> {
+        let mut bytes = vec![0x1b];
+        bytes.extend_from_slice(&magic.to_prefix_bytes());
+        bytes
+    }
+
+    /// cbor text string of a string shorter than 24 bytes.
+    fn handwritten_text(text: &str) -> Vec<u8> {
+        assert!(text.len() < 24);
+        let mut bytes = vec![0x60 | text.len() as u8];
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    /// The repro from #191: a map repeating key 0 must not decode with the
+    /// last payload winning.
+    #[test]
+    fn test_cbor_decode_duplicate_payload_key_errors() {
+        let mut bytes: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x00, 0x41, 0x02, 0x01, 0x1b];
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        let error = RainMetaDocumentV1Item::cbor_decode(&bytes).unwrap_err();
+        assert!(matches!(error, Error::SerdeCborError(_)));
+        assert!(
+            error.to_string().contains("duplicate field `payload`"),
+            "{error}"
+        );
+    }
+
+    /// RFC 8949 §5.6: every recognised key is rejected when the map carries it
+    /// twice, whether the repeated value differs from the first or matches it.
+    #[test]
+    fn test_cbor_decode_duplicate_any_key_errors() -> Result<(), Error> {
+        let cases: [(Vec<u8>, Vec<u8>, Vec<u8>); 6] = [
+            (vec![0x00], vec![0x41, 0x01], vec![0x41, 0x02]),
+            (
+                vec![0x01],
+                handwritten_magic(KnownMagic::DotrainV1),
+                handwritten_magic(KnownMagic::RainlangV1),
+            ),
+            (
+                vec![0x02],
+                handwritten_text("application/cbor"),
+                handwritten_text("application/json"),
+            ),
+            (
+                vec![0x03],
+                handwritten_text("identity"),
+                handwritten_text("deflate"),
+            ),
+            (vec![0x04], handwritten_text("en"), handwritten_text("none")),
+            (
+                handwritten_magic(KnownMagic::OaSchema),
+                handwritten_text("hi"),
+                handwritten_text("bye"),
+            ),
+        ];
+        let base: Vec<(Vec<u8>, Vec<u8>)> = cases
+            .iter()
+            .map(|(key, value, _)| (key.clone(), value.clone()))
+            .collect();
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&base))?;
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].payload.as_ref(), &[0x01]);
+        assert_eq!(decoded[0].magic, KnownMagic::DotrainV1);
+        assert_eq!(decoded[0].content_type, ContentType::Cbor);
+        assert_eq!(decoded[0].content_encoding, ContentEncoding::Identity);
+        assert_eq!(decoded[0].content_language, ContentLanguage::En);
+        assert_eq!(decoded[0].schema.as_deref(), Some("hi"));
+
+        for (key, value, other_value) in &cases {
+            for repeated in [value, other_value] {
+                let mut entries = base.clone();
+                entries.push((key.clone(), repeated.clone()));
+                let error = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&entries))
+                    .unwrap_err();
+                assert!(
+                    matches!(error, Error::SerdeCborError(_)),
+                    "{key:?} {error:?}"
+                );
+                assert!(
+                    error.to_string().contains("duplicate field"),
+                    "{key:?} {error}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// An index this version has no meaning for is skipped rather than
+    /// rejected, but RFC 8949 §5.6 does not ask whether a key is understood:
+    /// a map that carries an unknown index twice is invalid too, whether that
+    /// index is a plain integer or a magic number other than OaSchema.
+    #[test]
+    fn test_cbor_decode_duplicate_unknown_key_errors() -> Result<(), Error> {
+        let base: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (vec![0x00], vec![0x41, 0x01]),
+            (vec![0x01], handwritten_magic(KnownMagic::DotrainV1)),
+        ];
+        // key 5 as a plausible future index and the OaHashList magic as a
+        // future magic keyed entry, each with the value cbor to repeat it with
+        let unknown: [(Vec<u8>, Vec<u8>, Vec<u8>); 2] = [
+            (vec![0x05], vec![0x07], vec![0x08]),
+            (
+                handwritten_magic(KnownMagic::OaHashList),
+                handwritten_text("hi"),
+                handwritten_text("bye"),
+            ),
+        ];
+
+        for (key, value, other_value) in &unknown {
+            let mut entries = base.clone();
+            entries.push((key.clone(), value.clone()));
+            let decoded = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&entries))?;
+            assert_eq!(decoded, vec![plain_item(KnownMagic::DotrainV1, vec![0x01])]);
+
+            for repeated in [value, other_value] {
+                let mut duplicated = entries.clone();
+                duplicated.push((key.clone(), repeated.clone()));
+                let error = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&duplicated))
+                    .unwrap_err();
+                assert!(
+                    matches!(error, Error::SerdeCborError(_)),
+                    "{key:?} {error:?}"
+                );
+                assert!(
+                    error.to_string().contains("duplicate map key"),
+                    "{key:?} {error}"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// A handwritten item map carrying the rain meta document magic under key
