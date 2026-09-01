@@ -118,7 +118,7 @@ impl MetaboardSubgraphClient {
         for meta in data.meta_v1_s {
             meta_bytes.push(decode(&meta.meta.0).map_err(|e| {
                 MetaboardSubgraphClientError::FromHexError {
-                    metahash: encode(&meta.meta_hash.0),
+                    metahash: meta.meta_hash.0.clone(),
                     source: e,
                 }
             })?);
@@ -271,11 +271,14 @@ mod tests {
 
         // Mock a successful response. body_contains pins the wire shape:
         // the subject Bytes value must be sent verbatim in the request
-        // (not coerced to a number, not stripped of `0x`).
+        // (not coerced to a number, not stripped of `0x`), and the rows must
+        // be ordered by the query rather than left to the indexer.
         server.mock(|when, then| {
             when.method(POST)
                 .path("/")
                 .body_contains("where: {subject: $subject}")
+                .body_contains("orderBy: id")
+                .body_contains("orderDirection: asc")
                 .body_contains("0x7b");
             then.status(200).json_body_obj(&{
                 serde_json::json!({
@@ -657,11 +660,7 @@ mod tests {
     }
 
     /// Same failure on the subject path: a FromHexError, keyed by the
-    /// offending meta's own hash rather than by the subject.
-    /// NOTE: the exact key text is NOT pinned here because the current
-    /// implementation hex-encodes the UTF-8 bytes of the (already hex) hash
-    /// string; see the audit issue on the double encoding. The variant and a
-    /// non-empty key are the undisputed part of the contract.
+    /// offending meta's own hash verbatim rather than by the subject.
     #[tokio::test]
     async fn test_get_metabytes_by_subject_invalid_hex_meta() {
         let server = MockServer::start_async().await;
@@ -694,7 +693,7 @@ mod tests {
 
         match result {
             Err(MetaboardSubgraphClientError::FromHexError { metahash, .. }) => {
-                assert!(!metahash.is_empty());
+                assert_eq!(metahash, "0xabcd");
             }
             other => panic!("unexpected result: {:?}", other),
         }

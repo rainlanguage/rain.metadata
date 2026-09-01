@@ -17,8 +17,10 @@ pub static REGEX_RAIN_SYMBOL: Lazy<Regex> =
 pub static REGEX_SOLIDITY_IDENTIFIER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[a-zA-Z$_][a-zA-Z0-9$_]*$").unwrap());
 
-/// Strings in Rain are limited to printable ASCII chars and whitespace.
-pub static REGEX_RAIN_STRING: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[\s!-~]*$").unwrap());
+/// Strings in Rain are limited to printable ASCII chars and ASCII whitespace.
+/// `\s` is Unicode `White_Space` in the regex crate, so the class is spelled out.
+pub static REGEX_RAIN_STRING: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[\t\n\x0B\x0C\r !-~]*$").unwrap());
 
 /// Titles in Rain are limited to printable ASCII chars and the space character.
 /// The title MUST NOT begin or end with a space.
@@ -168,7 +170,8 @@ mod test {
         // valids
         for i in [
             "a", "aa", "aA", "aAa", "a0", "aa0", "aA0", "aA0a", "aA0a0", "", "a-", "a-a", "-", " ",
-            "a ", "0", "_", "0a", "0A", "`", "```", "\n", "\t", "\r", ":",
+            "a ", "0", "_", "0a", "0A", "`", "```", "\n", "\t", "\r", ":", "\u{b}", "\u{c}", "!",
+            "~",
         ] {
             assert!(
                 RainString {
@@ -182,7 +185,9 @@ mod test {
         }
 
         // invalids
-        for i in ["♥", "∴", "\u{7f}"] {
+        for i in [
+            "♥", "∴", "\u{a0}", "\u{85}", "\u{2028}", "\u{2029}", "\u{2003}", "\u{3000}", "\u{7f}",
+        ] {
             assert!(
                 RainString {
                     value: i.to_string()
