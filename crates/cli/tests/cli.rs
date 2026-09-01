@@ -70,11 +70,23 @@ raindex-signed-context-oracle-v1
 /// `schema show` writes the schema to stdout when no output path is
 /// given (the stdout branch of cli::output::output).
 #[test]
-fn schema_show_prints_op_meta_schema_to_stdout() {
-    let out = bin().args(["schema", "show", "op-v1"]).output().unwrap();
+fn schema_show_prints_schema_to_stdout() {
+    let out = bin()
+        .args(["schema", "show", "authoring-meta-v1"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["title"], "OpMeta.");
+    assert!(v["title"].is_string());
+}
+
+/// op-v1 is still a known meta - it is listed, and its magic number is in
+/// the spec table - but this crate models no payload for it, so `schema
+/// show` refuses rather than inventing one.
+#[test]
+fn schema_show_refuses_op_v1() {
+    let out = bin().args(["schema", "show", "op-v1"]).output().unwrap();
+    assert!(!out.status.success());
 }
 
 /// `schema-check` reports the number of verified entities and the source

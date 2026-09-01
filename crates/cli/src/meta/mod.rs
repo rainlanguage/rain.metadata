@@ -30,6 +30,12 @@ pub use query::*;
 #[derive(Copy, Clone, EnumString, EnumIter, strum::Display, Debug, PartialEq)]
 #[strum(serialize_all = "kebab-case")]
 pub enum KnownMeta {
+    /// Ops meta v1. Still a known meta - the magic number is in the
+    /// metadata-v1 table and an item can legitimately carry it - but this
+    /// crate no longer models or validates the payload. The interpreter
+    /// describes its words as AuthoringMetaV2 now (`LibAllStandardOps`
+    /// publishes exactly that), and the only surviving op meta references in
+    /// the org are deprecated IExpressionDeployer interfaces.
     OpV1,
     DotrainV1,
     RainlangV1,
@@ -49,10 +55,10 @@ impl TryFrom<KnownMagic> for KnownMeta {
     type Error = Error;
     fn try_from(value: KnownMagic) -> Result<Self, Self::Error> {
         match value {
-            KnownMagic::OpMetaV1 => Ok(KnownMeta::OpV1),
             KnownMagic::DotrainV1 => Ok(KnownMeta::DotrainV1),
             KnownMagic::RainlangV1 => Ok(KnownMeta::RainlangV1),
             KnownMagic::SolidityAbiV2 => Ok(KnownMeta::SolidityAbiV2),
+            KnownMagic::OpMetaV1 => Ok(KnownMeta::OpV1),
             KnownMagic::AuthoringMetaV1 => Ok(KnownMeta::AuthoringMetaV1),
             KnownMagic::AuthoringMetaV2 => Ok(KnownMeta::AuthoringMetaV2),
             KnownMagic::AddressList => Ok(KnownMeta::AddressList),
@@ -2057,7 +2063,6 @@ mod tests {
     #[test]
     fn test_known_meta_strum_parse_display() {
         use std::str::FromStr;
-        assert_eq!(KnownMeta::from_str("op-v1").unwrap(), KnownMeta::OpV1);
         assert_eq!(
             KnownMeta::from_str("solidity-abi-v2").unwrap(),
             KnownMeta::SolidityAbiV2
@@ -2067,7 +2072,6 @@ mod tests {
             KnownMeta::InterpreterCallerMetaV1
         );
         assert_eq!(KnownMeta::SolidityAbiV2.to_string(), "solidity-abi-v2");
-        assert_eq!(KnownMeta::OpV1.to_string(), "op-v1");
     }
 
     /// The meta hash is derived from the meta bytes rather than passed in, so
