@@ -459,13 +459,10 @@ mod tests {
         }
     }
 
-    /// A response with null data and no errors never reaches the
-    /// `data.ok_or(Empty)` arm: cynic's `GraphQlResponse` deserializer
-    /// rejects any body without data or errors ("Either data or errors must
-    /// be present in a GraphQL response"), so it surfaces as a Request
-    /// decode error. This pins the deserializer boundary and documents that
-    /// `CynicClientError::Empty` is unreachable from `query` while that
-    /// deserializer holds (see the audit issue on the dead arm).
+    /// A response with null data and no errors key at all is rejected by
+    /// cynic's `GraphQlResponse` deserializer ("Either data or errors must be
+    /// present in a GraphQL response"), so it surfaces as a Request decode
+    /// error rather than as Empty.
     #[tokio::test]
     async fn test_get_metabytes_by_hash_null_data_is_request_decode_error() {
         let server = MockServer::start_async().await;
@@ -492,6 +489,73 @@ mod tests {
             }
             other => panic!("unexpected result: {:?}", other),
         }
+    }
+
+    /// Null data alongside an empty errors array passes the deserializer and
+    /// carries no error to report, so it surfaces as Empty.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_null_data_empty_errors_is_empty() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let hash = [10u8; 32];
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({ "data": null, "errors": [] }));
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_hash(&hash).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::RequestErrorByHash {
+                metahash,
+                source: CynicClientError::Empty,
+            }) => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+
+    /// An empty errors array beside real data reports no error: the data is
+    /// returned rather than a GraphqlError carrying nothing.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_empty_errors_returns_data() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let hash = [11u8; 32];
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": {
+                    "metaV1S": [
+                        {
+                            "meta": "0x02",
+                            "metaHash": "0x00",
+                            "sender": "0x00",
+                            "id": "0x00",
+                            "metaBoard": {
+                                "id": "0x00",
+                                "metas": [],
+                                "address": "0x00",
+                            },
+                            "subject": "0x00",
+                        }
+                    ]
+                },
+                "errors": []
+            }));
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_hash(&hash).await.unwrap();
+
+        assert_eq!(result, vec![vec![2u8]]);
     }
 
     /// A transport failure surfaces as CynicClientError::Request, not as
