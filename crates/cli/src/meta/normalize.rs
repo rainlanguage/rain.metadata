@@ -2,7 +2,7 @@ use super::{
     KnownMeta,
     super::error::Error,
     types::{
-        op::v1::OpMeta, authoring::v1::AuthoringMeta, authoring::v2::AuthoringMetaV2,
+        authoring::v1::AuthoringMeta, authoring::v2::AuthoringMetaV2,
         solidity_abi::v2::SolidityAbiMeta, interpreter_caller::v1::InterpreterCallerMeta,
     },
 };
@@ -20,7 +20,6 @@ impl KnownMeta {
     /// normalizes meta types and also performs validation on those that need validation
     pub fn normalize(&self, data: &[u8]) -> Result<Vec<u8>, Error> {
         Ok(match self {
-            KnownMeta::OpV1 => normalize_json::<OpMeta>(data)?,
             KnownMeta::SolidityAbiV2 => normalize_json::<SolidityAbiMeta>(data)?,
             KnownMeta::InterpreterCallerMetaV1 => normalize_json::<InterpreterCallerMeta>(data)?,
             KnownMeta::AuthoringMetaV1 => {
@@ -64,26 +63,13 @@ mod tests {
         .abi_encode()
     }
 
-    /// OpV1 normalizes valid metadata to its canonical compact json form.
+    /// OpV1 is a known meta this crate does not model, so normalize passes
+    /// its bytes through rather than validating them. It reaches the same
+    /// fallthrough as every other unmodelled type.
     #[test]
-    fn test_normalize_op_v1_canonicalizes() {
-        let spaced = b"{  \"name\" : \"add\" ,\n  \"desc\" : \"adds numbers\" }";
-        let normalized = KnownMeta::OpV1.normalize(spaced).unwrap();
-        assert_eq!(
-            String::from_utf8(normalized).unwrap(),
-            r#"{"name":"add","desc":"adds numbers","operand":[],"inputs":[],"outputs":[],"aliases":[]}"#
-        );
-    }
-
-    /// OpV1 rejects metadata that parses but fails validation: opcode names
-    /// must be lower-kebab-case rain symbols.
-    #[test]
-    fn test_normalize_op_v1_rejects_invalid_symbol() {
-        let invalid = br#"{"name":"NOT_A_RAIN_SYMBOL"}"#;
-        assert!(matches!(
-            KnownMeta::OpV1.normalize(invalid),
-            Err(Error::ValidationErrors(_))
-        ));
+    fn test_normalize_op_v1_is_a_passthrough() {
+        let bytes = b"{  \"name\" : \"add\" }";
+        assert_eq!(KnownMeta::OpV1.normalize(bytes).unwrap(), bytes.to_vec());
     }
 
     /// SolidityAbiV2 rejects data that is not json and data that is not utf8.
