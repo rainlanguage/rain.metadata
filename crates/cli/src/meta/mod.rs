@@ -504,26 +504,28 @@ pub struct NPE2Deployer {
 }
 
 impl NPE2Deployer {
+    /// The first required field that is empty, if any.
+    ///
+    /// Every field here is needed to reproduce the deployer on a local evm, so
+    /// an empty one describes a deployer that cannot be reproduced. Naming the
+    /// field rather than returning a bare bool lets
+    /// [crate::meta::cache::DeployerCache] say which one in its error.
+    pub fn corrupt_field(&self) -> Option<&'static str> {
+        [
+            ("meta_hash", &self.meta_hash),
+            ("meta_bytes", &self.meta_bytes),
+            ("bytecode", &self.bytecode),
+            ("parser", &self.parser),
+            ("store", &self.store),
+            ("interpreter", &self.interpreter),
+        ]
+        .into_iter()
+        .find(|(_, value)| value.is_empty())
+        .map(|(name, _)| name)
+    }
+
     pub fn is_corrupt(&self) -> bool {
-        if self.meta_hash.is_empty() {
-            return true;
-        }
-        if self.meta_bytes.is_empty() {
-            return true;
-        }
-        if self.bytecode.is_empty() {
-            return true;
-        }
-        if self.parser.is_empty() {
-            return true;
-        }
-        if self.store.is_empty() {
-            return true;
-        }
-        if self.interpreter.is_empty() {
-            return true;
-        }
-        false
+        self.corrupt_field().is_some()
     }
 }
 
@@ -737,29 +739,39 @@ impl Store {
             interpreter: deployer_query_response.interpreter,
             authoring_meta,
         };
+        // The deployer gate runs first because it is the strictly stronger of
+        // the two: it enforces the same digest the meta cache does, plus the
+        // key length and the required fields. Passing it means neither of the
+        // writes below can fail, so a refused record leaves nothing behind -
+        // no orphan meta bytes and no tx hash pointing at an absent deployer.
+        self.deployer_cache
+            .insert_verified(&bytecode_meta_hash, result.clone())?;
         self.cache.insert_verified(
             &deployer_query_response.meta_hash,
             result.meta_bytes.clone(),
         )?;
         self.deployer_hash_map
             .insert(tx_hash, bytecode_meta_hash.clone());
-        self.deployer_cache
-            .insert_verified(&bytecode_meta_hash, result.clone())?;
         Ok(result)
     }
 
-    /// sets NPE2Deployer record
-    /// skips if the given hash is invalid
+    /// sets NPE2Deployer record, and its constructor meta in the meta cache
+    ///
+    /// Errors without writing anything if `hash` is not a 32 byte hash, the
+    /// record is missing a field needed to reproduce the deployer, or its meta
+    /// bytes do not hash to the meta hash it claims for them.
     pub fn set_deployer(
         &mut self,
         hash: &[u8],
         npe2_deployer: &NPE2Deployer,
         tx_hash: Option<&[u8]>,
     ) -> Result<(), Error> {
-        self.cache
-            .insert_verified(&npe2_deployer.meta_hash, npe2_deployer.meta_bytes.clone())?;
+        // Strongest gate first, so a refusal writes nothing at all - see
+        // set_deployer_from_query_response.
         self.deployer_cache
             .insert_verified(hash, npe2_deployer.clone())?;
+        self.cache
+            .insert_verified(&npe2_deployer.meta_hash, npe2_deployer.meta_bytes.clone())?;
         if let Some(v) = tx_hash {
             self.deployer_hash_map.insert(v.to_vec(), hash.to_vec());
         }
@@ -2410,6 +2422,49 @@ mod tests {
         assert_eq!(
             store.get_meta(&deployer.meta_hash),
             Some(&deployer.meta_bytes)
+        );
+    }
+
+    /// A refused set_deployer writes nothing at all - not the constructor meta
+    /// under its own content address, and not the tx hash indirection. The
+    /// deployer gate is the stronger of the two, so it runs first and there is
+    /// no window where one map has taken the record and another has refused
+    /// it.
+    #[test]
+    fn test_store_set_deployer_refusal_writes_nothing() {
+        let tx = vec![0x02u8; 32];
+
+        // a key that is not a hash
+        let mut store = Store::new();
+        let deployer = sample_deployer(b"dep-meta-bytes");
+        assert!(store
+            .set_deployer(&[0x01u8; 31], &deployer, Some(&tx))
+            .is_err());
+        assert!(store.cache().is_empty());
+        assert!(store.deployer_cache().is_empty());
+        assert_eq!(store.get_deployer(&tx), None);
+        assert_eq!(store.get_meta(&deployer.meta_hash), None);
+
+        // a record that cannot be reproduced, whose meta hash is honest, so
+        // only the deployer gate can catch it
+        let mut store = Store::new();
+        let mut unreproducible = sample_deployer(b"dep-meta-bytes");
+        unreproducible.parser = vec![];
+        assert!(store
+            .set_deployer(&[0x01u8; 32], &unreproducible, Some(&tx))
+            .is_err());
+        assert!(store.cache().is_empty());
+        assert!(store.deployer_cache().is_empty());
+        assert_eq!(store.get_deployer(&tx), None);
+        assert_eq!(store.get_meta(&unreproducible.meta_hash), None);
+
+        // the content address the refused write named is still free for the
+        // bytes that really do hash to it
+        let content = b"dep-meta-bytes".to_vec();
+        let content_hash = keccak256(&content).0.to_vec();
+        assert_eq!(
+            store.update_with(&content_hash, &content).unwrap(),
+            &content
         );
     }
 
