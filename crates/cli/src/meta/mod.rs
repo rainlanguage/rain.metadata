@@ -342,21 +342,22 @@ impl Serialize for RainMetaDocumentV1Item {
 
 /// What a cbor item in a rain meta sequence turned out to be.
 ///
-/// The spec draws a line the decoder has to draw too. Some malformed input is
-/// the *document's* problem and stops the decode; other input is a well formed
-/// cbor item that this version simply does not read, and the spec is explicit
-/// that those are dropped rather than fatal:
+/// Dropped covers exactly one thing: a well formed item whose magic number
+/// this version does not know. The magic is the format's extension point -
+/// "Tooling can efficiently O(1) drop/ignore meta that it does not need or
+/// support decoding and parsing for", "feel free to build systems and
+/// applications with your own numbers and interpretations" - so somebody
+/// else's item travelling in the same document is skipped, not fatal to the
+/// items beside it. rainlanguage/rain.metadata#186.
 ///
-/// - "any CBOR item that omits these keys MUST be treated as unexpected (cbor
-///   terminology) and dropped/ignored", of the mandatory indexes 0 and 1;
-/// - "Tooling can efficiently O(1) drop/ignore meta that it does not need or
-///   support decoding and parsing for", which the per-item magic exists to
-///   make possible, alongside "feel free to build systems and applications
-///   with your own numbers and interpretations".
-///
-/// Dropping is therefore how the format stays extensible, and refusing a whole
-/// document over one item nobody claimed this tool would understand is what
-/// breaks that. rainlanguage/rain.metadata#188 and #186.
+/// Everything else malformed stops the document. One document is one emission
+/// from one emitter, whose prefix claims rain meta for the lot, and an
+/// emission carrying a broken claim is not mined for its readable parts.
+/// That is why an item omitting mandatory key 0 or 1 errors here even though
+/// metadata-v1.md line 237 reads as item level drop/ignore: it cannot even be
+/// identified, and recovering its siblings would accept selected data from an
+/// emitter who sent junk. rainlanguage/rain.metadata#188 is overruled on that
+/// line rather than implemented.
 enum ItemOrDropped {
     Item(RainMetaDocumentV1Item),
     /// Well formed cbor, but not an item this version reads.
@@ -440,10 +441,19 @@ impl<'de> Deserialize<'de> for ItemOrDropped {
                     Ok(None) => false,
                     Err(error) => Err(error)?,
                 } {}
-                // indexes 0 and 1 are the mandatory ones, and an item without
-                // them is the spec's "unexpected"
+                // Indexes 0 and 1 are mandatory. An item without them is not
+                // dropped like an unknown magic below: it cannot even be
+                // identified, and it sits inside a document whose prefix is
+                // the emitter claiming rain meta. One document is one emission
+                // from one emitter, and an emission carrying a malformed item
+                // is not mined for its readable parts - the same rule
+                // fetch_by_subject applies to a failed claim at the item
+                // payload level. A foreign magic is somebody else's data
+                // travelling alongside ours; a keyless map is a broken claim.
                 let (Some(payload), Some(magic_number)) = (payload, magic) else {
-                    return Ok(ItemOrDropped::Dropped);
+                    return Err(serde::de::Error::custom(
+                        "cbor item omits a mandatory key (0 payload, 1 magic)",
+                    ));
                 };
 
                 // A nested document prefix is not somebody else's magic
@@ -1532,15 +1542,12 @@ mod tests {
 
     /// An unknown key is skipped, never counted as one of the mandatory keys,
     /// so a map carrying one instead of key 0 is still missing its payload and
-    /// is dropped rather than decoding with the unknown key standing in.
+    /// corrupts the document rather than decoding with the unknown key standing in.
     #[test]
     fn unknown_map_key_does_not_stand_in_for_a_mandatory_key() {
         let mut bytes: Vec<u8> = vec![0xa2, 0x05, 0x07, 0x01, 0x1b];
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
-        assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::CorruptMeta)
-        ));
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
     }
 
     fn plain_item(magic: KnownMagic, payload: Vec<u8>) -> RainMetaDocumentV1Item {
@@ -1678,33 +1685,45 @@ mod tests {
         ));
     }
 
-    /// A map without the mandatory payload key 0 is the spec's "unexpected"
-    /// and is dropped. Alone it leaves nothing to return, which is
-    /// CorruptMeta - the document as a whole carried no meta.
+    /// A map without the mandatory payload key 0 corrupts the document, and
+    /// takes an item beside it down too: one document is one emission from
+    /// one emitter, and an emission carrying a broken claim is not mined for
+    /// its readable parts.
     #[test]
-    fn test_cbor_decode_missing_payload_is_dropped() {
+    fn test_cbor_decode_missing_payload_is_corrupt() {
         let mut bytes: Vec<u8> = vec![0xa1, 0x01, 0x1b]; // {1: DotrainV1}
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
-        assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::CorruptMeta)
-        ));
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+
+        // beside a good item, the good item is not recovered
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&bytes);
+        document.extend_from_slice(&good);
+        assert!(RainMetaDocumentV1Item::cbor_decode(&document).is_err());
     }
 
     /// A map without the mandatory magic key 1, likewise.
     #[test]
-    fn test_cbor_decode_missing_magic_is_dropped() {
+    fn test_cbor_decode_missing_magic_is_corrupt() {
         let bytes: Vec<u8> = vec![0xa1, 0x00, 0x41, 0x01]; // {0: h'01'}
-        assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::CorruptMeta)
-        ));
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&bytes);
+        document.extend_from_slice(&good);
+        assert!(RainMetaDocumentV1Item::cbor_decode(&document).is_err());
     }
 
     /// A map carrying a magic number this version does not know is dropped,
-    /// not an error: the spec invites other people's numbers, and the whole
-    /// point of the per item magic is O(1) drop/ignore of meta a tool does not
-    /// support.
+    /// not an error: the magic is the format's extension point, and somebody
+    /// else's well formed item travelling in the same document is not
+    /// corruption. Alone it leaves nothing to return, which is CorruptMeta.
     #[test]
     fn test_cbor_decode_unknown_magic_is_dropped() {
         let mut bytes: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
@@ -1715,33 +1734,26 @@ mod tests {
         ));
     }
 
-    /// The point of dropping rather than failing: an item this version cannot
-    /// read does not take the items beside it with it. Each of the three drop
-    /// cases sits next to a good item, and the good item still decodes.
+    /// The unknown magic drop protects the items beside it: the foreign item
+    /// first, so a decoder that stopped at it would return nothing, and the
+    /// good item behind it still decodes.
     #[test]
-    fn test_cbor_decode_drops_only_the_unreadable_item() {
+    fn test_cbor_decode_drops_only_the_unknown_magic_item() {
         let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
             .cbor_encode()
             .unwrap();
 
         let mut unknown_magic: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
         unknown_magic.extend_from_slice(&0xdeadbeefdeadbeefu64.to_be_bytes());
-        let no_magic: Vec<u8> = vec![0xa1, 0x00, 0x41, 0x01];
-        let mut no_payload: Vec<u8> = vec![0xa1, 0x01, 0x1b];
-        no_payload.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
 
-        for dropped in [unknown_magic, no_magic, no_payload] {
-            // the dropped item first, so a decoder that stopped at it would
-            // return nothing rather than the good item behind it
-            let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
-            document.extend_from_slice(&dropped);
-            document.extend_from_slice(&good);
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&unknown_magic);
+        document.extend_from_slice(&good);
 
-            let items = RainMetaDocumentV1Item::cbor_decode(&document).unwrap();
-            assert_eq!(items.len(), 1, "expected only the good item");
-            assert_eq!(items[0].magic, KnownMagic::DotrainV1);
-            assert_eq!(items[0].payload.as_ref(), &[0x42]);
-        }
+        let items = RainMetaDocumentV1Item::cbor_decode(&document).unwrap();
+        assert_eq!(items.len(), 1, "expected only the good item");
+        assert_eq!(items[0].magic, KnownMagic::DotrainV1);
+        assert_eq!(items[0].payload.as_ref(), &[0x42]);
     }
 
     /// The document prefix is not a magic number an item may carry: it is the
