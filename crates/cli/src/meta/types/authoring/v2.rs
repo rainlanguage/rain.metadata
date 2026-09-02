@@ -12,6 +12,7 @@ use alloy::sol;
 use rain_metaboard_subgraph::metaboard_client::*;
 use serde::{Deserialize, Serialize};
 use crate::meta::{KnownMagic, RainMetaDocumentV1Item};
+use rain_erc::erc165::Erc165Error;
 use rain_metadata_bindings::IDescribedByMetaV1;
 use thiserror::Error;
 use super::super::super::implements_i_described_by_meta_v1;
@@ -68,6 +69,8 @@ pub enum AuthoringMetaV2Error {
     MetaError(#[from] crate::error::Error),
     #[error("Contract has no words")]
     HasNoWords,
+    #[error(transparent)]
+    Erc165Error(#[from] Erc165Error),
     #[error("no RPC URLs provided")]
     NoRpcs,
     #[error("Metaboard meta bytes hash {actual} does not match describedByMetaV1 hash {expected}")]
@@ -150,8 +153,15 @@ impl AuthoringMetaV2 {
             })?;
         let provider = ProviderBuilder::new().connect_http(url);
 
-        // return "has no words" error if the contract does not implement IDescribeByMetaV2 interface
-        if !implements_i_described_by_meta_v1(&provider, contract_address).await {
+        let implements = implements_i_described_by_meta_v1(&provider, contract_address)
+            .await
+            .map_err(|error| FetchAuthoringMetaV2WordError {
+                contract_address,
+                rpcs: rpcs.clone(),
+                metaboard_url: metaboard_url.clone(),
+                error: error.into(),
+            })?;
+        if !implements {
             return Err(FetchAuthoringMetaV2WordError {
                 contract_address,
                 rpcs: rpcs.clone(),
@@ -683,6 +693,77 @@ mod tests {
         match error.error {
             AuthoringMetaV2Error::RpcError(_) => {}
             other => panic!("expected RpcError, got {:?}", other),
+        }
+    }
+
+    /// A transport failure of the erc165 probe - the first of the two, which
+    /// rain-erc runs - is "answer unknown" for the same reason as the second,
+    /// and was flattened by its own `unwrap_or(false)`.
+    #[tokio::test]
+    async fn test_fetch_for_contract_erc165_transport_error_is_not_has_no_words() {
+        let rpc_server = MockServer::start_async().await;
+        let probe = rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a701ffc9a7");
+            then.status(500).body("rpc down");
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+        probe.assert();
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::Erc165Error(_) => {}
+            other => panic!("expected Erc165Error, got {:?}", other),
+        }
+    }
+
+    /// A transport failure of the IDescribedByMetaV1 supportsInterface call is
+    /// "answer unknown", so it must surface as the erc165 error and never as
+    /// the definitive HasNoWords.
+    #[tokio::test]
+    async fn test_fetch_for_contract_described_by_probe_error_is_not_has_no_words() {
+        let rpc_server = MockServer::start_async().await;
+        let sel = encode(IDescribedByMetaV1::describedByMetaV1Call::SELECTOR);
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a701ffc9a7");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(true)
+            }));
+        });
+        rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("01ffc9a7ffffffff");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": bool_word(false)
+            }));
+        });
+        let probe = rpc_server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(format!("01ffc9a7{}", sel));
+            then.status(500).body("rpc down");
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            "http://metaboard.test/".to_string(),
+        )
+        .await;
+        probe.assert();
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::Erc165Error(_) => {}
+            other => panic!("expected Erc165Error, got {:?}", other),
         }
     }
 
