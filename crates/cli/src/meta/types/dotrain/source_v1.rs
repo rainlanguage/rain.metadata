@@ -68,7 +68,11 @@ impl DotrainSourceV1 {
 
         let metabytes = match client.get_metabytes_by_subject(&subject_bytes).await {
             Ok(metabytes) => metabytes,
-            Err(MetaboardSubgraphClientError::Empty(_)) => return Ok(vec![]),
+            // by subject, because that is the query this made - the split
+            // variants make the two cases distinguishable, so matching the
+            // wrong one here would silently stop treating an empty result as
+            // an empty list.
+            Err(MetaboardSubgraphClientError::EmptyBySubject { .. }) => return Ok(vec![]),
             Err(e) => return Err(Error::MetaboardSubgraphClientError(e)),
         };
 
