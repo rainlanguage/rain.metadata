@@ -1944,10 +1944,6 @@ mod tests {
         assert_eq!(response.bytes, doc);
     }
 
-        .unwrap();
-        assert_eq!(response.meta_bytes, doc);
-    }
-
     /// An empty subgraph list has nothing to fan out to, so the search
     /// reports a miss rather than reaching futures::select_ok, which panics on
     /// an empty iterator.
