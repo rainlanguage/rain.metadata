@@ -1,7 +1,4 @@
-use alloy::{
-    primitives::{keccak256, FixedBytes, B256},
-    sol_types::SolType,
-};
+use alloy::{primitives::FixedBytes, sol_types::SolType};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::SolCall;
@@ -73,8 +70,6 @@ pub enum AuthoringMetaV2Error {
     Erc165Error(#[from] Erc165Error),
     #[error("no RPC URLs provided")]
     NoRpcs,
-    #[error("Metaboard meta bytes hash {actual} does not match describedByMetaV1 hash {expected}")]
-    MetaHashMismatch { expected: B256, actual: B256 },
 }
 
 #[derive(Error, Debug)]
@@ -207,25 +202,14 @@ impl AuthoringMetaV2 {
             .await
             .map_err(|error| wrap_error(error.into()))?;
 
-        // the metaboard returns every meta carrying this hash in an order the
-        // query does not pin down, and each one is a cbor sequence, so scan all
-        // of them for an authoring meta before giving up, reporting the first
-        // failure encountered if none is found. the endpoint is not trusted to
-        // answer with the bytes it was asked for, so each meta is hashed and
-        // checked against the describedByMetaV1 hash before it is decoded: a
-        // meta that does not match is skipped without ever being parsed, and
-        // only words that the contract's own hash commits to can be returned.
+        // every meta here hashes to the describedByMetaV1 hash - the client
+        // drops rows that do not before handing them back (#301) - so each
+        // is the contract's own committed bytes, byte for byte. they are
+        // cbor sequences, so scan the items of each for an authoring meta,
+        // reporting the first failure encountered if none is found.
         let mut first_error: Option<AuthoringMetaV2Error> = None;
         for meta_bytes in &metas {
             let meta_bytes = meta_bytes.as_slice();
-            let meta_bytes_hash = keccak256(meta_bytes);
-            if meta_bytes_hash.0 != metahash {
-                first_error.get_or_insert(AuthoringMetaV2Error::MetaHashMismatch {
-                    expected: metahash.into(),
-                    actual: meta_bytes_hash,
-                });
-                continue;
-            }
 
             let items = match RainMetaDocumentV1Item::cbor_decode(meta_bytes) {
                 Ok(items) => items,
@@ -272,6 +256,7 @@ impl TryFrom<RainMetaDocumentV1Item> for AuthoringMetaV2 {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use alloy::primitives::hex::{decode, encode};
+    use alloy::primitives::keccak256;
     use serde_bytes::ByteBuf;
     use httpmock::Method::POST;
     use httpmock::MockServer;
@@ -1129,12 +1114,16 @@ mod tests {
         )
         .await;
         let error = result.unwrap_err();
+        // the client refuses the row before this function sees it (#301):
+        // the error is the subgraph's, naming the hash and the row count
         match error.error {
-            AuthoringMetaV2Error::MetaHashMismatch { expected, actual } => {
-                assert_eq!(expected, B256::from(hash));
-                assert_eq!(actual, B256::from(meta_hex_hash(&meta_hex)));
+            AuthoringMetaV2Error::MetaboardSubgraphError(
+                MetaboardSubgraphClientError::UnverifiedByHash { metahash, rows },
+            ) => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+                assert_eq!(rows, 1);
             }
-            other => panic!("expected MetaHashMismatch, got {:?}", other),
+            other => panic!("expected UnverifiedByHash, got {:?}", other),
         }
     }
 
@@ -1145,7 +1134,8 @@ mod tests {
         mock_described_by_rpc(&rpc_server, hash);
 
         // bytes that are neither the hashed content nor valid cbor: the hash
-        // mismatch is what is reported, so nothing unverified is ever decoded
+        // check is what fails, so nothing unverified is ever decoded - a cbor
+        // error here would mean the bytes were parsed before being checked
         assert_ne!(meta_hex_hash("0x01"), hash);
 
         let metaboard_server = MockServer::start_async().await;
@@ -1164,8 +1154,10 @@ mod tests {
         .await;
         let error = result.unwrap_err();
         match error.error {
-            AuthoringMetaV2Error::MetaHashMismatch { .. } => {}
-            other => panic!("expected MetaHashMismatch, got {:?}", other),
+            AuthoringMetaV2Error::MetaboardSubgraphError(
+                MetaboardSubgraphClientError::UnverifiedByHash { .. },
+            ) => {}
+            other => panic!("expected UnverifiedByHash, got {:?}", other),
         }
     }
     #[tokio::test]
