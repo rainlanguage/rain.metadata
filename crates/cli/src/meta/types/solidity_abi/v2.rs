@@ -1221,8 +1221,19 @@ mod tests {
             match result.unwrap_err() {
                 Error::ValidationErrors(errors) => {
                     assert!(errors.errors().contains_key("name"));
-                    assert!(errors.errors().contains_key("at index 1"));
-                    assert!(!errors.errors().contains_key("at index 0"));
+                    // the index annotation is a param under a fixed key, not a
+                    // leaked dynamic key - main removed the Box::leak that the
+                    // old "at index N" keys rode on
+                    match errors.errors().get("at index") {
+                        Some(validator::ValidationErrorsKind::Field(annotations)) => {
+                            assert_eq!(annotations.len(), 1);
+                            assert_eq!(
+                                annotations[0].params.get("index"),
+                                Some(&serde_json::json!(1))
+                            );
+                        }
+                        other => panic!("expected an at index field error, got {:?}", other),
+                    }
                 }
                 e => panic!("unexpected error: {:?}", e),
             }
