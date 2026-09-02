@@ -1,7 +1,7 @@
 use super::error::Error;
 
 pub mod cache;
-use cache::{DeployerCache, MetaCache};
+use cache::MetaCache;
 use alloy::primitives::{hex, keccak256};
 use futures::future;
 use graphql_client::GraphQLQuery;
@@ -11,7 +11,6 @@ use serde::de::{Deserialize, Deserializer, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::{collections::HashMap, convert::TryFrom, fmt::Debug, sync::Arc};
 use strum::{EnumIter, EnumString};
-use types::authoring::v1::AuthoringMeta;
 use alloy::sol_types::private::Address;
 use alloy::providers::Provider;
 use alloy::rpc::types::TransactionRequest;
@@ -422,32 +421,6 @@ pub async fn search(hash: &str, subgraphs: &Vec<String>) -> Result<query::MetaRe
     Ok(response_value)
 }
 
-/// searches for an ExpressionDeployer matching the given hash in given subgraphs urls
-pub async fn search_deployer(
-    hash: &str,
-    subgraphs: &Vec<String>,
-) -> Result<DeployerResponse, Error> {
-    // future::select_ok panics on an empty iterator.
-    if subgraphs.is_empty() {
-        return Err(Error::NoRecordFound);
-    }
-    let request_body = query::DeployerQuery::build_query(query::deployer_query::Variables {
-        hash: Some(hash.to_ascii_lowercase()),
-    });
-    let mut promises = vec![];
-
-    let client = Arc::new(Client::builder().build().map_err(Error::ReqwestError)?);
-    for url in subgraphs {
-        promises.push(Box::pin(query::process_deployer_query(
-            client.clone(),
-            &request_body,
-            url,
-        )));
-    }
-    let response_value = future::select_ok(promises.drain(..)).await?.0;
-    Ok(response_value)
-}
-
 /// checks if the given contract implements IDescribeByMetaV1 interface
 pub async fn implements_i_described_by_meta_v1<P: Provider>(
     provider: &P,
@@ -477,71 +450,19 @@ pub async fn implements_i_described_by_meta_v1<P: Provider>(
     }
 }
 
-/// All required NPE2 ExpressionDeployer data for reproducing it on a local evm
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct NPE2Deployer {
-    /// constructor meta hash
-    #[serde(with = "serde_bytes")]
-    pub meta_hash: Vec<u8>,
-    /// constructor meta bytes
-    #[serde(with = "serde_bytes")]
-    pub meta_bytes: Vec<u8>,
-    /// RainterpreterExpressionDeployerNPE2 contract bytecode
-    #[serde(with = "serde_bytes")]
-    pub bytecode: Vec<u8>,
-    /// RainterpreterParserNPE2 contract bytecode
-    #[serde(with = "serde_bytes")]
-    pub parser: Vec<u8>,
-    /// RainterpreterStoreNPE2 contract bytecode
-    #[serde(with = "serde_bytes")]
-    pub store: Vec<u8>,
-    /// RainterpreterNPE2 contract bytecode
-    #[serde(with = "serde_bytes")]
-    pub interpreter: Vec<u8>,
-    /// RainterpreterExpressionDeployerNPE2 authoring meta
-    pub authoring_meta: Option<AuthoringMeta>,
-}
-
-impl NPE2Deployer {
-    pub fn is_corrupt(&self) -> bool {
-        if self.meta_hash.is_empty() {
-            return true;
-        }
-        if self.meta_bytes.is_empty() {
-            return true;
-        }
-        if self.bytecode.is_empty() {
-            return true;
-        }
-        if self.parser.is_empty() {
-            return true;
-        }
-        if self.store.is_empty() {
-            return true;
-        }
-        if self.interpreter.is_empty() {
-            return true;
-        }
-        false
-    }
-}
-
 /// # Meta Storage(CAS)
 ///
 /// In-memory CAS (content addressed storage) for Rain metadata which basically stores
-/// k/v pairs of meta hash, meta bytes and ExpressionDeployer reproducible data as well
-/// as providing functionalities to easliy read/write to the CAS.
+/// k/v pairs of meta hash and meta bytes, as well as providing functionalities to
+/// easliy read/write to the CAS.
 ///
 /// Hashes are normal bytes and meta bytes are valid cbor encoded as data bytes.
-/// ExpressionDeployers data are in form of a struct mapped to deployedBytecode meta hash
-/// and deploy transaction hash.
 ///
 /// ## Examples
 ///
 /// ```
 /// use rain_metadata::Store;
-/// use rain_metadata::meta::cache::{DeployerCache, MetaCache};
+/// use rain_metadata::meta::cache::MetaCache;
 /// use std::collections::HashMap;
 ///
 /// // to instantiate with an empty subgraph list
@@ -551,7 +472,6 @@ impl NPE2Deployer {
 /// let mut store = Store::create(
 ///     &vec!["sg-url-1".to_string()],
 ///     &MetaCache::default(),
-///     &DeployerCache::default(),
 ///     &HashMap::new(),
 /// );
 ///
@@ -573,9 +493,6 @@ impl NPE2Deployer {
 /// // to get a record from the store
 /// let _meta = store.get_meta(&hash);
 ///
-/// // to get a deployer record from the store
-/// let _deployer_record = store.get_deployer(&hash);
-///
 /// // Store is agnostic to dotrain contents — it just maps the hash of the content
 /// // to the given uri and puts it as a new meta into the meta cache.
 /// let dotrain_uri = "path/to/file.rain";
@@ -592,8 +509,6 @@ pub struct Store {
     subgraphs: Vec<String>,
     cache: MetaCache,
     dotrain_cache: HashMap<String, Vec<u8>>,
-    deployer_cache: DeployerCache,
-    deployer_hash_map: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 impl Default for Store {
@@ -610,8 +525,6 @@ impl Store {
             subgraphs: vec![],
             cache: MetaCache::default(),
             dotrain_cache: HashMap::new(),
-            deployer_cache: DeployerCache::default(),
-            deployer_hash_map: HashMap::new(),
         }
     }
 
@@ -620,16 +533,12 @@ impl Store {
     pub fn create(
         subgraphs: &Vec<String>,
         cache: &MetaCache,
-        deployer_cache: &DeployerCache,
         dotrain_cache: &HashMap<String, Vec<u8>>,
     ) -> Store {
         let mut store = Store::new();
         store.add_subgraphs(subgraphs);
         for (hash, bytes) in cache.iter() {
             let _ = store.update_with(hash, bytes);
-        }
-        for (hash, deployer) in deployer_cache.iter() {
-            let _ = store.set_deployer(hash, deployer, None);
         }
         for (uri, hash) in dotrain_cache {
             if !store.dotrain_cache.contains_key(uri) && store.cache.contains_key(hash) {
@@ -661,109 +570,6 @@ impl Store {
     /// get the corresponding meta bytes of the given hash if it exists
     pub fn get_meta(&self, hash: &[u8]) -> Option<&Vec<u8>> {
         self.cache.get(hash)
-    }
-
-    /// getter method for the whole authoring meta cache
-    pub fn deployer_cache(&self) -> &DeployerCache {
-        &self.deployer_cache
-    }
-
-    /// get the corresponding DeployerNPRecord of the given deployer hash if it exists
-    pub fn get_deployer(&self, hash: &[u8]) -> Option<&NPE2Deployer> {
-        if self.deployer_cache.contains_key(hash) {
-            self.deployer_cache.get(hash)
-        } else if let Some(h) = self.deployer_hash_map.get(hash) {
-            self.deployer_cache.get(h)
-        } else {
-            None
-        }
-    }
-
-    /// searches for DeployerNPRecord in the subgraphs given the deployer hash.
-    /// The meta bytes it carries go through [Self::insert_verified] like every
-    /// other write to the meta cache, so a deployer record cannot smuggle in
-    /// bytes that do not hash to the meta hash it claims for them.
-    pub async fn search_deployer(&mut self, hash: &[u8]) -> Result<&NPE2Deployer, Error> {
-        match search_deployer(&hex::encode_prefixed(hash), &self.subgraphs).await {
-            Ok(res) => {
-                self.insert_verified(&res.meta_hash.clone(), res.meta_bytes.clone())?;
-                let authoring_meta = res.get_authoring_meta();
-                self.deployer_cache.insert_verified(
-                    &res.bytecode_meta_hash.clone(),
-                    NPE2Deployer {
-                        meta_hash: res.meta_hash.clone(),
-                        meta_bytes: res.meta_bytes,
-                        bytecode: res.bytecode,
-                        parser: res.parser,
-                        store: res.store,
-                        interpreter: res.interpreter,
-                        authoring_meta,
-                    },
-                )?;
-                self.deployer_hash_map.insert(res.tx_hash, res.meta_hash);
-                self.deployer_cache.get(hash).ok_or(Error::NoRecordFound)
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// if the NPE2Deployer record already is cached it returns it immediately else
-    /// searches for NPE2Deployer in the subgraphs given the deployer hash
-    pub async fn search_deployer_check(&mut self, hash: &[u8]) -> Result<&NPE2Deployer, Error> {
-        if self.deployer_cache.contains_key(hash) {
-            self.get_deployer(hash).ok_or(Error::NoRecordFound)
-        } else if self.deployer_hash_map.contains_key(hash) {
-            let b_hash = self.deployer_hash_map.get(hash).unwrap().clone();
-            self.get_deployer(&b_hash).ok_or(Error::NoRecordFound)
-        } else {
-            self.search_deployer(hash).await
-        }
-    }
-
-    /// sets deployer record from the deployer query response
-    pub fn set_deployer_from_query_response(
-        &mut self,
-        deployer_query_response: DeployerResponse,
-    ) -> Result<NPE2Deployer, Error> {
-        let authoring_meta = deployer_query_response.get_authoring_meta();
-        let tx_hash = deployer_query_response.tx_hash;
-        let bytecode_meta_hash = deployer_query_response.bytecode_meta_hash;
-        let result = NPE2Deployer {
-            meta_hash: deployer_query_response.meta_hash.clone(),
-            meta_bytes: deployer_query_response.meta_bytes,
-            bytecode: deployer_query_response.bytecode,
-            parser: deployer_query_response.parser,
-            store: deployer_query_response.store,
-            interpreter: deployer_query_response.interpreter,
-            authoring_meta,
-        };
-        self.cache.insert_verified(
-            &deployer_query_response.meta_hash,
-            result.meta_bytes.clone(),
-        )?;
-        self.deployer_hash_map
-            .insert(tx_hash, bytecode_meta_hash.clone());
-        self.deployer_cache
-            .insert_verified(&bytecode_meta_hash, result.clone())?;
-        Ok(result)
-    }
-
-    /// sets NPE2Deployer record
-    /// skips if the given hash is invalid
-    pub fn set_deployer(
-        &mut self,
-        hash: &[u8],
-        npe2_deployer: &NPE2Deployer,
-        tx_hash: Option<&[u8]>,
-    ) -> Result<(), Error> {
-        self.cache
-            .insert_verified(&npe2_deployer.meta_hash, npe2_deployer.meta_bytes.clone())?;
-        self.deployer_cache
-            .insert_verified(hash, npe2_deployer.clone())?;
-        if let Some(v) = tx_hash {
-            self.deployer_hash_map.insert(v.to_vec(), hash.to_vec());
-        }
-        Ok(())
     }
 
     /// getter method for the whole dotrain cache
@@ -809,17 +615,6 @@ impl Store {
                 // entries are verified by construction, so copying one cannot
                 // introduce an unverified entry
                 let _ = self.cache.insert_verified(hash, bytes.clone());
-            }
-        }
-        for (hash, deployer) in other.deployer_cache.iter() {
-            if !self.deployer_cache.contains_key(hash) {
-                // verified by construction in the other store
-                let _ = self.deployer_cache.insert_verified(hash, deployer.clone());
-            }
-        }
-        for (tx_hash, hash) in &other.deployer_hash_map {
-            if !self.deployer_hash_map.contains_key(tx_hash) {
-                self.deployer_hash_map.insert(tx_hash.clone(), hash.clone());
             }
         }
         for (uri, hash) in &other.dotrain_cache {
@@ -2091,43 +1886,6 @@ mod tests {
         assert_eq!(KnownMeta::SolidityAbiV2.to_string(), "solidity-abi-v2");
     }
 
-    /// The meta hash is derived from the meta bytes rather than passed in, so
-    /// a fixture cannot describe a deployer whose bytes do not hash to the hash
-    /// it claims for them - which is the state [MetaCache] now refuses to store.
-    fn sample_deployer(meta_bytes: &[u8]) -> NPE2Deployer {
-        NPE2Deployer {
-            meta_hash: keccak256(meta_bytes).0.to_vec(),
-            meta_bytes: meta_bytes.to_vec(),
-            bytecode: vec![0xb1],
-            parser: vec![0xb2],
-            store: vec![0xb3],
-            interpreter: vec![0xb4],
-            authoring_meta: None,
-        }
-    }
-
-    fn deployer_json_body(
-        meta_hash_hex: &str,
-        meta_bytes_hex: &str,
-        tx_hex: &str,
-        bytecode_meta_id_hex: &str,
-    ) -> serde_json::Value {
-        json!({
-            "data": {
-                "expressionDeployers": [{
-                    "constructorMetaHash": meta_hash_hex,
-                    "constructorMeta": meta_bytes_hex,
-                    "deployTransaction": {"id": tx_hex},
-                    "bytecode": "0x01",
-                    "parser": {"parser": {"deployedBytecode": "0x02"}},
-                    "store": {"store": {"deployedBytecode": "0x03"}},
-                    "interpreter": {"interpreter": {"deployedBytecode": "0x04"}},
-                    "meta": [{"__typename": "RainMetaV1", "id": bytecode_meta_id_hex}]
-                }]
-            }
-        })
-    }
-
     /// search() lowercases the hash before building the query variables.
     #[tokio::test]
     async fn test_search_lowercases_hash() {
@@ -2174,80 +1932,6 @@ mod tests {
         assert_eq!(response.bytes, doc);
     }
 
-    /// search_deployer() lowercases the hash before building the query
-    /// variables.
-    #[tokio::test]
-    async fn test_search_deployer_lowercases_hash() {
-        use httpmock::prelude::*;
-        let (_, doc) = sample_authoring_doc();
-        let meta_hash_hex = hex::encode_prefixed(keccak256(&doc).0);
-        let hash_upper = format!("0x{}", "CD".repeat(32));
-        let server = MockServer::start();
-        let mock = server.mock(|when, then| {
-            when.method(POST)
-                .body_contains(hash_upper.to_ascii_lowercase());
-            then.status(200).json_body(deployer_json_body(
-                &meta_hash_hex,
-                &hex::encode_prefixed(&doc),
-                &format!("0x{}", "77".repeat(32)),
-                &meta_hash_hex,
-            ));
-        });
-        let response = search_deployer(&hash_upper, &vec![server.url("/sg")])
-            .await
-            .unwrap();
-        assert_eq!(response.meta_bytes, doc);
-        assert_eq!(response.bytecode, vec![0x01]);
-        mock.assert();
-    }
-
-    /// search_deployer() queries every subgraph and the first success wins
-    /// even when an earlier subgraph fails.
-    #[tokio::test]
-    async fn test_search_deployer_first_success_wins() {
-        use httpmock::prelude::*;
-        let (_, doc) = sample_authoring_doc();
-        let meta_hash_hex = hex::encode_prefixed(keccak256(&doc).0);
-        let bad = MockServer::start();
-        let _bad_mock = bad.mock(|when, then| {
-            when.method(POST);
-            then.status(500).body("subgraph down");
-        });
-        let good = MockServer::start();
-        let _good_mock = good.mock(|when, then| {
-            when.method(POST);
-            then.status(200).json_body(deployer_json_body(
-                &meta_hash_hex,
-                &hex::encode_prefixed(&doc),
-                &format!("0x{}", "77".repeat(32)),
-                &meta_hash_hex,
-            ));
-        });
-        let response = search_deployer(
-            &format!("0x{}", "22".repeat(32)),
-            &vec![bad.url("/sg"), good.url("/sg")],
-        )
-        .await
-        .unwrap();
-        assert_eq!(response.meta_bytes, doc);
-    }
-
-    /// An empty subgraph list has nothing to fan out to, so both searches
-    /// report a miss rather than reaching futures::select_ok, which panics on
-    /// an empty iterator.
-    #[tokio::test]
-    async fn test_search_empty_subgraphs_is_a_miss() {
-        let hash = format!("0x{}", "33".repeat(32));
-        assert!(matches!(
-            search(&hash, &vec![]).await,
-            Err(Error::NoRecordFound)
-        ));
-        assert!(matches!(
-            search_deployer(&hash, &vec![]).await,
-            Err(Error::NoRecordFound)
-        ));
-    }
-
     /// When the erc165 probe answers false or errors, the result is false
     /// WITHOUT making the IDescribedByMetaV1 supportsInterface call: a queued
     /// "true" response must never be consumed.
@@ -2292,35 +1976,6 @@ mod tests {
         assert!(!implements_i_described_by_meta_v1(&provider, address).await);
     }
 
-    /// Each of the six required fields independently marks the record
-    /// corrupt when empty; a fully populated record is not corrupt.
-    #[test]
-    fn test_npe2_deployer_is_corrupt_per_field() {
-        let full = NPE2Deployer {
-            meta_hash: vec![1],
-            meta_bytes: vec![2],
-            bytecode: vec![3],
-            parser: vec![4],
-            store: vec![5],
-            interpreter: vec![6],
-            authoring_meta: None,
-        };
-        assert!(!full.is_corrupt());
-        for field in 0..6usize {
-            let mut record = full.clone();
-            match field {
-                0 => record.meta_hash = vec![],
-                1 => record.meta_bytes = vec![],
-                2 => record.bytecode = vec![],
-                3 => record.parser = vec![],
-                4 => record.store = vec![],
-                5 => record.interpreter = vec![],
-                _ => unreachable!(),
-            }
-            assert!(record.is_corrupt(), "empty field {} must corrupt", field);
-        }
-    }
-
     /// No constructor injects a subgraph the caller did not ask for, and a
     /// store with none resolves every network lookup to None rather than
     /// reaching the select_ok panic.
@@ -2328,19 +1983,15 @@ mod tests {
     async fn test_store_constructors_inject_no_subgraphs() {
         assert!(Store::new().subgraphs().is_empty());
         assert!(Store::default().subgraphs().is_empty());
-        assert!(Store::create(
-            &vec![],
-            &MetaCache::default(),
-            &DeployerCache::default(),
-            &HashMap::new()
-        )
-        .subgraphs()
-        .is_empty());
+        assert!(
+            Store::create(&vec![], &MetaCache::default(), &HashMap::new())
+                .subgraphs()
+                .is_empty()
+        );
 
         let hash = [0u8; 32];
         let mut store = Store::default();
         assert!(store.update(&hash).await.is_err());
-        assert!(store.search_deployer(&hash).await.is_err());
     }
 
     /// create() takes only the given subgraphs, and keeps a dotrain uri only
@@ -2356,12 +2007,6 @@ mod tests {
         let good_hash = keccak256(&doc).0.to_vec();
         let mut cache = MetaCache::default();
         cache.insert_verified(&good_hash, doc.clone()).unwrap();
-        let mut deployer_cache = DeployerCache::default();
-        let deployer = sample_deployer(b"dep-meta");
-        let deployer_key = vec![0x33u8; 32];
-        deployer_cache
-            .insert_verified(&deployer_key, deployer.clone())
-            .unwrap();
         let mut dotrain_cache = HashMap::new();
         dotrain_cache.insert("a.rain".to_string(), good_hash.clone());
         dotrain_cache.insert("missing.rain".to_string(), vec![0x44u8; 32]);
@@ -2369,7 +2014,6 @@ mod tests {
         let store = Store::create(
             &vec!["https://example.com/custom-sg".to_string()],
             &cache,
-            &deployer_cache,
             &dotrain_cache,
         );
 
@@ -2378,7 +2022,6 @@ mod tests {
             &vec!["https://example.com/custom-sg".to_string()]
         );
         assert_eq!(store.get_meta(&good_hash), Some(&doc));
-        assert_eq!(store.get_deployer(&deployer_key), Some(&deployer));
         assert_eq!(store.get_dotrain_hash("a.rain"), Some(&good_hash));
         assert_eq!(store.get_dotrain_hash("missing.rain"), None);
     }
@@ -2393,144 +2036,6 @@ mod tests {
             store.subgraphs(),
             &vec!["sg-a".to_string(), "sg-b".to_string()]
         );
-    }
-
-    /// get_deployer resolves a direct cache hit, then the tx-hash
-    /// indirection, then None; set_deployer populates all three maps.
-    #[test]
-    fn test_store_get_deployer_lookup_chain() {
-        let mut store = Store::new();
-        let deployer = sample_deployer(b"dep-meta-bytes");
-        let key = vec![0x01u8; 32];
-        let tx = vec![0x02u8; 32];
-        store.set_deployer(&key, &deployer, Some(&tx)).unwrap();
-        assert_eq!(store.get_deployer(&key), Some(&deployer));
-        assert_eq!(store.get_deployer(&tx), Some(&deployer));
-        assert_eq!(store.get_deployer(&[0x03u8; 32]), None);
-        assert_eq!(
-            store.get_meta(&deployer.meta_hash),
-            Some(&deployer.meta_bytes)
-        );
-    }
-
-    /// A successful subgraph search populates the meta cache, the deployer
-    /// cache keyed by the bytecode meta hash, and the tx-hash map, and
-    /// returns the record for the searched hash.
-    #[tokio::test]
-    async fn test_store_search_deployer_populates_caches() {
-        use httpmock::prelude::*;
-        let (authoring_meta, doc) = sample_authoring_doc();
-        let meta_hash = keccak256(&doc).0.to_vec();
-        let meta_hash_hex = hex::encode_prefixed(&meta_hash);
-        let tx = vec![0x77u8; 32];
-        let server = MockServer::start();
-        let _mock = server.mock(|when, then| {
-            when.method(POST);
-            then.status(200).json_body(deployer_json_body(
-                &meta_hash_hex,
-                &hex::encode_prefixed(&doc),
-                &hex::encode_prefixed(&tx),
-                &meta_hash_hex,
-            ));
-        });
-        let mut store = Store::new();
-        store.add_subgraphs(&vec![server.url("/sg")]);
-
-        let record = store.search_deployer(&meta_hash).await.cloned().unwrap();
-        assert_eq!(record.meta_hash, meta_hash);
-        assert_eq!(record.meta_bytes, doc);
-        assert_eq!(record.bytecode, vec![0x01]);
-        assert_eq!(record.parser, vec![0x02]);
-        assert_eq!(record.store, vec![0x03]);
-        assert_eq!(record.interpreter, vec![0x04]);
-        assert_eq!(record.authoring_meta, Some(authoring_meta));
-        assert_eq!(store.get_meta(&meta_hash), Some(&doc));
-        assert_eq!(store.get_deployer(&tx), Some(&record));
-    }
-
-    /// A failed subgraph search returns None and stores nothing.
-    #[tokio::test]
-    async fn test_store_search_deployer_error_returns_none() {
-        use httpmock::prelude::*;
-        let server = MockServer::start();
-        let _mock = server.mock(|when, then| {
-            when.method(POST);
-            then.status(500).body("subgraph down");
-        });
-        let mut store = Store::new();
-        store.add_subgraphs(&vec![server.url("/sg")]);
-        assert!(store.search_deployer(&[0x0Du8; 32]).await.is_err());
-        assert!(store.cache().is_empty());
-        assert!(store.deployer_cache().is_empty());
-    }
-
-    /// search_deployer_check returns from the deployer cache or the tx-hash
-    /// map without any network round trip, and only falls back to the
-    /// subgraphs when neither hits.
-    #[tokio::test]
-    async fn test_store_search_deployer_check_branches() {
-        use httpmock::prelude::*;
-        // cached branches: no subgraphs registered at all
-        let mut store = Store::new();
-        let deployer = sample_deployer(b"cached-meta");
-        let key = vec![0x11u8; 32];
-        let tx = vec![0x22u8; 32];
-        store.set_deployer(&key, &deployer, Some(&tx)).unwrap();
-        assert_eq!(store.search_deployer_check(&key).await.unwrap(), &deployer);
-        assert_eq!(store.search_deployer_check(&tx).await.unwrap(), &deployer);
-
-        // network fallback
-        let (_, doc) = sample_authoring_doc();
-        let meta_hash = keccak256(&doc).0.to_vec();
-        let meta_hash_hex = hex::encode_prefixed(&meta_hash);
-        let server = MockServer::start();
-        let _mock = server.mock(|when, then| {
-            when.method(POST);
-            then.status(200).json_body(deployer_json_body(
-                &meta_hash_hex,
-                &hex::encode_prefixed(&doc),
-                &format!("0x{}", "66".repeat(32)),
-                &meta_hash_hex,
-            ));
-        });
-        let mut fresh = Store::new();
-        fresh.add_subgraphs(&vec![server.url("/sg")]);
-        let found = fresh
-            .search_deployer_check(&meta_hash)
-            .await
-            .cloned()
-            .unwrap();
-        assert_eq!(found.meta_bytes, doc);
-    }
-
-    /// set_deployer_from_query_response fills the meta cache, the tx-hash
-    /// map and the deployer cache, and returns the assembled record.
-    #[test]
-    fn test_store_set_deployer_from_query_response() {
-        let (authoring_meta, doc) = sample_authoring_doc();
-        // the hash a real subgraph would answer with: the digest of the bytes
-        let meta_hash = keccak256(&doc).0.to_vec();
-        let bytecode_meta_hash = vec![0x0Bu8; 32];
-        let tx = vec![0x0Cu8; 32];
-        let response = DeployerResponse {
-            tx_hash: tx.clone(),
-            bytecode_meta_hash: bytecode_meta_hash.clone(),
-            meta_hash: meta_hash.clone(),
-            meta_bytes: doc.clone(),
-            bytecode: vec![0xE1],
-            parser: vec![0xE2],
-            store: vec![0xE3],
-            interpreter: vec![0xE4],
-        };
-        let mut store = Store::new();
-        let record = store.set_deployer_from_query_response(response).unwrap();
-        assert_eq!(record.meta_hash, meta_hash);
-        assert_eq!(record.meta_bytes, doc);
-        assert_eq!(record.bytecode, vec![0xE1]);
-        assert_eq!(record.authoring_meta, Some(authoring_meta));
-        assert_eq!(store.get_meta(&meta_hash), Some(&doc));
-        assert_eq!(store.get_deployer(&bytecode_meta_hash), Some(&record));
-        assert_eq!(store.get_deployer(&tx), Some(&record));
     }
 
     /// set_dotrain on a fresh uri returns (new_hash, empty), keyed by the
@@ -2610,31 +2115,18 @@ mod tests {
     /// the keys it does not already hold, and unions the subgraphs.
     #[test]
     fn test_store_merge_semantics() {
-        let deployer_ours = sample_deployer(b"ours");
-        let deployer_theirs = sample_deployer(b"theirs");
-        let shared_tx = vec![0x0Fu8; 32];
-        let their_tx = vec![0x1Eu8; 32];
-
         let mut ours = Store::new();
         let mut theirs = Store::new();
-        ours.set_deployer(&[0x01u8; 32], &deployer_ours, Some(&shared_tx))
-            .unwrap();
-        theirs
-            .set_deployer(&[0x02u8; 32], &deployer_theirs, Some(&shared_tx))
-            .unwrap();
-        theirs
-            .set_deployer(&[0x02u8; 32], &deployer_theirs, Some(&their_tx))
-            .unwrap();
 
-        // same deployer cache key in both stores
-        let contested_key = vec![0x03u8; 32];
-        let deployer_a = sample_deployer(b"deployer-a");
-        let deployer_b = sample_deployer(b"deployer-b");
-        ours.set_deployer(&contested_key, &deployer_a, None)
-            .unwrap();
-        theirs
-            .set_deployer(&contested_key, &deployer_b, None)
-            .unwrap();
+        // meta cache: two different metas cannot share a key - the key IS
+        // their digest - so merge takes the other store's entry rather than
+        // choosing between them
+        let mine = b"mine".to_vec();
+        let yours = b"yours".to_vec();
+        let mine_hash = keccak256(&mine).0.to_vec();
+        let yours_hash = keccak256(&yours).0.to_vec();
+        ours.update_with(&mine_hash, &mine).unwrap();
+        theirs.update_with(&yours_hash, &yours).unwrap();
 
         // same dotrain uri, different content
         let (hash_ours, _) = ours.set_dotrain("content a", "x.rain", false).unwrap();
@@ -2644,23 +2136,8 @@ mod tests {
 
         ours.merge(&theirs);
 
-        // meta cache: two different metas cannot share a key - the key IS
-        // their digest - so merge takes the other store's entry rather than
-        // choosing between them
-        assert_eq!(
-            ours.get_meta(&deployer_ours.meta_hash),
-            Some(&b"ours".to_vec())
-        );
-        assert_eq!(
-            ours.get_meta(&deployer_theirs.meta_hash),
-            Some(&b"theirs".to_vec())
-        );
-        // deployer cache: existing entry wins
-        assert_eq!(ours.get_deployer(&contested_key), Some(&deployer_a));
-        // tx-hash map: existing mapping wins
-        assert_eq!(ours.get_deployer(&shared_tx), Some(&deployer_ours));
-        // tx-hash map: a mapping only the other store holds is taken
-        assert_eq!(ours.get_deployer(&their_tx), Some(&deployer_theirs));
+        assert_eq!(ours.get_meta(&mine_hash), Some(&mine));
+        assert_eq!(ours.get_meta(&yours_hash), Some(&yours));
         // dotrain: existing uri mapping wins
         assert_eq!(ours.get_dotrain_hash("x.rain"), Some(&hash_ours));
         // subgraphs merged
@@ -2755,10 +2232,7 @@ mod tests {
         let mut store = Store::new();
         assert!(store.update(&hash).await.is_err());
         assert!(store.update_check(&hash).await.is_err());
-        assert!(store.search_deployer(&hash).await.is_err());
-        assert!(store.search_deployer_check(&hash).await.is_err());
         assert!(store.cache().is_empty());
-        assert!(store.deployer_cache().is_empty());
     }
 
     /// update_with enforces keccak(bytes) == hash, leaves an existing entry
