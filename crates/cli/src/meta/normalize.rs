@@ -2,8 +2,8 @@ use super::{
     KnownMeta,
     super::error::Error,
     types::{
-        authoring::v1::AuthoringMeta, solidity_abi::v2::SolidityAbiMeta,
-        interpreter_caller::v1::InterpreterCallerMeta,
+        authoring::v1::AuthoringMeta, authoring::v2::AuthoringMetaV2,
+        solidity_abi::v2::SolidityAbiMeta, interpreter_caller::v1::InterpreterCallerMeta,
     },
 };
 
@@ -33,6 +33,13 @@ impl KnownMeta {
                     )?,
                 }
             }
+            KnownMeta::AuthoringMetaV2 => {
+                // v2 is abi encoded onchain and this crate has no encoder for
+                // it, so validation is a decode gate over the input as is
+                AuthoringMetaV2::abi_decode(data)
+                    .map_err(|e| Error::InvalidInput(e.to_string()))?;
+                data.to_vec()
+            }
             // rest of meta types are only pure bytes (ut8 strings or binary)
             // so no normalization/validation can happen for them at this level
             _ => data.to_vec(),
@@ -42,9 +49,19 @@ impl KnownMeta {
 
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
+    use alloy::sol_types::SolValue;
     use crate::error::Error;
     use crate::meta::types::authoring::v1::{AuthoringMeta, AuthoringMetaItem};
+    use crate::meta::types::authoring::v2::AuthoringMetaV2Sol;
     use crate::meta::KnownMeta;
+
+    fn authoring_meta_v2_abi(word: [u8; 32], description: &str) -> Vec<u8> {
+        vec![AuthoringMetaV2Sol {
+            word: word.into(),
+            description: description.to_string(),
+        }]
+        .abi_encode()
+    }
 
     /// OpV1 is a known meta this crate does not model, so normalize passes
     /// its bytes through rather than validating them. It reaches the same
@@ -143,6 +160,45 @@ mod tests {
             .unwrap();
         assert_eq!(normalized, expected);
         assert_ne!(normalized, json.as_bytes().to_vec());
+    }
+
+    /// AuthoringMetaV2 has a concrete abi encoding, so a decodable payload is
+    /// valid and passes through byte identically.
+    #[test]
+    fn test_normalize_authoring_meta_v2_abi_passthrough() {
+        let mut word = [0u8; 32];
+        word[..5].copy_from_slice(b"stack");
+        let abi = authoring_meta_v2_abi(word, "Copies an existing value from the stack.");
+        assert_eq!(KnownMeta::AuthoringMetaV2.normalize(&abi).unwrap(), abi);
+    }
+
+    /// AuthoringMetaV2 is not pure bytes: bytes that cannot abi decode as
+    /// AuthoringMetaV2Sol[] are rejected rather than passed through.
+    #[test]
+    fn test_normalize_authoring_meta_v2_rejects_arbitrary_bytes() {
+        assert!(matches!(
+            KnownMeta::AuthoringMetaV2.normalize(&[0xde, 0xad]),
+            Err(Error::InvalidInput(_))
+        ));
+        assert!(matches!(
+            KnownMeta::AuthoringMetaV2.normalize(b"[]"),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+
+    /// The decode gate carries the word utf8 requirement: abi shaped bytes
+    /// whose word is not utf8 before its first NUL are rejected.
+    #[test]
+    fn test_normalize_authoring_meta_v2_rejects_non_utf8_word() {
+        let mut word = [0u8; 32];
+        // 0xc3 followed by 0x28 is an invalid utf8 sequence, before any NUL
+        word[0] = 0xc3;
+        word[1] = 0x28;
+        let abi = authoring_meta_v2_abi(word, "bad word bytes");
+        assert!(matches!(
+            KnownMeta::AuthoringMetaV2.normalize(&abi),
+            Err(Error::InvalidInput(_))
+        ));
     }
 
     /// Meta types without a structured normal form pass raw bytes through

@@ -26,7 +26,9 @@ pub struct DotrainSourceV1(pub String);
 impl_wasm_traits!(DotrainSourceV1);
 
 impl DotrainSourceV1 {
-    /// Returns the hash of the dotrain source code
+    /// keccak256 over the raw source bytes. This is the metaboard subject a
+    /// dotrain source is emitted under, so it is also the `fetch_by_subject`
+    /// key for it.
     pub fn hash(&self) -> B256 {
         keccak256(self.0.as_bytes())
     }
@@ -66,7 +68,11 @@ impl DotrainSourceV1 {
 
         let metabytes = match client.get_metabytes_by_subject(&subject_bytes).await {
             Ok(metabytes) => metabytes,
-            Err(MetaboardSubgraphClientError::Empty(_)) => return Ok(vec![]),
+            // by subject, because that is the query this made - the split
+            // variants make the two cases distinguishable, so matching the
+            // wrong one here would silently stop treating an empty result as
+            // an empty list.
+            Err(MetaboardSubgraphClientError::EmptyBySubject { .. }) => return Ok(vec![]),
             Err(e) => return Err(Error::MetaboardSubgraphClientError(e)),
         };
 

@@ -2,17 +2,25 @@ use clap::Parser;
 use graphql_parser::schema::{
     parse_schema, Definition, Document, Field, ObjectType, Type, TypeDefinition,
 };
+use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-const INTROSPECTION_QUERY: &str = r#"
-{ __schema { types {
-  kind name
-  fields(includeDeprecated: true) {
-    name type { kind name ofType { kind name ofType { kind name ofType { kind name } } } }
-  }
-} } }
-"#;
+/// Type-ref levels the introspection query expands. GraphQL puts no bound on
+/// wrapper chains, so every depth truncates something; 8 is the depth the
+/// reference introspection query settled on.
+const TYPE_REF_DEPTH: usize = 8;
+
+static INTROSPECTION_QUERY: Lazy<String> = Lazy::new(|| {
+    let mut type_ref = "kind name".to_string();
+    for _ in 1..TYPE_REF_DEPTH {
+        type_ref = format!("kind name ofType {{ {type_ref} }}");
+    }
+    format!(
+        "{{ __schema {{ types {{ kind name fields(includeDeprecated: true) \
+         {{ name type {{ {type_ref} }} }} }} }} }}"
+    )
+});
 
 /// Compare entity types in a subgraph schema against a consumer's snapshot
 /// of the deployed introspection schema. Used in deploy CI to fail early
@@ -90,7 +98,7 @@ async fn fetch_live_entities_as_sdl(url: &str) -> anyhow::Result<String> {
     #[cfg(target_family = "wasm")]
     let client = reqwest::Client::new();
 
-    let body = serde_json::json!({ "query": INTROSPECTION_QUERY });
+    let body = serde_json::json!({ "query": INTROSPECTION_QUERY.as_str() });
     let resp: serde_json::Value = client
         .post(url)
         .json(&body)
@@ -118,7 +126,8 @@ async fn fetch_live_entities_as_sdl(url: &str) -> anyhow::Result<String> {
         if let Some(fields) = t.get("fields").and_then(|f| f.as_array()) {
             for f in fields {
                 let fname = f.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let ftype = render_type(f.get("type").unwrap_or(&serde_json::Value::Null));
+                let ftype = render_type(f.get("type").unwrap_or(&serde_json::Value::Null))
+                    .map_err(|e| anyhow::anyhow!("field `{name}.{fname}`: {e}"))?;
                 sdl.push_str(&format!("  {fname}: {ftype}\n"));
             }
         }
@@ -140,21 +149,29 @@ fn is_entity_object(name: &str) -> bool {
 }
 
 /// Render an introspection type-ref into SDL syntax (`Bytes!`, `[Foo!]!`).
-fn render_type(t: &serde_json::Value) -> String {
+/// A ref the response does not carry in full is an error, not a placeholder:
+/// a placeholder is compared against the consumer snapshot as if it were the
+/// deployed type.
+fn render_type(t: &serde_json::Value) -> anyhow::Result<String> {
     let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-    let name = t.get("name").and_then(|v| v.as_str());
-    let of_type = t.get("ofType");
     match kind {
-        "NON_NULL" => format!(
-            "{}!",
-            render_type(of_type.unwrap_or(&serde_json::Value::Null))
-        ),
-        "LIST" => format!(
-            "[{}]",
-            render_type(of_type.unwrap_or(&serde_json::Value::Null))
-        ),
-        _ => name.unwrap_or("Unknown").to_string(),
+        "NON_NULL" => Ok(format!("{}!", render_type(of_type(t, kind)?)?)),
+        "LIST" => Ok(format!("[{}]", render_type(of_type(t, kind)?)?)),
+        _ => t
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("type-ref of kind `{kind}` has no name")),
     }
+}
+
+fn of_type<'a>(t: &'a serde_json::Value, kind: &str) -> anyhow::Result<&'a serde_json::Value> {
+    t.get("ofType").filter(|v| !v.is_null()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "`{kind}` wrapper has no `ofType`: the type nests deeper than the \
+             {TYPE_REF_DEPTH} levels the introspection query resolves"
+        )
+    })
 }
 
 fn check(source_sdl: &str, consumer_sdl: &str) -> Result<usize, Vec<String>> {
@@ -758,19 +775,59 @@ mod tests {
                 }
             }
         });
-        assert_eq!(render_type(&nested), "[Bytes!]!");
+        assert_eq!(render_type(&nested).unwrap(), "[Bytes!]!");
     }
 
     #[test]
     fn render_type_handles_plain_named_type() {
         let scalar = serde_json::json!({ "kind": "SCALAR", "name": "BigInt", "ofType": null });
-        assert_eq!(render_type(&scalar), "BigInt");
+        assert_eq!(render_type(&scalar).unwrap(), "BigInt");
     }
 
     #[test]
-    fn render_type_falls_back_to_unknown_for_missing_name() {
+    fn render_type_errors_on_missing_name() {
         let bad = serde_json::json!({ "kind": "SCALAR", "name": null, "ofType": null });
-        assert_eq!(render_type(&bad), "Unknown");
+        let err = render_type(&bad).unwrap_err().to_string();
+        assert!(err.contains("kind `SCALAR` has no name"), "{err}");
+    }
+
+    #[test]
+    fn render_type_errors_on_a_truncated_wrapper_chain() {
+        let truncated = serde_json::json!({
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": { "kind": "LIST", "name": null, "ofType": null }
+        });
+        let err = render_type(&truncated).unwrap_err().to_string();
+        assert!(err.contains("`LIST` wrapper has no `ofType`"), "{err}");
+        assert!(err.contains(&TYPE_REF_DEPTH.to_string()), "{err}");
+        assert!(!err.contains("Unknown"), "{err}");
+    }
+
+    #[test]
+    fn render_type_round_trips_a_chain_at_the_query_depth() {
+        let mut t = serde_json::json!({ "kind": "SCALAR", "name": "Bytes", "ofType": null });
+        let mut expected = "Bytes".to_string();
+        for level in 1..TYPE_REF_DEPTH {
+            let kind = if level % 2 == 1 { "NON_NULL" } else { "LIST" };
+            t = serde_json::json!({ "kind": kind, "name": null, "ofType": t });
+            expected = if kind == "NON_NULL" {
+                format!("{expected}!")
+            } else {
+                format!("[{expected}]")
+            };
+        }
+        assert_eq!(render_type(&t).unwrap(), expected);
+    }
+
+    #[test]
+    fn introspection_query_is_valid_graphql_nested_to_the_declared_depth() {
+        graphql_parser::query::parse_query::<String>(&INTROSPECTION_QUERY).unwrap();
+        assert_eq!(
+            INTROSPECTION_QUERY.matches("ofType").count(),
+            TYPE_REF_DEPTH - 1
+        );
+        assert!(INTROSPECTION_QUERY.contains("fields(includeDeprecated: true)"));
     }
 
     // ---------- live-URL HTTP path ----------
@@ -807,6 +864,35 @@ mod tests {
         assert!(!sdl.contains("MetaV1_filter"));
         assert!(!sdl.contains("Query"));
         assert!(!sdl.contains("_Meta_"));
+    }
+
+    #[tokio::test]
+    async fn fetch_live_entities_errors_on_a_truncated_type_ref() {
+        use httpmock::Method::POST;
+        use httpmock::MockServer;
+
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(200).json_body(serde_json::json!({
+                    "data": { "__schema": { "types": [
+                        { "kind": "OBJECT", "name": "MetaBoard", "fields": [
+                            { "name": "metas", "type": { "kind": "NON_NULL", "name": null,
+                                "ofType": { "kind": "LIST", "name": null, "ofType": null } } }
+                        ] }
+                    ] } }
+                }));
+            })
+            .await;
+
+        let err = fetch_live_entities_as_sdl(&server.url("/"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("field `MetaBoard.metas`"), "{err}");
+        assert!(err.contains("has no `ofType`"), "{err}");
+        assert!(!err.contains("Unknown"), "{err}");
     }
 
     #[tokio::test]
