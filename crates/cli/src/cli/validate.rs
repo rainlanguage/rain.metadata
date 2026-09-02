@@ -50,4 +50,16 @@ mod tests {
         };
         assert!(validate(v).is_err());
     }
+
+    /// Arbitrary bytes are not a valid authoring-meta-v2.
+    #[test]
+    fn test_validate_err_for_arbitrary_authoring_meta_v2() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&[0xde, 0xad]).unwrap();
+        let v = Validate {
+            meta: KnownMeta::AuthoringMetaV2,
+            input_path: file.path().to_path_buf(),
+        };
+        assert!(validate(v).is_err());
+    }
 }
