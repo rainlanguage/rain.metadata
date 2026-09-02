@@ -303,7 +303,11 @@ mod tests {
         let document_item: RainMetaDocumentV1Item = original_instance.clone().try_into().unwrap();
 
         // Encode to CBOR
-        let cbor_bytes = document_item.cbor_encode().unwrap();
+        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![document_item.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
 
         // Decode from CBOR
         let decoded_items = RainMetaDocumentV1Item::cbor_decode(&cbor_bytes).unwrap();
@@ -321,7 +325,11 @@ mod tests {
     fn test_extract_from_meta_found() {
         let original_instance = create_test_instance();
         let document_item: RainMetaDocumentV1Item = original_instance.clone().try_into().unwrap();
-        let cbor_bytes = document_item.cbor_encode().unwrap();
+        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![document_item.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
 
         let result = OrderBuilderStateV1::extract_from_meta(&cbor_bytes).unwrap();
         assert!(result.is_some());
@@ -334,7 +342,11 @@ mod tests {
         // Create a different type of document
         let source = DotrainSourceV1("test code".to_string());
         let document_item: RainMetaDocumentV1Item = source.into();
-        let cbor_bytes = document_item.cbor_encode().unwrap();
+        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![document_item.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
 
         let result = OrderBuilderStateV1::extract_from_meta(&cbor_bytes).unwrap();
         assert!(result.is_none());
@@ -389,7 +401,11 @@ mod tests {
             content_language: ContentLanguage::None,
             schema: None,
         };
-        let cbor_bytes = corrupted_doc.cbor_encode().unwrap();
+        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![corrupted_doc.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
 
         let result = OrderBuilderStateV1::extract_from_meta(&cbor_bytes);
         assert!(result.is_err());

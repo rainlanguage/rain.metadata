@@ -58,10 +58,14 @@
 //!   schema: None,
 //! };
 //!
-//! // cbor encode the meta item
-//! let cbor_encoded = meta_map.cbor_encode().unwrap();
+//! // cbor encode the meta item as a rain meta document: the document magic
+//! // number prefix, then the item. The decoder requires that prefix.
+//! let cbor_encoded = RainMetaDocumentV1Item::cbor_encode_seq(
+//!     &vec![meta_map],
+//!     KnownMagic::RainMetaDocumentV1,
+//! ).unwrap();
 //!
-//! // decode the data back
+//! // decode the document back
 //! let cbor_decoded_vec = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded).unwrap();
 //!
 //! // unpack the payload into AuthoringMeta

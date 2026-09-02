@@ -247,18 +247,22 @@ impl RainMetaDocumentV1Item {
 
     /// method to cbor decode from given bytes
     pub fn cbor_decode(data: &[u8]) -> Result<Vec<RainMetaDocumentV1Item>, Error> {
+        // The document prefix is not optional. metadata-v1.md: "Tooling that
+        // wishes to read meta MUST discard/ignore all binary data that does
+        // not begin with the magic number." This is the document decoder, so
+        // this is where that rule lives - not re-applied by whichever caller
+        // remembers to, which is how `store_content` came to decode any bytes
+        // and then check the prefix by hand afterwards. A single bare item
+        // has its own decoder, `RainMetaDocumentV1Item`'s `Deserialize`.
+        // rainlanguage/rain.metadata#203.
+        let Some(body) = data.strip_prefix(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes()[..])
+        else {
+            return Err(Error::NotRainMetaDocument);
+        };
+        let len = body.len();
         let mut metas: Vec<RainMetaDocumentV1Item> = vec![];
         let mut consumed: usize = 0;
-        let mut is_rain_document_meta = false;
-        let mut len = data.len();
-        if data.starts_with(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes()) {
-            is_rain_document_meta = true;
-            len -= 8;
-        }
-        let mut deserializer = match is_rain_document_meta {
-            true => serde_cbor::Deserializer::from_slice(&data[8..]),
-            false => serde_cbor::Deserializer::from_slice(data),
-        };
+        let mut deserializer = serde_cbor::Deserializer::from_slice(body);
         // straight off the stream, not via serde_cbor::Value, whose BTreeMap
         // silently collapses the duplicate keys the visitor has to reject.
         //
@@ -841,17 +845,19 @@ impl Store {
     /// if any of the inner items is an authoring meta, stores it in authoring meta cache as well
     /// returns the reference to the authoring bytes if the meta bytes contained any
     fn store_content(&mut self, bytes: &[u8]) {
+        // cbor_decode only succeeds on a rain meta document, so bytes that
+        // are not one - a bare item cached under its own digest, say - fall
+        // through here untouched. This used to decode anything and then check
+        // the prefix by hand before unpacking; the decoder owns that rule now.
         if let Ok(meta_maps) = RainMetaDocumentV1Item::cbor_decode(bytes) {
-            if bytes.starts_with(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes()) {
-                for meta_map in &meta_maps {
-                    if let Ok(encoded_bytes) = meta_map.cbor_encode() {
-                        // the key is this item's own digest, so the gate can
-                        // only pass - routing through it anyway means no
-                        // reader has to work that out
-                        let _ = self
-                            .cache
-                            .insert_verified(&keccak256(&encoded_bytes).0, encoded_bytes);
-                    }
+            for meta_map in &meta_maps {
+                if let Ok(encoded_bytes) = meta_map.cbor_encode() {
+                    // the key is this item's own digest, so the gate can
+                    // only pass - routing through it anyway means no
+                    // reader has to work that out
+                    let _ = self
+                        .cache
+                        .insert_verified(&keccak256(&encoded_bytes).0, encoded_bytes);
                 }
             }
         }
@@ -967,7 +973,7 @@ mod tests {
         assert_eq!(&cbor_encoded[529..], "application/cbor".as_bytes());
 
         // decode the data back to MetaMap
-        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
+        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&cbor_encoded))?;
         // the length of decoded maps must be 1 as we only had 1 encoded item
         assert_eq!(cbor_decoded.len(), 1);
         // decoded item must be equal to the original meta_map
@@ -1036,7 +1042,7 @@ mod tests {
         assert_eq!(&cbor_encoded[88..], "en".as_bytes());
 
         // decode the data back to MetaMap
-        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
+        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&cbor_encoded))?;
         // the length of decoded maps must be 1 as we only had 1 encoded item
         assert_eq!(cbor_decoded.len(), 1);
         // decoded item must be equal to the original meta_map
@@ -1392,7 +1398,7 @@ mod tests {
         assert_eq!(&cbor_encoded[54..], schema.as_bytes());
 
         // decode the data back to MetaMap
-        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
+        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&cbor_encoded))?;
         // the length of decoded maps must be 1 as we only had 1 encoded item
         assert_eq!(cbor_decoded.len(), 1);
         // decoded item must be equal to the original meta_map
@@ -1434,7 +1440,7 @@ mod tests {
             KnownMagic::OaStructure.to_prefix_bytes()
         );
 
-        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&cbor_encoded)?;
+        let cbor_decoded = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&cbor_encoded))?;
         assert_eq!(cbor_decoded.len(), 1);
         assert_eq!(cbor_decoded[0], meta_map);
 
@@ -1455,7 +1461,7 @@ mod tests {
         // key 5, a plausible future index, unsigned integer value 7
         bytes.extend_from_slice(&[0x05, 0x07]);
 
-        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes))?;
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0], plain_item(KnownMagic::DotrainSourceV1, vec![]));
 
@@ -1481,7 +1487,7 @@ mod tests {
         // text string value of length 2
         bytes.extend_from_slice(&[0x62, 0x68, 0x69]);
 
-        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes))?;
         assert_eq!(decoded.len(), 1);
         let expected = plain_item(KnownMagic::OaStructure, vec![0xff]);
         assert_eq!(decoded[0], expected);
@@ -1500,7 +1506,7 @@ mod tests {
         bytes.extend_from_slice(&[0x05, 0xa1, 0x18, 0x2a, 0x82, 0x01, 0x02]);
         bytes.extend_from_slice(&handwritten_map());
 
-        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes))?;
         assert_eq!(decoded.len(), 2);
         let expected = plain_item(KnownMagic::DotrainV1, vec![0x01]);
         assert_eq!(decoded[0], expected);
@@ -1517,7 +1523,7 @@ mod tests {
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
         bytes.extend_from_slice(&[0x05, 0x07]);
 
-        let decoded = RainMetaDocumentV1Item::cbor_decode(&bytes)?;
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes))?;
         assert_eq!(decoded[0].cbor_encode()?, handwritten_map());
         assert_eq!(decoded[0].hash(false)?, keccak256(handwritten_map()).0);
         assert_ne!(decoded[0].hash(false)?, keccak256(&bytes).0);
@@ -1535,7 +1541,7 @@ mod tests {
         // key "5", unsigned integer value 7
         text_key.extend_from_slice(&[0x61, 0x35, 0x07]);
         assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&text_key),
+            RainMetaDocumentV1Item::cbor_decode(&with_prefix(&text_key)),
             Err(Error::SerdeCborError(_))
         ));
 
@@ -1544,7 +1550,7 @@ mod tests {
         // key -1, unsigned integer value 7
         negative_key.extend_from_slice(&[0x20, 0x07]);
         assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&negative_key),
+            RainMetaDocumentV1Item::cbor_decode(&with_prefix(&negative_key)),
             Err(Error::SerdeCborError(_))
         ));
     }
@@ -1556,7 +1562,16 @@ mod tests {
     fn unknown_map_key_does_not_stand_in_for_a_mandatory_key() {
         let mut bytes: Vec<u8> = vec![0xa2, 0x05, 0x07, 0x01, 0x1b];
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
-        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+        assert!(RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes)).is_err());
+    }
+
+    /// The bytes as a rain meta document: the document magic prefix, then
+    /// whatever was handed in. The decoder requires the prefix, so a test
+    /// that hand writes a cbor map wraps it here and stays about the map.
+    fn with_prefix(bytes: &[u8]) -> Vec<u8> {
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(bytes);
+        document
     }
 
     fn plain_item(magic: KnownMagic, payload: Vec<u8>) -> RainMetaDocumentV1Item {
@@ -1634,15 +1649,70 @@ mod tests {
     /// Empty input and a bare document prefix with no items are corrupt metas.
     #[test]
     fn test_cbor_decode_empty_is_corrupt() {
+        // nothing at all is not a document - it does not begin with the magic
         assert!(matches!(
             RainMetaDocumentV1Item::cbor_decode(&[]),
-            Err(Error::CorruptMeta)
+            Err(Error::NotRainMetaDocument)
         ));
+        // the prefix alone is a document carrying no meta, which is corrupt
         let prefix = KnownMagic::RainMetaDocumentV1.to_prefix_bytes();
         assert!(matches!(
             RainMetaDocumentV1Item::cbor_decode(&prefix),
             Err(Error::CorruptMeta)
         ));
+    }
+
+    /// metadata-v1.md: "Tooling that wishes to read meta MUST discard/ignore
+    /// all binary data that does not begin with the magic number." A well
+    /// formed item without the document prefix is exactly that data, and the
+    /// document decoder refuses it as not a document - a distinct verdict from
+    /// corrupt, since nothing about the bytes was read to reach it.
+    #[test]
+    fn test_cbor_decode_requires_the_document_prefix() {
+        let bare = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&bare),
+            Err(Error::NotRainMetaDocument)
+        ));
+        // the same bytes behind the prefix decode, so it is the prefix that
+        // decides and not the item
+        let items = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bare)).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].payload.as_ref(), &[0x42]);
+    }
+
+    /// Another magic number in the prefix position is not the document
+    /// prefix, however well formed the rest is.
+    #[test]
+    fn test_cbor_decode_rejects_another_magic_as_the_prefix() {
+        let bare = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+        let mut document = KnownMagic::DotrainV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&bare);
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&document),
+            Err(Error::NotRainMetaDocument)
+        ));
+    }
+
+    /// Fewer bytes than the prefix is long cannot begin with it, including
+    /// when those bytes are the prefix cut short.
+    #[test]
+    fn test_cbor_decode_rejects_data_shorter_than_the_prefix() {
+        let prefix = KnownMagic::RainMetaDocumentV1.to_prefix_bytes();
+        for cut in 0..prefix.len() {
+            assert!(
+                matches!(
+                    RainMetaDocumentV1Item::cbor_decode(&prefix[..cut]),
+                    Err(Error::NotRainMetaDocument)
+                ),
+                "prefix cut to {} bytes",
+                cut
+            );
+        }
     }
 
     /// A valid map followed by truncated trailing bytes must not decode: the
@@ -1652,7 +1722,7 @@ mod tests {
         let mut bytes = handwritten_map();
         bytes.push(0x1b); // u64 header with all 8 payload bytes missing
         assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes)),
             Err(Error::CorruptMeta)
         ));
     }
@@ -1665,19 +1735,19 @@ mod tests {
         let mut sole = handwritten_map();
         sole.pop();
         assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&sole),
+            RainMetaDocumentV1Item::cbor_decode(&with_prefix(&sole)),
             Err(Error::CorruptMeta)
         ));
 
         assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&[0xa2, 0x00, 0x41, 0x01]),
+            RainMetaDocumentV1Item::cbor_decode(&with_prefix(&[0xa2, 0x00, 0x41, 0x01])),
             Err(Error::CorruptMeta)
         ));
 
         let mut after_complete = handwritten_map();
         after_complete.extend_from_slice(&[0xa2, 0x00]);
         assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&after_complete),
+            RainMetaDocumentV1Item::cbor_decode(&with_prefix(&after_complete)),
             Err(Error::CorruptMeta)
         ));
     }
@@ -1689,7 +1759,7 @@ mod tests {
         let mut bytes = handwritten_map();
         bytes.push(0xff); // lone break byte
         assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes)),
             Err(Error::SerdeCborError(_))
         ));
     }
@@ -1702,7 +1772,7 @@ mod tests {
     fn test_cbor_decode_missing_payload_is_corrupt() {
         let mut bytes: Vec<u8> = vec![0xa1, 0x01, 0x1b]; // {1: DotrainV1}
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
-        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+        assert!(RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes)).is_err());
 
         // beside a good item, the good item is not recovered
         let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
@@ -1718,7 +1788,7 @@ mod tests {
     #[test]
     fn test_cbor_decode_missing_magic_is_corrupt() {
         let bytes: Vec<u8> = vec![0xa1, 0x00, 0x41, 0x01]; // {0: h'01'}
-        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+        assert!(RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes)).is_err());
 
         let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
             .cbor_encode()
@@ -1738,7 +1808,7 @@ mod tests {
         let mut bytes: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
         bytes.extend_from_slice(&0xdeadbeefdeadbeefu64.to_be_bytes());
         assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
+            RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes)),
             Err(Error::CorruptMeta)
         ));
     }
@@ -1822,7 +1892,7 @@ mod tests {
     fn test_cbor_decode_duplicate_payload_key_errors() {
         let mut bytes: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x00, 0x41, 0x02, 0x01, 0x1b];
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
-        let error = RainMetaDocumentV1Item::cbor_decode(&bytes).unwrap_err();
+        let error = RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes)).unwrap_err();
         assert!(matches!(error, Error::SerdeCborError(_)));
         assert!(
             error.to_string().contains("duplicate field `payload`"),
@@ -1863,7 +1933,8 @@ mod tests {
             .map(|(key, value, _)| (key.clone(), value.clone()))
             .collect();
 
-        let decoded = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&base))?;
+        let decoded =
+            RainMetaDocumentV1Item::cbor_decode(&with_prefix(&handwritten_entries(&base)))?;
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].payload.as_ref(), &[0x01]);
         assert_eq!(decoded[0].magic, KnownMagic::DotrainV1);
@@ -1876,8 +1947,10 @@ mod tests {
             for repeated in [value, other_value] {
                 let mut entries = base.clone();
                 entries.push((key.clone(), repeated.clone()));
-                let error = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&entries))
-                    .unwrap_err();
+                let error = RainMetaDocumentV1Item::cbor_decode(&with_prefix(
+                    &handwritten_entries(&entries),
+                ))
+                .unwrap_err();
                 assert!(
                     matches!(error, Error::SerdeCborError(_)),
                     "{key:?} {error:?}"
@@ -1915,14 +1988,17 @@ mod tests {
         for (key, value, other_value) in &unknown {
             let mut entries = base.clone();
             entries.push((key.clone(), value.clone()));
-            let decoded = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&entries))?;
+            let decoded =
+                RainMetaDocumentV1Item::cbor_decode(&with_prefix(&handwritten_entries(&entries)))?;
             assert_eq!(decoded, vec![plain_item(KnownMagic::DotrainV1, vec![0x01])]);
 
             for repeated in [value, other_value] {
                 let mut duplicated = entries.clone();
                 duplicated.push((key.clone(), repeated.clone()));
-                let error = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&duplicated))
-                    .unwrap_err();
+                let error = RainMetaDocumentV1Item::cbor_decode(&with_prefix(
+                    &handwritten_entries(&duplicated),
+                ))
+                .unwrap_err();
                 assert!(
                     matches!(error, Error::SerdeCborError(_)),
                     "{key:?} {error:?}"
@@ -1951,7 +2027,7 @@ mod tests {
         // The document magic in an item's magic position is structurally
         // invalid, so the meta carrying it does not decode.
         // rainlanguage/rain.metadata#204.
-        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+        assert!(RainMetaDocumentV1Item::cbor_decode(&with_prefix(&bytes)).is_err());
     }
 
     /// The document magic as an item's own magic marks a payload that is
