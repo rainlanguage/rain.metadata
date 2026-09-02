@@ -9,7 +9,12 @@ use rain_metadata_bindings::IDescribedByMetaV1;
 use reqwest::Client;
 use serde::de::{Deserialize, Deserializer, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
-use std::{collections::HashMap, convert::TryFrom, fmt::Debug, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    convert::TryFrom,
+    fmt::Debug,
+    sync::Arc,
+};
 use strum::{EnumIter, EnumString};
 use alloy::sol_types::private::Address;
 use alloy::providers::Provider;
@@ -254,13 +259,20 @@ impl RainMetaDocumentV1Item {
             true => serde_cbor::Deserializer::from_slice(&data[8..]),
             false => serde_cbor::Deserializer::from_slice(data),
         };
-        while match serde_cbor::Value::deserialize(&mut deserializer) {
-            Ok(cbor_map) => {
+        // straight off the stream, not via serde_cbor::Value, whose BTreeMap
+        // silently collapses the duplicate keys the visitor has to reject.
+        //
+        // ItemOrDropped rather than Self: this is the sequence decoder, so an
+        // item this version does not read is skipped over instead of taking
+        // the items beside it down. Its bytes are still consumed and still
+        // counted, so the trailing len check below stays a statement about
+        // the whole document.
+        while match ItemOrDropped::deserialize(&mut deserializer) {
+            Ok(decoded) => {
                 consumed = deserializer.byte_offset();
-                match serde_cbor::value::from_value(cbor_map) {
-                    Ok(meta) => metas.push(meta),
-                    Err(error) => Err(Error::SerdeCborError(error))?,
-                };
+                if let ItemOrDropped::Item(meta) = decoded {
+                    metas.push(meta);
+                }
                 true
             }
             Err(error) => {
@@ -328,11 +340,49 @@ impl Serialize for RainMetaDocumentV1Item {
     }
 }
 
-impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
+/// What a cbor item in a rain meta sequence turned out to be.
+///
+/// Dropped covers exactly one thing: a well formed item whose magic number
+/// this version does not know. The magic is the format's extension point -
+/// "Tooling can efficiently O(1) drop/ignore meta that it does not need or
+/// support decoding and parsing for", "feel free to build systems and
+/// applications with your own numbers and interpretations" - so somebody
+/// else's item travelling in the same document is skipped, not fatal to the
+/// items beside it. rainlanguage/rain.metadata#186.
+///
+/// Everything else malformed stops the document. One document is one emission
+/// from one emitter, whose prefix claims rain meta for the lot, and an
+/// emission carrying a broken claim is not mined for its readable parts.
+/// That is why an item omitting mandatory key 0 or 1 errors here even though
+/// metadata-v1.md line 237 reads as item level drop/ignore: it cannot even be
+/// identified, and recovering its siblings would accept selected data from an
+/// emitter who sent junk. rainlanguage/rain.metadata#188 is overruled on that
+/// line rather than implemented.
+enum ItemOrDropped {
+    Item(RainMetaDocumentV1Item),
+    /// Well formed cbor, but not an item this version reads.
+    Dropped,
+}
+
+impl<'de> Deserialize<'de> for ItemOrDropped {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        /// RFC 8949 §5.6: a map with duplicate keys is not valid, so a second
+        /// sighting of a key is an error rather than an overwrite.
+        fn set_once<V, E: serde::de::Error>(
+            slot: &mut Option<V>,
+            value: V,
+            field: &'static str,
+        ) -> Result<(), E> {
+            if slot.is_some() {
+                return Err(serde::de::Error::duplicate_field(field));
+            }
+            *slot = Some(value);
+            Ok(())
+        }
+
         struct EncodedMap;
         impl<'de> Visitor<'de> for EncodedMap {
-            type Value = RainMetaDocumentV1Item;
+            type Value = ItemOrDropped;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("rain meta cbor encoded bytes")
@@ -349,20 +399,40 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                 let mut content_encoding = None;
                 let mut content_language = None;
                 let mut schema = None;
+                // the recognised keys guard themselves through set_once; an
+                // unknown key has no slot to be occupied, so its repeats are
+                // tracked here
+                let mut unknown_keys: BTreeSet<u64> = BTreeSet::new();
                 while match map.next_key::<u64>() {
                     Ok(Some(key)) => {
                         match key {
-                            0 => payload = Some(map.next_value()?),
-                            1 => magic = Some(map.next_value()?),
-                            2 => content_type = Some(map.next_value()?),
-                            3 => content_encoding = Some(map.next_value()?),
-                            4 => content_language = Some(map.next_value()?),
-                            OA_SCHEMA_KEY => schema = Some(map.next_value()?),
+                            0 => set_once(&mut payload, map.next_value()?, "payload")?,
+                            1 => set_once(&mut magic, map.next_value()?, "magic number")?,
+                            2 => set_once(&mut content_type, map.next_value()?, "content type")?,
+                            3 => set_once(
+                                &mut content_encoding,
+                                map.next_value()?,
+                                "content encoding",
+                            )?,
+                            4 => set_once(
+                                &mut content_language,
+                                map.next_value()?,
+                                "content language",
+                            )?,
+                            OA_SCHEMA_KEY => set_once(&mut schema, map.next_value()?, "schema")?,
                             // the map structure exists so later conventions can
                             // add indexes that older tooling adopts "or not" in
                             // a backwards compatible way, so an index this
-                            // version does not know is skipped, not an error
+                            // version does not know is skipped, not an error.
+                            // §5.6 does not ask whether the decoder understands
+                            // a key, so the repeat of one is still invalid even
+                            // though the value behind it is never read.
                             _ => {
+                                if !unknown_keys.insert(key) {
+                                    return Err(serde::de::Error::custom(format!(
+                                        "duplicate map key: {key}"
+                                    )));
+                                }
                                 map.next_value::<serde::de::IgnoredAny>()?;
                             }
                         };
@@ -371,29 +441,71 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                     Ok(None) => false,
                     Err(error) => Err(error)?,
                 } {}
-                let payload = payload.ok_or_else(|| serde::de::Error::missing_field("payload"))?;
-                let magic = match magic
-                    .ok_or_else(|| serde::de::Error::missing_field("magic number"))?
-                    .try_into()
-                {
-                    Ok(m) => m,
-                    _ => Err(serde::de::Error::custom("unknown magic number"))?,
+                // Indexes 0 and 1 are mandatory. An item without them is not
+                // dropped like an unknown magic below: it cannot even be
+                // identified, and it sits inside a document whose prefix is
+                // the emitter claiming rain meta. One document is one emission
+                // from one emitter, and an emission carrying a malformed item
+                // is not mined for its readable parts - the same rule
+                // fetch_by_subject applies to a failed claim at the item
+                // payload level. A foreign magic is somebody else's data
+                // travelling alongside ours; a keyless map is a broken claim.
+                let (Some(payload), Some(magic_number)) = (payload, magic) else {
+                    return Err(serde::de::Error::custom(
+                        "cbor item omits a mandatory key (0 payload, 1 magic)",
+                    ));
                 };
+
+                // A nested document prefix is not somebody else's magic
+                // number, it is this crate's own in a position it cannot
+                // occupy: the document prefix is the first 8 bytes of the
+                // whole document, never an item's cbor key 1. That is
+                // malformed structure rather than a type this version does
+                // not read, so it stops the document instead of being
+                // dropped with the unknown numbers below.
+                // rainlanguage/rain.metadata#204.
+                if magic_number == KnownMagic::RainMetaDocumentV1 as u64 {
+                    return Err(serde::de::Error::custom(
+                        "rain meta document magic number as an item magic number",
+                    ));
+                }
+
+                let Ok(magic) = KnownMagic::try_from(magic_number) else {
+                    return Ok(ItemOrDropped::Dropped);
+                };
+
                 let content_type = content_type.unwrap_or(ContentType::None);
                 let content_encoding = content_encoding.unwrap_or(ContentEncoding::None);
                 let content_language = content_language.unwrap_or(ContentLanguage::None);
 
-                Ok(RainMetaDocumentV1Item {
+                Ok(ItemOrDropped::Item(RainMetaDocumentV1Item {
                     payload,
                     magic,
                     content_type,
                     content_encoding,
                     content_language,
                     schema,
-                })
+                }))
             }
         }
         deserializer.deserialize_map(EncodedMap)
+    }
+}
+
+/// Decoding one item on its own is strict.
+///
+/// The drop rule is about a *sequence*: an item nobody claimed this tool would
+/// read must not take the items beside it down with it. Asking for a single
+/// item names the thing you want, so not getting it is an error rather than a
+/// silent absence, and there is nothing beside it to protect.
+impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match ItemOrDropped::deserialize(deserializer)? {
+            ItemOrDropped::Item(item) => Ok(item),
+            ItemOrDropped::Dropped => Err(serde::de::Error::custom(
+                "not a rain meta item this version reads: a mandatory key is missing or the magic number is unknown",
+            )),
+        }
     }
 }
 
@@ -1428,15 +1540,14 @@ mod tests {
         ));
     }
 
-    /// An unknown key is skipped, never counted as one of the mandatory keys
+    /// An unknown key is skipped, never counted as one of the mandatory keys,
+    /// so a map carrying one instead of key 0 is still missing its payload and
+    /// corrupts the document rather than decoding with the unknown key standing in.
     #[test]
     fn unknown_map_key_does_not_stand_in_for_a_mandatory_key() {
         let mut bytes: Vec<u8> = vec![0xa2, 0x05, 0x07, 0x01, 0x1b];
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
-        assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::SerdeCborError(_))
-        ));
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
     }
 
     fn plain_item(magic: KnownMagic, payload: Vec<u8>) -> RainMetaDocumentV1Item {
@@ -1574,36 +1685,246 @@ mod tests {
         ));
     }
 
-    /// A map without the mandatory payload key 0 must not decode.
+    /// A map without the mandatory payload key 0 corrupts the document, and
+    /// takes an item beside it down too: one document is one emission from
+    /// one emitter, and an emission carrying a broken claim is not mined for
+    /// its readable parts.
     #[test]
-    fn test_cbor_decode_missing_payload_errors() {
+    fn test_cbor_decode_missing_payload_is_corrupt() {
         let mut bytes: Vec<u8> = vec![0xa1, 0x01, 0x1b]; // {1: DotrainV1}
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
-        assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::SerdeCborError(_))
-        ));
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+
+        // beside a good item, the good item is not recovered
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&bytes);
+        document.extend_from_slice(&good);
+        assert!(RainMetaDocumentV1Item::cbor_decode(&document).is_err());
     }
 
-    /// A map without the mandatory magic key 1 must not decode.
+    /// A map without the mandatory magic key 1, likewise.
     #[test]
-    fn test_cbor_decode_missing_magic_errors() {
+    fn test_cbor_decode_missing_magic_is_corrupt() {
         let bytes: Vec<u8> = vec![0xa1, 0x00, 0x41, 0x01]; // {0: h'01'}
-        assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::SerdeCborError(_))
-        ));
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&bytes);
+        document.extend_from_slice(&good);
+        assert!(RainMetaDocumentV1Item::cbor_decode(&document).is_err());
     }
 
-    /// A map carrying an unknown magic number value must not decode.
+    /// A map carrying a magic number this version does not know is dropped,
+    /// not an error: the magic is the format's extension point, and somebody
+    /// else's well formed item travelling in the same document is not
+    /// corruption. Alone it leaves nothing to return, which is CorruptMeta.
     #[test]
-    fn test_cbor_decode_unknown_magic_errors() {
+    fn test_cbor_decode_unknown_magic_is_dropped() {
         let mut bytes: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
         bytes.extend_from_slice(&0xdeadbeefdeadbeefu64.to_be_bytes());
         assert!(matches!(
             RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
+    /// The unknown magic drop protects the items beside it: the foreign item
+    /// first, so a decoder that stopped at it would return nothing, and the
+    /// good item behind it still decodes.
+    #[test]
+    fn test_cbor_decode_drops_only_the_unknown_magic_item() {
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+
+        let mut unknown_magic: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        unknown_magic.extend_from_slice(&0xdeadbeefdeadbeefu64.to_be_bytes());
+
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&unknown_magic);
+        document.extend_from_slice(&good);
+
+        let items = RainMetaDocumentV1Item::cbor_decode(&document).unwrap();
+        assert_eq!(items.len(), 1, "expected only the good item");
+        assert_eq!(items[0].magic, KnownMagic::DotrainV1);
+        assert_eq!(items[0].payload.as_ref(), &[0x42]);
+    }
+
+    /// The document prefix is not a magic number an item may carry: it is the
+    /// first 8 bytes of a whole document. An item claiming it is malformed
+    /// structure rather than a type this version does not read, so it stops
+    /// the document instead of being dropped like an unknown number.
+    #[test]
+    fn test_cbor_decode_nested_document_magic_is_not_dropped() {
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+
+        let mut nested: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        nested.extend_from_slice(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes());
+
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&nested);
+        document.extend_from_slice(&good);
+
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&document),
             Err(Error::SerdeCborError(_))
         ));
+    }
+
+    /// A cbor map header plus the given already encoded key/value pairs,
+    /// written per the cbor spec rather than through the encoder, so a map can
+    /// carry a key twice which no encoder emits.
+    fn handwritten_entries(entries: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
+        assert!(entries.len() < 24);
+        let mut bytes = vec![0xa0 | entries.len() as u8];
+        for (key, value) in entries {
+            bytes.extend_from_slice(key);
+            bytes.extend_from_slice(value);
+        }
+        bytes
+    }
+
+    /// cbor unsigned integer of the magic number, as a map key or a value.
+    fn handwritten_magic(magic: KnownMagic) -> Vec<u8> {
+        let mut bytes = vec![0x1b];
+        bytes.extend_from_slice(&magic.to_prefix_bytes());
+        bytes
+    }
+
+    /// cbor text string of a string shorter than 24 bytes.
+    fn handwritten_text(text: &str) -> Vec<u8> {
+        assert!(text.len() < 24);
+        let mut bytes = vec![0x60 | text.len() as u8];
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    /// The repro from #191: a map repeating key 0 must not decode with the
+    /// last payload winning.
+    #[test]
+    fn test_cbor_decode_duplicate_payload_key_errors() {
+        let mut bytes: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x00, 0x41, 0x02, 0x01, 0x1b];
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        let error = RainMetaDocumentV1Item::cbor_decode(&bytes).unwrap_err();
+        assert!(matches!(error, Error::SerdeCborError(_)));
+        assert!(
+            error.to_string().contains("duplicate field `payload`"),
+            "{error}"
+        );
+    }
+
+    /// RFC 8949 §5.6: every recognised key is rejected when the map carries it
+    /// twice, whether the repeated value differs from the first or matches it.
+    #[test]
+    fn test_cbor_decode_duplicate_any_key_errors() -> Result<(), Error> {
+        let cases: [(Vec<u8>, Vec<u8>, Vec<u8>); 6] = [
+            (vec![0x00], vec![0x41, 0x01], vec![0x41, 0x02]),
+            (
+                vec![0x01],
+                handwritten_magic(KnownMagic::DotrainV1),
+                handwritten_magic(KnownMagic::RainlangV1),
+            ),
+            (
+                vec![0x02],
+                handwritten_text("application/cbor"),
+                handwritten_text("application/json"),
+            ),
+            (
+                vec![0x03],
+                handwritten_text("identity"),
+                handwritten_text("deflate"),
+            ),
+            (vec![0x04], handwritten_text("en"), handwritten_text("none")),
+            (
+                handwritten_magic(KnownMagic::OaSchema),
+                handwritten_text("hi"),
+                handwritten_text("bye"),
+            ),
+        ];
+        let base: Vec<(Vec<u8>, Vec<u8>)> = cases
+            .iter()
+            .map(|(key, value, _)| (key.clone(), value.clone()))
+            .collect();
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&base))?;
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].payload.as_ref(), &[0x01]);
+        assert_eq!(decoded[0].magic, KnownMagic::DotrainV1);
+        assert_eq!(decoded[0].content_type, ContentType::Cbor);
+        assert_eq!(decoded[0].content_encoding, ContentEncoding::Identity);
+        assert_eq!(decoded[0].content_language, ContentLanguage::En);
+        assert_eq!(decoded[0].schema.as_deref(), Some("hi"));
+
+        for (key, value, other_value) in &cases {
+            for repeated in [value, other_value] {
+                let mut entries = base.clone();
+                entries.push((key.clone(), repeated.clone()));
+                let error = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&entries))
+                    .unwrap_err();
+                assert!(
+                    matches!(error, Error::SerdeCborError(_)),
+                    "{key:?} {error:?}"
+                );
+                assert!(
+                    error.to_string().contains("duplicate field"),
+                    "{key:?} {error}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// An index this version has no meaning for is skipped rather than
+    /// rejected, but RFC 8949 §5.6 does not ask whether a key is understood:
+    /// a map that carries an unknown index twice is invalid too, whether that
+    /// index is a plain integer or a magic number other than OaSchema.
+    #[test]
+    fn test_cbor_decode_duplicate_unknown_key_errors() -> Result<(), Error> {
+        let base: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (vec![0x00], vec![0x41, 0x01]),
+            (vec![0x01], handwritten_magic(KnownMagic::DotrainV1)),
+        ];
+        // key 5 as a plausible future index and the OaHashList magic as a
+        // future magic keyed entry, each with the value cbor to repeat it with
+        let unknown: [(Vec<u8>, Vec<u8>, Vec<u8>); 2] = [
+            (vec![0x05], vec![0x07], vec![0x08]),
+            (
+                handwritten_magic(KnownMagic::OaHashList),
+                handwritten_text("hi"),
+                handwritten_text("bye"),
+            ),
+        ];
+
+        for (key, value, other_value) in &unknown {
+            let mut entries = base.clone();
+            entries.push((key.clone(), value.clone()));
+            let decoded = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&entries))?;
+            assert_eq!(decoded, vec![plain_item(KnownMagic::DotrainV1, vec![0x01])]);
+
+            for repeated in [value, other_value] {
+                let mut duplicated = entries.clone();
+                duplicated.push((key.clone(), repeated.clone()));
+                let error = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&duplicated))
+                    .unwrap_err();
+                assert!(
+                    matches!(error, Error::SerdeCborError(_)),
+                    "{key:?} {error:?}"
+                );
+                assert!(
+                    error.to_string().contains("duplicate map key"),
+                    "{key:?} {error}"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// A handwritten item map carrying the rain meta document magic under key
