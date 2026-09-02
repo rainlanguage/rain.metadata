@@ -23,7 +23,6 @@ use alloy::primitives::{hex, keccak256};
 use serde::{Deserialize, Deserializer};
 
 use crate::error::Error;
-use crate::meta::NPE2Deployer;
 
 /// Meta bytes keyed by their own keccak256 hash.
 ///
@@ -209,81 +208,5 @@ mod tests {
         let a = serde_cbor::to_vec(&cache).unwrap();
         let b = serde_cbor::to_vec(&cache.clone()).unwrap();
         assert_eq!(a, b);
-    }
-}
-
-/// Deployer records keyed by their bytecode meta hash.
-///
-/// The key here is not a digest of the value - a deployer is keyed by its
-/// bytecode meta hash while carrying a constructor meta of its own - so the
-/// invariant is internal: `meta_bytes` must hash to `meta_hash`. A record that
-/// gets that wrong describes a deployer whose constructor meta is not the meta
-/// it names, and [crate::meta::Store] copies exactly those bytes into the
-/// [MetaCache] under exactly that hash.
-///
-/// Same shape as [MetaCache], for the same reason: the check was a convention
-/// spread across call sites, and `set_deployer` and
-/// `set_deployer_from_query_response` both missed it.
-/// rainlanguage/rain.metadata#170.
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
-pub struct DeployerCache {
-    inner: BTreeMap<Vec<u8>, NPE2Deployer>,
-}
-
-impl DeployerCache {
-    /// Caches `deployer` under `key`, and only if its own meta bytes hash to
-    /// the meta hash it claims for them.
-    pub fn insert_verified(
-        &mut self,
-        key: &[u8],
-        deployer: NPE2Deployer,
-    ) -> Result<&NPE2Deployer, Error> {
-        if keccak256(&deployer.meta_bytes).0.as_slice() != deployer.meta_hash.as_slice() {
-            return Err(Error::CorruptRecord(format!(
-                "deployer meta bytes do not hash to its own meta hash {}",
-                hex::encode_prefixed(&deployer.meta_hash)
-            )));
-        }
-        self.inner.insert(key.to_vec(), deployer);
-        self.inner.get(key).ok_or(Error::NoRecordFound)
-    }
-
-    /// The deployer cached under `key`, if any.
-    pub fn get(&self, key: &[u8]) -> Option<&NPE2Deployer> {
-        self.inner.get(key)
-    }
-
-    /// Whether anything is cached under `key`.
-    pub fn contains_key(&self, key: &[u8]) -> bool {
-        self.inner.contains_key(key)
-    }
-
-    /// Every cached pair. Entries are verified by construction.
-    pub fn iter(&self) -> impl Iterator<Item = (&Vec<u8>, &NPE2Deployer)> {
-        self.inner.iter()
-    }
-
-    /// Whether anything is cached at all.
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-}
-
-/// Deserializing is a way in, so it goes through the gate, as for [MetaCache].
-impl<'de> Deserialize<'de> for DeployerCache {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct Wire {
-            inner: BTreeMap<Vec<u8>, NPE2Deployer>,
-        }
-
-        let wire = Wire::deserialize(deserializer)?;
-        let mut cache = DeployerCache::default();
-        for (key, deployer) in wire.inner {
-            cache
-                .insert_verified(&key, deployer)
-                .map_err(serde::de::Error::custom)?;
-        }
-        Ok(cache)
     }
 }
