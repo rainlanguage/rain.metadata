@@ -237,9 +237,17 @@ impl AuthoringMetaV2 {
             for item in items {
                 match AuthoringMetaV2::try_from(item) {
                     Ok(meta) => return Ok(meta),
-                    Err(error) => {
+                    // not claiming to be authoring meta - an abi beside the
+                    // words, say - so it is skipped
+                    Err(error @ AuthoringMetaV2Error::MetaMagicNumberMismatch) => {
                         first_error.get_or_insert(error);
                     }
+                    // claiming the magic and failing the claim, inside the
+                    // document the contract's own hash commits to. A broken
+                    // claim is not mined for its readable parts: a later item
+                    // is not consulted, the same rule fetch_by_subject and the
+                    // cbor decoder apply to their emissions.
+                    Err(error) => return Err(wrap_error(error)),
                 }
             }
         }
@@ -1324,6 +1332,42 @@ mod tests {
         match error.error {
             AuthoringMetaV2Error::MetaMagicNumberMismatch => {}
             other => panic!("expected MetaMagicNumberMismatch, got {:?}", other),
+        }
+    }
+
+    /// An item claiming the authoring magic whose payload does not decode is
+    /// a broken claim inside the document the contract's hash commits to. The
+    /// good item behind it is not returned: a broken claim is not mined for
+    /// its readable parts, the rule fetch_by_subject and the cbor decoder
+    /// apply to their emissions.
+    #[tokio::test]
+    async fn test_fetch_for_contract_does_not_scan_past_a_broken_authoring_claim() {
+        // junk under the authoring magic, then real words
+        let seq = cbor_seq_hex(vec![
+            document(KnownMagic::AuthoringMetaV2, vec![0xff, 0xfe]),
+            authoring_meta_v2_document(),
+        ]);
+        let hash = meta_hex_hash(&seq);
+        let rpc_server = MockServer::start_async().await;
+        mock_described_by_rpc(&rpc_server, hash);
+
+        let metaboard_server = MockServer::start_async().await;
+        metaboard_server.mock(|when, then| {
+            when.method(POST).path("/").body_contains(encode(hash));
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [ metaboard_meta_entry(&seq) ] }
+            }));
+        });
+
+        let result = AuthoringMetaV2::fetch_for_contract(
+            Address::from([0u8; 20]),
+            vec![rpc_server.url("/")],
+            metaboard_server.url("/"),
+        )
+        .await;
+        match result.unwrap_err().error {
+            AuthoringMetaV2Error::AbiDecodeError(_) => {}
+            other => panic!("expected the broken claim's decode error, got {:?}", other),
         }
     }
 }
