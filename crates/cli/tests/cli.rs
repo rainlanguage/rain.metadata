@@ -2,8 +2,10 @@
 //! which in-process unit tests cannot observe.
 #![cfg(not(target_family = "wasm"))]
 
+use rain_metadata::meta::KnownMeta;
 use std::io::Write;
 use std::process::{Command, Stdio};
+use strum::IntoEnumIterator;
 
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_rain-metadata"))
@@ -43,28 +45,48 @@ fn magic_ls_prints_all_known_magic_numbers() {
     assert_eq!(stdout, expected);
 }
 
-/// `schema ls` prints every known meta identifier in declaration order.
+/// `schema ls` prints the metas that have a JSON schema, in declaration
+/// order, and no meta that does not.
 #[test]
-fn schema_ls_prints_all_known_metas() {
+fn schema_ls_prints_metas_that_have_a_schema() {
     let out = bin().args(["schema", "ls"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
+    // op-v1 is absent: #304 removed the model, so there is no type left to
+    // derive a schema from. It is still a known meta and `magic ls` still
+    // lists it - having a magic number and having a json schema are different
+    // things, which is the distinction this listing now draws.
     let expected = "\
-op-v1
-dotrain-v1
-rainlang-v1
 solidity-abi-v2
 authoring-meta-v1
-authoring-meta-v2
 interpreter-caller-meta-v1
-expression-deployer-v2-bytecode-v1
-rainlang-source-v1
-address-list
-dotrain-source-v1
-order-builder-state-v1
-raindex-signed-context-oracle-v1
 ";
     assert_eq!(stdout, expected);
+}
+
+/// The listing is a contract with `show`: every name `ls` prints, `show`
+/// produces a schema for, and every `KnownMeta` the listing omits, `show`
+/// rejects. Asserted over the whole enum, so a variant added to one side
+/// only fails here.
+#[test]
+fn schema_ls_lists_exactly_what_schema_show_accepts() {
+    let out = bin().args(["schema", "ls"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let listed: Vec<&str> = stdout.lines().collect();
+    assert!(!listed.is_empty());
+
+    for meta in KnownMeta::iter() {
+        let name = meta.to_string();
+        let out = bin().args(["schema", "show", &name]).output().unwrap();
+        if listed.contains(&name.as_str()) {
+            assert!(out.status.success(), "listed but unsupported: {name}");
+            serde_json::from_slice::<serde_json::Value>(&out.stdout)
+                .unwrap_or_else(|_| panic!("listed but not JSON: {name}"));
+        } else {
+            assert!(!out.status.success(), "unlisted but supported: {name}");
+        }
+    }
 }
 
 /// `schema show` writes the schema to stdout when no output path is
