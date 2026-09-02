@@ -1,10 +1,11 @@
 use regex::Regex;
+use std::borrow::Cow;
 use validator::Validate;
 use alloy::json_abi::JsonAbi;
 use once_cell::sync::Lazy;
 use validator::{ValidationErrors, ValidationError};
 use super::super::{
-    super::{RainMetaDocumentV1Item, Error as MetaError},
+    super::{KnownMagic, RainMetaDocumentV1Item, Error as MetaError},
     common::v1::REGEX_SOLIDITY_IDENTIFIER,
 };
 use serde::{Serialize, Serializer, Deserialize, Deserializer, de::Error, ser::SerializeStruct};
@@ -48,10 +49,9 @@ impl Validate for SolidityAbiMeta {
     fn validate(&self) -> Result<(), ValidationErrors> {
         for (index, item) in self.0.iter().enumerate() {
             if let Err(mut e) = item.validate() {
-                e.add(
-                    Box::leak(format!("at index {}", index).into_boxed_str()),
-                    ValidationError::new(""),
-                );
+                let mut annotation = ValidationError::new("index");
+                annotation.add_param(Cow::from("index"), &index);
+                e.add("at index", annotation);
                 return Err(e);
             }
         }
@@ -82,6 +82,15 @@ impl TryFrom<&[u8]> for SolidityAbiMeta {
 impl TryFrom<RainMetaDocumentV1Item> for SolidityAbiMeta {
     type Error = MetaError;
     fn try_from(value: RainMetaDocumentV1Item) -> Result<Self, Self::Error> {
+        // The magic is the item's statement of what its payload is. Json
+        // that happens to parse is not a solidity abi meta unless the emitter
+        // said so.
+        if value.magic != KnownMagic::SolidityAbiV2 {
+            return Err(MetaError::InvalidMetaMagic(
+                KnownMagic::SolidityAbiV2,
+                value.magic,
+            ));
+        }
         Self::try_from(value.unpack()?)
     }
 }
@@ -89,6 +98,12 @@ impl TryFrom<RainMetaDocumentV1Item> for SolidityAbiMeta {
 impl TryFrom<RainMetaDocumentV1Item> for JsonAbi {
     type Error = MetaError;
     fn try_from(value: RainMetaDocumentV1Item) -> Result<Self, Self::Error> {
+        if value.magic != KnownMagic::SolidityAbiV2 {
+            return Err(MetaError::InvalidMetaMagic(
+                KnownMagic::SolidityAbiV2,
+                value.magic,
+            ));
+        }
         Ok(serde_json::from_slice(value.unpack()?.as_slice())?)
     }
 }
@@ -483,7 +498,7 @@ impl<'de> Deserialize<'de> for SolidityAbiItem {
             intermediate_io: &IntermediateIO,
         ) -> Result<SolidityAbiErrorInput, String> {
             if intermediate_io.indexed.is_some() {
-                return Err("indexed found on fn io".into());
+                return Err("indexed found on error input".into());
             }
 
             let components: Option<Vec<SolidityAbiErrorInput>> = match &intermediate_io.components {
@@ -603,6 +618,44 @@ mod tests {
     use alloy::json_abi::JsonAbi;
     use super::{SolidityAbiMeta, REGEX_SOLIDITY_ABI_TYPE};
     use crate::error::Error;
+    use crate::meta::{
+        ContentEncoding, ContentLanguage, ContentType, KnownMagic, RainMetaDocumentV1Item,
+    };
+
+    /// Both item conversions check the magic before touching the payload, so
+    /// json that happens to parse under another type's magic is not a
+    /// solidity abi meta.
+    #[test]
+    fn test_try_from_item_rejects_wrong_magic() {
+        for magic in [
+            KnownMagic::AuthoringMetaV1,
+            KnownMagic::OpMetaV1,
+            KnownMagic::InterpreterCallerMetaV1,
+        ] {
+            let item = RainMetaDocumentV1Item {
+                payload: serde_bytes::ByteBuf::from(b"[]".to_vec()),
+                magic,
+                content_type: ContentType::Json,
+                content_encoding: ContentEncoding::None,
+                content_language: ContentLanguage::None,
+                schema: None,
+            };
+            match SolidityAbiMeta::try_from(item.clone()).unwrap_err() {
+                Error::InvalidMetaMagic(expected, actual) => {
+                    assert_eq!(expected, KnownMagic::SolidityAbiV2);
+                    assert_eq!(actual, magic);
+                }
+                other => panic!("expected InvalidMetaMagic for {:?}, got {:?}", magic, other),
+            }
+            match JsonAbi::try_from(item).unwrap_err() {
+                Error::InvalidMetaMagic(expected, actual) => {
+                    assert_eq!(expected, KnownMagic::SolidityAbiV2);
+                    assert_eq!(actual, magic);
+                }
+                other => panic!("expected InvalidMetaMagic for {:?}, got {:?}", magic, other),
+            }
+        }
+    }
 
     // Committed deterministic abi subset written by CopyArtifacts.sol.
     // Lets cargo test run without a prior `forge build`.
@@ -955,7 +1008,12 @@ mod tests {
             "type": "error"
         }]);
         let result: Result<SolidityAbiMeta, _> = serde_json::from_value(abi);
-        assert!(result.unwrap_err().to_string().contains("indexed found"),);
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("indexed found on error input"),
+            "unexpected message: {}",
+            message
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use validator::Validate;
 use serde::{Serialize, Deserialize};
 use super::super::{
-    super::{RainMetaDocumentV1Item, Error},
+    super::{KnownMagic, RainMetaDocumentV1Item, Error},
     common::v1::{RainTitle, RainSymbol, RainString, Description, SolidityIdentifier},
 };
 
@@ -21,10 +21,10 @@ type AbiPath = RainString;
 pub struct InterpreterCallerMeta {
     #[validate]
     pub name: RainTitle,
-    /// Name of the contract corresponding to `contractName` feild in the abi.
+    /// Name of the contract corresponding to `contractName` field in the abi.
     #[validate]
     pub abi_name: SolidityIdentifier,
-    /// Name of the caller corresponding to `contractName` feild in the abi.
+    /// Description of the caller.
     #[serde(default)]
     #[validate]
     pub desc: Description,
@@ -66,6 +66,12 @@ impl TryFrom<&[u8]> for InterpreterCallerMeta {
 impl TryFrom<RainMetaDocumentV1Item> for InterpreterCallerMeta {
     type Error = Error;
     fn try_from(value: RainMetaDocumentV1Item) -> Result<Self, Self::Error> {
+        if value.magic != KnownMagic::InterpreterCallerMetaV1 {
+            return Err(Error::InvalidMetaMagic(
+                KnownMagic::InterpreterCallerMetaV1,
+                value.magic,
+            ));
+        }
         Self::try_from(value.unpack()?)
     }
 }
@@ -124,7 +130,7 @@ pub struct Expression {
     #[serde(default)]
     pub caller_context: bool,
     #[serde(default)]
-    #[validate(length(max = "u8::MAX"))]
+    #[validate(length(max = 256))]
     #[validate]
     pub context_columns: Vec<ContextColumn>,
 }
@@ -142,6 +148,7 @@ pub struct ContextColumn {
     #[validate]
     pub alias: Option<RainSymbol>,
     #[serde(default)]
+    #[validate(length(max = 256))]
     #[validate]
     pub cells: Vec<ContextCell>,
 }
@@ -313,8 +320,10 @@ mod tests {
         }
     }
 
-    /// methods and inputs require at least one element; context_columns
-    /// allows at most u8::MAX (255) elements.
+    /// methods and inputs require at least one element; both context matrix
+    /// axes allow 256 elements, the addressable range of the byte each index
+    /// occupies in the `context` operand - `LibOpContext` masks the column to
+    /// the low byte and the cell to the second, so both run 0..=255.
     #[test]
     fn test_length_constraints() {
         let mut v = valid_json();
@@ -328,12 +337,23 @@ mod tests {
         let column = serde_json::json!({ "name": "Col" });
         let mut v = valid_json();
         *v.pointer_mut("/methods/0/expressions/0/contextColumns")
-            .unwrap() = serde_json::Value::Array(vec![column.clone(); 255]);
+            .unwrap() = serde_json::Value::Array(vec![column.clone(); 256]);
         assert!(parse(&v).is_ok());
 
         let mut v = valid_json();
         *v.pointer_mut("/methods/0/expressions/0/contextColumns")
-            .unwrap() = serde_json::Value::Array(vec![column; 256]);
+            .unwrap() = serde_json::Value::Array(vec![column; 257]);
+        assert!(matches!(parse(&v).unwrap_err(), Error::ValidationErrors(_)));
+
+        let cell = serde_json::json!({ "name": "Cell" });
+        let mut v = valid_json();
+        *v.pointer_mut("/methods/0/expressions/0/contextColumns/0/cells")
+            .unwrap() = serde_json::Value::Array(vec![cell.clone(); 256]);
+        assert!(parse(&v).is_ok());
+
+        let mut v = valid_json();
+        *v.pointer_mut("/methods/0/expressions/0/contextColumns/0/cells")
+            .unwrap() = serde_json::Value::Array(vec![cell; 257]);
         assert!(matches!(parse(&v).unwrap_err(), Error::ValidationErrors(_)));
     }
 
@@ -375,6 +395,34 @@ mod tests {
         let parsed = InterpreterCallerMeta::try_from(item).unwrap();
         assert_eq!(parsed.name.value, "Test Caller");
         assert_eq!(parsed.methods.len(), 1);
+    }
+
+    /// The magic is the item's type discriminator, so a payload that parses
+    /// as InterpreterCallerMeta is still not an InterpreterCallerMeta item
+    /// under any other magic.
+    #[test]
+    fn test_try_from_meta_item_rejects_wrong_magic() {
+        for magic in [
+            KnownMagic::SolidityAbiV2,
+            KnownMagic::OpMetaV1,
+            KnownMagic::RainMetaDocumentV1,
+        ] {
+            let item = RainMetaDocumentV1Item {
+                payload: serde_bytes::ByteBuf::from(serde_json::to_vec(&valid_json()).unwrap()),
+                magic,
+                content_type: ContentType::Json,
+                content_encoding: ContentEncoding::None,
+                content_language: ContentLanguage::En,
+                schema: None,
+            };
+            match InterpreterCallerMeta::try_from(item).unwrap_err() {
+                Error::InvalidMetaMagic(expected, actual) => {
+                    assert_eq!(expected, KnownMagic::InterpreterCallerMetaV1);
+                    assert_eq!(actual, magic);
+                }
+                other => panic!("Expected InvalidMetaMagic for {:?}, got {:?}", magic, other),
+            }
+        }
     }
 
     /// Unknown fields are rejected.
@@ -473,14 +521,14 @@ mod tests {
     }
 
     #[test]
-    fn test_context_columns_max_255() {
+    fn test_context_columns_max_256() {
         let column = json!({ "name": "Base" });
         let mut v = base_json();
         v["methods"][0]["expressions"][0]["contextColumns"] =
-            serde_json::Value::Array(vec![column.clone(); 255]);
+            serde_json::Value::Array(vec![column.clone(); 256]);
         assert!(try_parse(&v).is_ok());
         v["methods"][0]["expressions"][0]["contextColumns"] =
-            serde_json::Value::Array(vec![column; 256]);
+            serde_json::Value::Array(vec![column; 257]);
         assert!(matches!(try_parse(&v), Err(Error::ValidationErrors(_))));
     }
 }

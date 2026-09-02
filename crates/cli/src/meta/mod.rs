@@ -1,4 +1,7 @@
 use super::error::Error;
+
+pub mod cache;
+use cache::MetaCache;
 use alloy::primitives::{hex, keccak256};
 use futures::future;
 use graphql_client::GraphQLQuery;
@@ -6,14 +9,17 @@ use rain_metadata_bindings::IDescribedByMetaV1;
 use reqwest::Client;
 use serde::de::{Deserialize, Deserializer, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
-use std::{collections::HashMap, convert::TryFrom, fmt::Debug, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    convert::TryFrom,
+    fmt::Debug,
+    sync::Arc,
+};
 use strum::{EnumIter, EnumString};
-use types::authoring::v1::AuthoringMeta;
 use alloy::sol_types::private::Address;
 use alloy::providers::Provider;
-use alloy::rpc::types::TransactionRequest;
-use alloy::sol_types::SolCall;
-use rain_erc::erc165::{IERC165, XorSelectors, supports_erc165};
+use alloy::contract::Error as ContractError;
+use rain_erc::erc165::{Erc165Error, IERC165, XorSelectors, supports_erc165};
 
 pub mod magic;
 pub(crate) mod normalize;
@@ -27,6 +33,12 @@ pub use query::*;
 #[derive(Copy, Clone, EnumString, EnumIter, strum::Display, Debug, PartialEq)]
 #[strum(serialize_all = "kebab-case")]
 pub enum KnownMeta {
+    /// Ops meta v1. Still a known meta - the magic number is in the
+    /// metadata-v1 table and an item can legitimately carry it - but this
+    /// crate no longer models or validates the payload. The interpreter
+    /// describes its words as AuthoringMetaV2 now (`LibAllStandardOps`
+    /// publishes exactly that), and the only surviving op meta references in
+    /// the org are deprecated IExpressionDeployer interfaces.
     OpV1,
     DotrainV1,
     RainlangV1,
@@ -46,10 +58,10 @@ impl TryFrom<KnownMagic> for KnownMeta {
     type Error = Error;
     fn try_from(value: KnownMagic) -> Result<Self, Self::Error> {
         match value {
-            KnownMagic::OpMetaV1 => Ok(KnownMeta::OpV1),
             KnownMagic::DotrainV1 => Ok(KnownMeta::DotrainV1),
             KnownMagic::RainlangV1 => Ok(KnownMeta::RainlangV1),
             KnownMagic::SolidityAbiV2 => Ok(KnownMeta::SolidityAbiV2),
+            KnownMagic::OpMetaV1 => Ok(KnownMeta::OpV1),
             KnownMagic::AuthoringMetaV1 => Ok(KnownMeta::AuthoringMetaV1),
             KnownMagic::AuthoringMetaV2 => Ok(KnownMeta::AuthoringMetaV2),
             KnownMagic::AddressList => Ok(KnownMeta::AddressList),
@@ -235,8 +247,8 @@ impl RainMetaDocumentV1Item {
 
     /// method to cbor decode from given bytes
     pub fn cbor_decode(data: &[u8]) -> Result<Vec<RainMetaDocumentV1Item>, Error> {
-        let mut track: Vec<usize> = vec![];
         let mut metas: Vec<RainMetaDocumentV1Item> = vec![];
+        let mut consumed: usize = 0;
         let mut is_rain_document_meta = false;
         let mut len = data.len();
         if data.starts_with(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes()) {
@@ -247,33 +259,32 @@ impl RainMetaDocumentV1Item {
             true => serde_cbor::Deserializer::from_slice(&data[8..]),
             false => serde_cbor::Deserializer::from_slice(data),
         };
-        while match serde_cbor::Value::deserialize(&mut deserializer) {
-            Ok(cbor_map) => {
-                track.push(deserializer.byte_offset());
-                match serde_cbor::value::from_value(cbor_map) {
-                    Ok(meta) => metas.push(meta),
-                    Err(error) => Err(Error::SerdeCborError(error))?,
-                };
+        // straight off the stream, not via serde_cbor::Value, whose BTreeMap
+        // silently collapses the duplicate keys the visitor has to reject.
+        //
+        // ItemOrDropped rather than Self: this is the sequence decoder, so an
+        // item this version does not read is skipped over instead of taking
+        // the items beside it down. Its bytes are still consumed and still
+        // counted, so the trailing len check below stays a statement about
+        // the whole document.
+        while match ItemOrDropped::deserialize(&mut deserializer) {
+            Ok(decoded) => {
+                consumed = deserializer.byte_offset();
+                if let ItemOrDropped::Item(meta) = decoded {
+                    metas.push(meta);
+                }
                 true
             }
             Err(error) => {
                 if error.is_eof() {
-                    if error.offset() == len as u64 {
-                        false
-                    } else {
-                        Err(Error::SerdeCborError(error))?
-                    }
+                    false
                 } else {
                     Err(Error::SerdeCborError(error))?
                 }
             }
         } {}
 
-        if metas.is_empty()
-            || track.is_empty()
-            || track.len() != metas.len()
-            || len != track[track.len() - 1]
-        {
+        if metas.is_empty() || len != consumed {
             Err(Error::CorruptMeta)?
         }
         Ok(metas)
@@ -329,11 +340,49 @@ impl Serialize for RainMetaDocumentV1Item {
     }
 }
 
-impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
+/// What a cbor item in a rain meta sequence turned out to be.
+///
+/// Dropped covers exactly one thing: a well formed item whose magic number
+/// this version does not know. The magic is the format's extension point -
+/// "Tooling can efficiently O(1) drop/ignore meta that it does not need or
+/// support decoding and parsing for", "feel free to build systems and
+/// applications with your own numbers and interpretations" - so somebody
+/// else's item travelling in the same document is skipped, not fatal to the
+/// items beside it. rainlanguage/rain.metadata#186.
+///
+/// Everything else malformed stops the document. One document is one emission
+/// from one emitter, whose prefix claims rain meta for the lot, and an
+/// emission carrying a broken claim is not mined for its readable parts.
+/// That is why an item omitting mandatory key 0 or 1 errors here even though
+/// metadata-v1.md line 237 reads as item level drop/ignore: it cannot even be
+/// identified, and recovering its siblings would accept selected data from an
+/// emitter who sent junk. rainlanguage/rain.metadata#188 is overruled on that
+/// line rather than implemented.
+enum ItemOrDropped {
+    Item(RainMetaDocumentV1Item),
+    /// Well formed cbor, but not an item this version reads.
+    Dropped,
+}
+
+impl<'de> Deserialize<'de> for ItemOrDropped {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        /// RFC 8949 §5.6: a map with duplicate keys is not valid, so a second
+        /// sighting of a key is an error rather than an overwrite.
+        fn set_once<V, E: serde::de::Error>(
+            slot: &mut Option<V>,
+            value: V,
+            field: &'static str,
+        ) -> Result<(), E> {
+            if slot.is_some() {
+                return Err(serde::de::Error::duplicate_field(field));
+            }
+            *slot = Some(value);
+            Ok(())
+        }
+
         struct EncodedMap;
         impl<'de> Visitor<'de> for EncodedMap {
-            type Value = RainMetaDocumentV1Item;
+            type Value = ItemOrDropped;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("rain meta cbor encoded bytes")
@@ -350,20 +399,40 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                 let mut content_encoding = None;
                 let mut content_language = None;
                 let mut schema = None;
+                // the recognised keys guard themselves through set_once; an
+                // unknown key has no slot to be occupied, so its repeats are
+                // tracked here
+                let mut unknown_keys: BTreeSet<u64> = BTreeSet::new();
                 while match map.next_key::<u64>() {
                     Ok(Some(key)) => {
                         match key {
-                            0 => payload = Some(map.next_value()?),
-                            1 => magic = Some(map.next_value()?),
-                            2 => content_type = Some(map.next_value()?),
-                            3 => content_encoding = Some(map.next_value()?),
-                            4 => content_language = Some(map.next_value()?),
-                            OA_SCHEMA_KEY => schema = Some(map.next_value()?),
+                            0 => set_once(&mut payload, map.next_value()?, "payload")?,
+                            1 => set_once(&mut magic, map.next_value()?, "magic number")?,
+                            2 => set_once(&mut content_type, map.next_value()?, "content type")?,
+                            3 => set_once(
+                                &mut content_encoding,
+                                map.next_value()?,
+                                "content encoding",
+                            )?,
+                            4 => set_once(
+                                &mut content_language,
+                                map.next_value()?,
+                                "content language",
+                            )?,
+                            OA_SCHEMA_KEY => set_once(&mut schema, map.next_value()?, "schema")?,
                             // the map structure exists so later conventions can
                             // add indexes that older tooling adopts "or not" in
                             // a backwards compatible way, so an index this
-                            // version does not know is skipped, not an error
+                            // version does not know is skipped, not an error.
+                            // §5.6 does not ask whether the decoder understands
+                            // a key, so the repeat of one is still invalid even
+                            // though the value behind it is never read.
                             _ => {
+                                if !unknown_keys.insert(key) {
+                                    return Err(serde::de::Error::custom(format!(
+                                        "duplicate map key: {key}"
+                                    )));
+                                }
                                 map.next_value::<serde::de::IgnoredAny>()?;
                             }
                         };
@@ -372,29 +441,71 @@ impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
                     Ok(None) => false,
                     Err(error) => Err(error)?,
                 } {}
-                let payload = payload.ok_or_else(|| serde::de::Error::missing_field("payload"))?;
-                let magic = match magic
-                    .ok_or_else(|| serde::de::Error::missing_field("magic number"))?
-                    .try_into()
-                {
-                    Ok(m) => m,
-                    _ => Err(serde::de::Error::custom("unknown magic number"))?,
+                // Indexes 0 and 1 are mandatory. An item without them is not
+                // dropped like an unknown magic below: it cannot even be
+                // identified, and it sits inside a document whose prefix is
+                // the emitter claiming rain meta. One document is one emission
+                // from one emitter, and an emission carrying a malformed item
+                // is not mined for its readable parts - the same rule
+                // fetch_by_subject applies to a failed claim at the item
+                // payload level. A foreign magic is somebody else's data
+                // travelling alongside ours; a keyless map is a broken claim.
+                let (Some(payload), Some(magic_number)) = (payload, magic) else {
+                    return Err(serde::de::Error::custom(
+                        "cbor item omits a mandatory key (0 payload, 1 magic)",
+                    ));
                 };
+
+                // A nested document prefix is not somebody else's magic
+                // number, it is this crate's own in a position it cannot
+                // occupy: the document prefix is the first 8 bytes of the
+                // whole document, never an item's cbor key 1. That is
+                // malformed structure rather than a type this version does
+                // not read, so it stops the document instead of being
+                // dropped with the unknown numbers below.
+                // rainlanguage/rain.metadata#204.
+                if magic_number == KnownMagic::RainMetaDocumentV1 as u64 {
+                    return Err(serde::de::Error::custom(
+                        "rain meta document magic number as an item magic number",
+                    ));
+                }
+
+                let Ok(magic) = KnownMagic::try_from(magic_number) else {
+                    return Ok(ItemOrDropped::Dropped);
+                };
+
                 let content_type = content_type.unwrap_or(ContentType::None);
                 let content_encoding = content_encoding.unwrap_or(ContentEncoding::None);
                 let content_language = content_language.unwrap_or(ContentLanguage::None);
 
-                Ok(RainMetaDocumentV1Item {
+                Ok(ItemOrDropped::Item(RainMetaDocumentV1Item {
                     payload,
                     magic,
                     content_type,
                     content_encoding,
                     content_language,
                     schema,
-                })
+                }))
             }
         }
         deserializer.deserialize_map(EncodedMap)
+    }
+}
+
+/// Decoding one item on its own is strict.
+///
+/// The drop rule is about a *sequence*: an item nobody claimed this tool would
+/// read must not take the items beside it down with it. Asking for a single
+/// item names the thing you want, so not getting it is an error rather than a
+/// silent absence, and there is nothing beside it to protect.
+impl<'de> Deserialize<'de> for RainMetaDocumentV1Item {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match ItemOrDropped::deserialize(deserializer)? {
+            ItemOrDropped::Item(item) => Ok(item),
+            ItemOrDropped::Dropped => Err(serde::de::Error::custom(
+                "not a rain meta item this version reads: a mandatory key is missing or the magic number is unknown",
+            )),
+        }
     }
 }
 
@@ -421,125 +532,55 @@ pub async fn search(hash: &str, subgraphs: &Vec<String>) -> Result<query::MetaRe
     Ok(response_value)
 }
 
-/// searches for an ExpressionDeployer matching the given hash in given subgraphs urls
-pub async fn search_deployer(
-    hash: &str,
-    subgraphs: &Vec<String>,
-) -> Result<DeployerResponse, Error> {
-    // future::select_ok panics on an empty iterator.
-    if subgraphs.is_empty() {
-        return Err(Error::NoRecordFound);
-    }
-    let request_body = query::DeployerQuery::build_query(query::deployer_query::Variables {
-        hash: Some(hash.to_ascii_lowercase()),
-    });
-    let mut promises = vec![];
-
-    let client = Arc::new(Client::builder().build().map_err(Error::ReqwestError)?);
-    for url in subgraphs {
-        promises.push(Box::pin(query::process_deployer_query(
-            client.clone(),
-            &request_body,
-            url,
-        )));
-    }
-    let response_value = future::select_ok(promises.drain(..)).await?.0;
-    Ok(response_value)
-}
-
 /// checks if the given contract implements IDescribeByMetaV1 interface
+///
+/// `Err` is rain-erc's "answer unknown": a transport or decode failure stopped
+/// the probe, never a contract that lacks the interface. Both probes here can
+/// raise it - the erc165 one this delegates to rain-erc, and the interface id
+/// one below - and neither may be flattened into `Ok(false)`, which is the
+/// contract answering "no".
 pub async fn implements_i_described_by_meta_v1<P: Provider>(
     provider: &P,
     contract_address: Address,
-) -> bool {
-    if !supports_erc165(provider, contract_address)
-        .await
-        .unwrap_or(false)
-    {
-        return false;
+) -> Result<bool, Erc165Error> {
+    if !supports_erc165(provider, contract_address).await? {
+        return Ok(false);
     }
 
     let interface_id_res = IDescribedByMetaV1::IDescribedByMetaV1Calls::xor_selectors();
     if interface_id_res.is_err() {
-        return false;
+        return Ok(false);
     }
 
-    let call = IERC165::supportsInterfaceCall {
-        interfaceID: interface_id_res.unwrap().into(),
-    };
-    let tx = TransactionRequest::default()
-        .to(contract_address)
-        .input(call.abi_encode().into());
-    match provider.call(tx).await {
-        Ok(bytes) => IERC165::supportsInterfaceCall::abi_decode_returns(&bytes).unwrap_or(false),
-        Err(_) => false,
-    }
-}
-
-/// All required NPE2 ExpressionDeployer data for reproducing it on a local evm
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct NPE2Deployer {
-    /// constructor meta hash
-    #[serde(with = "serde_bytes")]
-    pub meta_hash: Vec<u8>,
-    /// constructor meta bytes
-    #[serde(with = "serde_bytes")]
-    pub meta_bytes: Vec<u8>,
-    /// RainterpreterExpressionDeployerNPE2 contract bytecode
-    #[serde(with = "serde_bytes")]
-    pub bytecode: Vec<u8>,
-    /// RainterpreterParserNPE2 contract bytecode
-    #[serde(with = "serde_bytes")]
-    pub parser: Vec<u8>,
-    /// RainterpreterStoreNPE2 contract bytecode
-    #[serde(with = "serde_bytes")]
-    pub store: Vec<u8>,
-    /// RainterpreterNPE2 contract bytecode
-    #[serde(with = "serde_bytes")]
-    pub interpreter: Vec<u8>,
-    /// RainterpreterExpressionDeployerNPE2 authoring meta
-    pub authoring_meta: Option<AuthoringMeta>,
-}
-
-impl NPE2Deployer {
-    pub fn is_corrupt(&self) -> bool {
-        if self.meta_hash.is_empty() {
-            return true;
+    match IERC165::new(contract_address, provider)
+        .supportsInterface(interface_id_res.unwrap().into())
+        .call()
+        .await
+    {
+        Ok(supported) => Ok(supported),
+        Err(error)
+            if error.as_revert_data().is_some()
+                || matches!(error, ContractError::ZeroData(_, _)) =>
+        {
+            Ok(false)
         }
-        if self.meta_bytes.is_empty() {
-            return true;
-        }
-        if self.bytecode.is_empty() {
-            return true;
-        }
-        if self.parser.is_empty() {
-            return true;
-        }
-        if self.store.is_empty() {
-            return true;
-        }
-        if self.interpreter.is_empty() {
-            return true;
-        }
-        false
+        Err(error) => Err(error.into()),
     }
 }
 
 /// # Meta Storage(CAS)
 ///
 /// In-memory CAS (content addressed storage) for Rain metadata which basically stores
-/// k/v pairs of meta hash, meta bytes and ExpressionDeployer reproducible data as well
-/// as providing functionalities to easliy read/write to the CAS.
+/// k/v pairs of meta hash and meta bytes, as well as providing functionalities to
+/// easliy read/write to the CAS.
 ///
 /// Hashes are normal bytes and meta bytes are valid cbor encoded as data bytes.
-/// ExpressionDeployers data are in form of a struct mapped to deployedBytecode meta hash
-/// and deploy transaction hash.
 ///
 /// ## Examples
 ///
 /// ```
 /// use rain_metadata::Store;
+/// use rain_metadata::meta::cache::MetaCache;
 /// use std::collections::HashMap;
 ///
 /// // to instantiate with an empty subgraph list
@@ -548,8 +589,7 @@ impl NPE2Deployer {
 /// // or to instantiate with initial values
 /// let mut store = Store::create(
 ///     &vec!["sg-url-1".to_string()],
-///     &HashMap::new(),
-///     &HashMap::new(),
+///     &MetaCache::default(),
 ///     &HashMap::new(),
 /// );
 ///
@@ -559,18 +599,17 @@ impl NPE2Deployer {
 /// // merge another Store into this one
 /// store.merge(&Store::new());
 ///
-/// // updates the meta store with a new meta hash and bytes
-/// let hash = vec![0u8, 1u8, 2u8];
-/// store.update_with(&hash, &vec![0u8, 1u8]);
+/// // updates the meta store with some bytes and the hash they hash to - a
+/// // pair that does not is refused, so the hash is derived rather than picked
+/// let bytes = vec![0u8, 1u8];
+/// let hash = alloy::primitives::keccak256(&bytes).0.to_vec();
+/// store.update_with(&hash, &bytes).unwrap();
 ///
 /// // `Store::update(&hash)` is async; it searches each subgraph for `hash` and
 /// // populates the cache with the result. Call it from an async context with `.await`.
 ///
 /// // to get a record from the store
 /// let _meta = store.get_meta(&hash);
-///
-/// // to get a deployer record from the store
-/// let _deployer_record = store.get_deployer(&hash);
 ///
 /// // Store is agnostic to dotrain contents — it just maps the hash of the content
 /// // to the given uri and puts it as a new meta into the meta cache.
@@ -586,10 +625,8 @@ impl NPE2Deployer {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Store {
     subgraphs: Vec<String>,
-    cache: HashMap<Vec<u8>, Vec<u8>>,
+    cache: MetaCache,
     dotrain_cache: HashMap<String, Vec<u8>>,
-    deployer_cache: HashMap<Vec<u8>, NPE2Deployer>,
-    deployer_hash_map: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 impl Default for Store {
@@ -604,10 +641,8 @@ impl Store {
     pub fn new() -> Store {
         Store {
             subgraphs: vec![],
-            cache: HashMap::new(),
+            cache: MetaCache::default(),
             dotrain_cache: HashMap::new(),
-            deployer_cache: HashMap::new(),
-            deployer_hash_map: HashMap::new(),
         }
     }
 
@@ -615,17 +650,13 @@ impl Store {
     /// it checks the validity of each item of the provided values and only stores those that are valid
     pub fn create(
         subgraphs: &Vec<String>,
-        cache: &HashMap<Vec<u8>, Vec<u8>>,
-        deployer_cache: &HashMap<Vec<u8>, NPE2Deployer>,
+        cache: &MetaCache,
         dotrain_cache: &HashMap<String, Vec<u8>>,
     ) -> Store {
         let mut store = Store::new();
         store.add_subgraphs(subgraphs);
-        for (hash, bytes) in cache {
-            store.update_with(hash, bytes);
-        }
-        for (hash, deployer) in deployer_cache {
-            store.set_deployer(hash, deployer, None);
+        for (hash, bytes) in cache.iter() {
+            let _ = store.update_with(hash, bytes);
         }
         for (uri, hash) in dotrain_cache {
             if !store.dotrain_cache.contains_key(uri) && store.cache.contains_key(hash) {
@@ -650,113 +681,13 @@ impl Store {
     }
 
     /// getter method for the whole meta cache
-    pub fn cache(&self) -> &HashMap<Vec<u8>, Vec<u8>> {
+    pub fn cache(&self) -> &MetaCache {
         &self.cache
     }
 
     /// get the corresponding meta bytes of the given hash if it exists
     pub fn get_meta(&self, hash: &[u8]) -> Option<&Vec<u8>> {
         self.cache.get(hash)
-    }
-
-    /// getter method for the whole authoring meta cache
-    pub fn deployer_cache(&self) -> &HashMap<Vec<u8>, NPE2Deployer> {
-        &self.deployer_cache
-    }
-
-    /// get the corresponding DeployerNPRecord of the given deployer hash if it exists
-    pub fn get_deployer(&self, hash: &[u8]) -> Option<&NPE2Deployer> {
-        if self.deployer_cache.contains_key(hash) {
-            self.deployer_cache.get(hash)
-        } else if let Some(h) = self.deployer_hash_map.get(hash) {
-            self.deployer_cache.get(h)
-        } else {
-            None
-        }
-    }
-
-    /// searches for DeployerNPRecord in the subgraphs given the deployer hash
-    pub async fn search_deployer(&mut self, hash: &[u8]) -> Option<&NPE2Deployer> {
-        match search_deployer(&hex::encode_prefixed(hash), &self.subgraphs).await {
-            Ok(res) => {
-                self.cache
-                    .insert(res.meta_hash.clone(), res.meta_bytes.clone());
-                let authoring_meta = res.get_authoring_meta();
-                self.deployer_cache.insert(
-                    res.bytecode_meta_hash.clone(),
-                    NPE2Deployer {
-                        meta_hash: res.meta_hash.clone(),
-                        meta_bytes: res.meta_bytes,
-                        bytecode: res.bytecode,
-                        parser: res.parser,
-                        store: res.store,
-                        interpreter: res.interpreter,
-                        authoring_meta,
-                    },
-                );
-                self.deployer_hash_map.insert(res.tx_hash, res.meta_hash);
-                self.deployer_cache.get(hash)
-            }
-            Err(_e) => None,
-        }
-    }
-
-    /// if the NPE2Deployer record already is cached it returns it immediately else
-    /// searches for NPE2Deployer in the subgraphs given the deployer hash
-    pub async fn search_deployer_check(&mut self, hash: &[u8]) -> Option<&NPE2Deployer> {
-        if self.deployer_cache.contains_key(hash) {
-            self.get_deployer(hash)
-        } else if self.deployer_hash_map.contains_key(hash) {
-            let b_hash = self.deployer_hash_map.get(hash).unwrap();
-            self.get_deployer(b_hash)
-        } else {
-            self.search_deployer(hash).await
-        }
-    }
-
-    /// sets deployer record from the deployer query response
-    pub fn set_deployer_from_query_response(
-        &mut self,
-        deployer_query_response: DeployerResponse,
-    ) -> NPE2Deployer {
-        let authoring_meta = deployer_query_response.get_authoring_meta();
-        let tx_hash = deployer_query_response.tx_hash;
-        let bytecode_meta_hash = deployer_query_response.bytecode_meta_hash;
-        let result = NPE2Deployer {
-            meta_hash: deployer_query_response.meta_hash.clone(),
-            meta_bytes: deployer_query_response.meta_bytes,
-            bytecode: deployer_query_response.bytecode,
-            parser: deployer_query_response.parser,
-            store: deployer_query_response.store,
-            interpreter: deployer_query_response.interpreter,
-            authoring_meta,
-        };
-        self.cache
-            .insert(deployer_query_response.meta_hash, result.meta_bytes.clone());
-        self.deployer_hash_map
-            .insert(tx_hash, bytecode_meta_hash.clone());
-        self.deployer_cache
-            .insert(bytecode_meta_hash, result.clone());
-        result
-    }
-
-    /// sets NPE2Deployer record
-    /// skips if the given hash is invalid
-    pub fn set_deployer(
-        &mut self,
-        hash: &[u8],
-        npe2_deployer: &NPE2Deployer,
-        tx_hash: Option<&[u8]>,
-    ) {
-        self.cache.insert(
-            npe2_deployer.meta_hash.clone(),
-            npe2_deployer.meta_bytes.clone(),
-        );
-        self.deployer_cache
-            .insert(hash.to_vec(), npe2_deployer.clone());
-        if let Some(v) = tx_hash {
-            self.deployer_hash_map.insert(v.to_vec(), hash.to_vec());
-        }
     }
 
     /// getter method for the whole dotrain cache
@@ -797,19 +728,11 @@ impl Store {
     /// every map keeps the entry this Store already has on a key collision
     pub fn merge(&mut self, other: &Store) {
         self.add_subgraphs(&other.subgraphs);
-        for (hash, bytes) in &other.cache {
+        for (hash, bytes) in other.cache.iter() {
             if !self.cache.contains_key(hash) {
-                self.cache.insert(hash.clone(), bytes.clone());
-            }
-        }
-        for (hash, deployer) in &other.deployer_cache {
-            if !self.deployer_cache.contains_key(hash) {
-                self.deployer_cache.insert(hash.clone(), deployer.clone());
-            }
-        }
-        for (tx_hash, hash) in &other.deployer_hash_map {
-            if !self.deployer_hash_map.contains_key(tx_hash) {
-                self.deployer_hash_map.insert(tx_hash.clone(), hash.clone());
+                // entries are verified by construction, so copying one cannot
+                // introduce an unverified entry
+                let _ = self.cache.insert_verified(hash, bytes.clone());
             }
         }
         for (uri, hash) in &other.dotrain_cache {
@@ -819,41 +742,50 @@ impl Store {
         }
     }
 
-    /// updates the meta cache by searching through all subgraphs for the given hash
-    /// returns the reference to the meta bytes in the cache if it was found
-    pub async fn update(&mut self, hash: &[u8]) -> Option<&Vec<u8>> {
-        if let Ok(meta) = search(&hex::encode_prefixed(hash), &self.subgraphs).await {
-            self.store_content(&meta.bytes);
-            self.cache.insert(hash.to_vec(), meta.bytes);
-            self.get_meta(hash)
-        } else {
-            None
-        }
+    /// Caches `bytes` under `hash` via [MetaCache::insert_verified], then
+    /// unpacks the items they carry into the cache too. The gate itself lives
+    /// on [MetaCache], which has no other way in.
+    fn insert_verified(&mut self, hash: &[u8], bytes: Vec<u8>) -> Result<&Vec<u8>, Error> {
+        self.cache.insert_verified(hash, bytes.clone())?;
+        self.store_content(&bytes);
+        self.get_meta(hash).ok_or(Error::NoRecordFound)
+    }
+
+    /// updates the meta cache by searching through all subgraphs for the given
+    /// hash, and returns the reference to the meta bytes in the cache if it was
+    /// found. Refreshes unconditionally; [Self::update_check] is the variant
+    /// that leaves an already cached hash alone.
+    pub async fn update(&mut self, hash: &[u8]) -> Result<&Vec<u8>, Error> {
+        let meta = search(&hex::encode_prefixed(hash), &self.subgraphs).await?;
+        self.insert_verified(hash, meta.bytes)
     }
 
     /// first checks if the meta is stored, if not will perform update()
-    pub async fn update_check(&mut self, hash: &[u8]) -> Option<&Vec<u8>> {
-        if !self.cache.contains_key(hash) {
-            self.update(hash).await
-        } else {
-            self.get_meta(hash)
+    pub async fn update_check(&mut self, hash: &[u8]) -> Result<&Vec<u8>, Error> {
+        // The NoRecordFound arm is unreachable, contains_key having just
+        // proved the key is present. It is spelled this way rather than as
+        // `if let Some(cached) = self.get_meta(hash)` because that holds an
+        // immutable borrow of self across the mutable call below it, which
+        // the borrow checker refuses.
+        if self.cache.contains_key(hash) {
+            return self.get_meta(hash).ok_or(Error::NoRecordFound);
         }
+        self.update(hash).await
     }
 
-    /// updates the meta cache by the given hash and meta bytes, checks the hash to bytes
-    /// validity returns the reference to the bytes if the updated meta bytes contained any
-    pub fn update_with(&mut self, hash: &[u8], bytes: &[u8]) -> Option<&Vec<u8>> {
-        if !self.cache.contains_key(hash) {
-            if keccak256(bytes).0 == hash {
-                self.store_content(bytes);
-                self.cache.insert(hash.to_vec(), bytes.to_vec());
-                self.cache.get(hash)
-            } else {
-                None
-            }
-        } else {
-            self.get_meta(hash)
+    /// updates the meta cache with the given hash and meta bytes, and returns
+    /// the reference to the bytes if they were accepted. Leaves an already
+    /// cached hash alone, as [Self::update_check] does for the subgraph path.
+    pub fn update_with(&mut self, hash: &[u8], bytes: &[u8]) -> Result<&Vec<u8>, Error> {
+        // The NoRecordFound arm is unreachable, contains_key having just
+        // proved the key is present. It is spelled this way rather than as
+        // `if let Some(cached) = self.get_meta(hash)` because that holds an
+        // immutable borrow of self across the mutable call below it, which
+        // the borrow checker refuses.
+        if self.cache.contains_key(hash) {
+            return self.get_meta(hash).ok_or(Error::NoRecordFound);
         }
+        self.insert_verified(hash, bytes.to_vec())
     }
 
     /// stores (or updates in case the URI already exists) the given dotrain text as meta into the store cache
@@ -879,10 +811,10 @@ impl Store {
         if let Some(h) = self.dotrain_cache.get(uri) {
             let old_hash = h.clone();
             if new_hash == old_hash {
-                self.cache.insert(new_hash.clone(), bytes);
+                self.cache.insert_verified(&new_hash, bytes)?;
                 Ok((new_hash, vec![]))
             } else {
-                self.cache.insert(new_hash.clone(), bytes);
+                self.cache.insert_verified(&new_hash, bytes)?;
                 self.dotrain_cache.insert(uri.to_string(), new_hash.clone());
                 if !keep_old {
                     self.cache.remove(&old_hash);
@@ -891,7 +823,7 @@ impl Store {
             }
         } else {
             self.dotrain_cache.insert(uri.to_string(), new_hash.clone());
-            self.cache.insert(new_hash.clone(), bytes);
+            self.cache.insert_verified(&new_hash, bytes)?;
             Ok((new_hash, vec![]))
         }
     }
@@ -904,8 +836,12 @@ impl Store {
             if bytes.starts_with(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes()) {
                 for meta_map in &meta_maps {
                     if let Ok(encoded_bytes) = meta_map.cbor_encode() {
-                        self.cache
-                            .insert(keccak256(&encoded_bytes).0.to_vec(), encoded_bytes);
+                        // the key is this item's own digest, so the gate can
+                        // only pass - routing through it anyway means no
+                        // reader has to work that out
+                        let _ = self
+                            .cache
+                            .insert_verified(&keccak256(&encoded_bytes).0, encoded_bytes);
                     }
                 }
             }
@@ -1359,14 +1295,18 @@ mod tests {
         let (asserter, provider) = new_server_client().await;
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        let result = implements_i_described_by_meta_v1(&provider, address).await;
+        let result = implements_i_described_by_meta_v1(&provider, address)
+            .await
+            .unwrap();
         assert!(result);
 
         // mock a false response for implements IDescribedByMetaV1
         let (asserter, provider) = new_server_client().await;
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
-        let result = implements_i_described_by_meta_v1(&provider, address).await;
+        let result = implements_i_described_by_meta_v1(&provider, address)
+            .await
+            .unwrap();
         assert!(!result);
 
         // mock a revert response for implements IDescribedByMetaV1
@@ -1376,7 +1316,9 @@ mod tests {
             message: "execution reverted".into(),
             data: Some(serde_json::value::to_raw_value(&json!("0x00")).unwrap()),
         });
-        let result = implements_i_described_by_meta_v1(&provider, address).await;
+        let result = implements_i_described_by_meta_v1(&provider, address)
+            .await
+            .unwrap();
         assert!(!result);
     }
 
@@ -1598,15 +1540,14 @@ mod tests {
         ));
     }
 
-    /// An unknown key is skipped, never counted as one of the mandatory keys
+    /// An unknown key is skipped, never counted as one of the mandatory keys,
+    /// so a map carrying one instead of key 0 is still missing its payload and
+    /// corrupts the document rather than decoding with the unknown key standing in.
     #[test]
     fn unknown_map_key_does_not_stand_in_for_a_mandatory_key() {
         let mut bytes: Vec<u8> = vec![0xa2, 0x05, 0x07, 0x01, 0x1b];
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
-        assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::SerdeCborError(_))
-        ));
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
     }
 
     fn plain_item(magic: KnownMagic, payload: Vec<u8>) -> RainMetaDocumentV1Item {
@@ -1707,6 +1648,31 @@ mod tests {
         ));
     }
 
+    /// Every way an item can run out of bytes is corrupt meta, not a serde
+    /// cbor error: a truncated sole item, a map header promising entries the
+    /// input does not carry, and a truncated item after a complete one.
+    #[test]
+    fn test_cbor_decode_truncated_item_is_corrupt() {
+        let mut sole = handwritten_map();
+        sole.pop();
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&sole),
+            Err(Error::CorruptMeta)
+        ));
+
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&[0xa2, 0x00, 0x41, 0x01]),
+            Err(Error::CorruptMeta)
+        ));
+
+        let mut after_complete = handwritten_map();
+        after_complete.extend_from_slice(&[0xa2, 0x00]);
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&after_complete),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
     /// A valid map followed by a byte that is not valid cbor surfaces the
     /// serde cbor error.
     #[test]
@@ -1719,43 +1685,253 @@ mod tests {
         ));
     }
 
-    /// A map without the mandatory payload key 0 must not decode.
+    /// A map without the mandatory payload key 0 corrupts the document, and
+    /// takes an item beside it down too: one document is one emission from
+    /// one emitter, and an emission carrying a broken claim is not mined for
+    /// its readable parts.
     #[test]
-    fn test_cbor_decode_missing_payload_errors() {
+    fn test_cbor_decode_missing_payload_is_corrupt() {
         let mut bytes: Vec<u8> = vec![0xa1, 0x01, 0x1b]; // {1: DotrainV1}
         bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
-        assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::SerdeCborError(_))
-        ));
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+
+        // beside a good item, the good item is not recovered
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&bytes);
+        document.extend_from_slice(&good);
+        assert!(RainMetaDocumentV1Item::cbor_decode(&document).is_err());
     }
 
-    /// A map without the mandatory magic key 1 must not decode.
+    /// A map without the mandatory magic key 1, likewise.
     #[test]
-    fn test_cbor_decode_missing_magic_errors() {
+    fn test_cbor_decode_missing_magic_is_corrupt() {
         let bytes: Vec<u8> = vec![0xa1, 0x00, 0x41, 0x01]; // {0: h'01'}
-        assert!(matches!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes),
-            Err(Error::SerdeCborError(_))
-        ));
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
+
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&bytes);
+        document.extend_from_slice(&good);
+        assert!(RainMetaDocumentV1Item::cbor_decode(&document).is_err());
     }
 
-    /// A map carrying an unknown magic number value must not decode.
+    /// A map carrying a magic number this version does not know is dropped,
+    /// not an error: the magic is the format's extension point, and somebody
+    /// else's well formed item travelling in the same document is not
+    /// corruption. Alone it leaves nothing to return, which is CorruptMeta.
     #[test]
-    fn test_cbor_decode_unknown_magic_errors() {
+    fn test_cbor_decode_unknown_magic_is_dropped() {
         let mut bytes: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
         bytes.extend_from_slice(&0xdeadbeefdeadbeefu64.to_be_bytes());
         assert!(matches!(
             RainMetaDocumentV1Item::cbor_decode(&bytes),
+            Err(Error::CorruptMeta)
+        ));
+    }
+
+    /// The unknown magic drop protects the items beside it: the foreign item
+    /// first, so a decoder that stopped at it would return nothing, and the
+    /// good item behind it still decodes.
+    #[test]
+    fn test_cbor_decode_drops_only_the_unknown_magic_item() {
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+
+        let mut unknown_magic: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        unknown_magic.extend_from_slice(&0xdeadbeefdeadbeefu64.to_be_bytes());
+
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&unknown_magic);
+        document.extend_from_slice(&good);
+
+        let items = RainMetaDocumentV1Item::cbor_decode(&document).unwrap();
+        assert_eq!(items.len(), 1, "expected only the good item");
+        assert_eq!(items[0].magic, KnownMagic::DotrainV1);
+        assert_eq!(items[0].payload.as_ref(), &[0x42]);
+    }
+
+    /// The document prefix is not a magic number an item may carry: it is the
+    /// first 8 bytes of a whole document. An item claiming it is malformed
+    /// structure rather than a type this version does not read, so it stops
+    /// the document instead of being dropped like an unknown number.
+    #[test]
+    fn test_cbor_decode_nested_document_magic_is_not_dropped() {
+        let good = plain_item(KnownMagic::DotrainV1, vec![0x42])
+            .cbor_encode()
+            .unwrap();
+
+        let mut nested: Vec<u8> = vec![0xa2, 0x00, 0x41, 0x01, 0x01, 0x1b];
+        nested.extend_from_slice(&KnownMagic::RainMetaDocumentV1.to_prefix_bytes());
+
+        let mut document = KnownMagic::RainMetaDocumentV1.to_prefix_bytes().to_vec();
+        document.extend_from_slice(&nested);
+        document.extend_from_slice(&good);
+
+        assert!(matches!(
+            RainMetaDocumentV1Item::cbor_decode(&document),
             Err(Error::SerdeCborError(_))
         ));
+    }
+
+    /// A cbor map header plus the given already encoded key/value pairs,
+    /// written per the cbor spec rather than through the encoder, so a map can
+    /// carry a key twice which no encoder emits.
+    fn handwritten_entries(entries: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
+        assert!(entries.len() < 24);
+        let mut bytes = vec![0xa0 | entries.len() as u8];
+        for (key, value) in entries {
+            bytes.extend_from_slice(key);
+            bytes.extend_from_slice(value);
+        }
+        bytes
+    }
+
+    /// cbor unsigned integer of the magic number, as a map key or a value.
+    fn handwritten_magic(magic: KnownMagic) -> Vec<u8> {
+        let mut bytes = vec![0x1b];
+        bytes.extend_from_slice(&magic.to_prefix_bytes());
+        bytes
+    }
+
+    /// cbor text string of a string shorter than 24 bytes.
+    fn handwritten_text(text: &str) -> Vec<u8> {
+        assert!(text.len() < 24);
+        let mut bytes = vec![0x60 | text.len() as u8];
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    /// The repro from #191: a map repeating key 0 must not decode with the
+    /// last payload winning.
+    #[test]
+    fn test_cbor_decode_duplicate_payload_key_errors() {
+        let mut bytes: Vec<u8> = vec![0xa3, 0x00, 0x41, 0x01, 0x00, 0x41, 0x02, 0x01, 0x1b];
+        bytes.extend_from_slice(&KnownMagic::DotrainV1.to_prefix_bytes());
+        let error = RainMetaDocumentV1Item::cbor_decode(&bytes).unwrap_err();
+        assert!(matches!(error, Error::SerdeCborError(_)));
+        assert!(
+            error.to_string().contains("duplicate field `payload`"),
+            "{error}"
+        );
+    }
+
+    /// RFC 8949 §5.6: every recognised key is rejected when the map carries it
+    /// twice, whether the repeated value differs from the first or matches it.
+    #[test]
+    fn test_cbor_decode_duplicate_any_key_errors() -> Result<(), Error> {
+        let cases: [(Vec<u8>, Vec<u8>, Vec<u8>); 6] = [
+            (vec![0x00], vec![0x41, 0x01], vec![0x41, 0x02]),
+            (
+                vec![0x01],
+                handwritten_magic(KnownMagic::DotrainV1),
+                handwritten_magic(KnownMagic::RainlangV1),
+            ),
+            (
+                vec![0x02],
+                handwritten_text("application/cbor"),
+                handwritten_text("application/json"),
+            ),
+            (
+                vec![0x03],
+                handwritten_text("identity"),
+                handwritten_text("deflate"),
+            ),
+            (vec![0x04], handwritten_text("en"), handwritten_text("none")),
+            (
+                handwritten_magic(KnownMagic::OaSchema),
+                handwritten_text("hi"),
+                handwritten_text("bye"),
+            ),
+        ];
+        let base: Vec<(Vec<u8>, Vec<u8>)> = cases
+            .iter()
+            .map(|(key, value, _)| (key.clone(), value.clone()))
+            .collect();
+
+        let decoded = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&base))?;
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].payload.as_ref(), &[0x01]);
+        assert_eq!(decoded[0].magic, KnownMagic::DotrainV1);
+        assert_eq!(decoded[0].content_type, ContentType::Cbor);
+        assert_eq!(decoded[0].content_encoding, ContentEncoding::Identity);
+        assert_eq!(decoded[0].content_language, ContentLanguage::En);
+        assert_eq!(decoded[0].schema.as_deref(), Some("hi"));
+
+        for (key, value, other_value) in &cases {
+            for repeated in [value, other_value] {
+                let mut entries = base.clone();
+                entries.push((key.clone(), repeated.clone()));
+                let error = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&entries))
+                    .unwrap_err();
+                assert!(
+                    matches!(error, Error::SerdeCborError(_)),
+                    "{key:?} {error:?}"
+                );
+                assert!(
+                    error.to_string().contains("duplicate field"),
+                    "{key:?} {error}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// An index this version has no meaning for is skipped rather than
+    /// rejected, but RFC 8949 §5.6 does not ask whether a key is understood:
+    /// a map that carries an unknown index twice is invalid too, whether that
+    /// index is a plain integer or a magic number other than OaSchema.
+    #[test]
+    fn test_cbor_decode_duplicate_unknown_key_errors() -> Result<(), Error> {
+        let base: Vec<(Vec<u8>, Vec<u8>)> = vec![
+            (vec![0x00], vec![0x41, 0x01]),
+            (vec![0x01], handwritten_magic(KnownMagic::DotrainV1)),
+        ];
+        // key 5 as a plausible future index and the OaHashList magic as a
+        // future magic keyed entry, each with the value cbor to repeat it with
+        let unknown: [(Vec<u8>, Vec<u8>, Vec<u8>); 2] = [
+            (vec![0x05], vec![0x07], vec![0x08]),
+            (
+                handwritten_magic(KnownMagic::OaHashList),
+                handwritten_text("hi"),
+                handwritten_text("bye"),
+            ),
+        ];
+
+        for (key, value, other_value) in &unknown {
+            let mut entries = base.clone();
+            entries.push((key.clone(), value.clone()));
+            let decoded = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&entries))?;
+            assert_eq!(decoded, vec![plain_item(KnownMagic::DotrainV1, vec![0x01])]);
+
+            for repeated in [value, other_value] {
+                let mut duplicated = entries.clone();
+                duplicated.push((key.clone(), repeated.clone()));
+                let error = RainMetaDocumentV1Item::cbor_decode(&handwritten_entries(&duplicated))
+                    .unwrap_err();
+                assert!(
+                    matches!(error, Error::SerdeCborError(_)),
+                    "{key:?} {error:?}"
+                );
+                assert!(
+                    error.to_string().contains("duplicate map key"),
+                    "{key:?} {error}"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// A handwritten item map carrying the rain meta document magic under key
     /// 1 decodes, so accepting the document magic as an item magic is the
     /// decoder's own behaviour and not an artefact of this crate's encoder.
     #[test]
-    fn test_cbor_decode_handwritten_document_magic_item() -> Result<(), Error> {
+    fn test_cbor_decode_handwritten_document_magic_item() {
         let bytes: Vec<u8> = vec![
             0xa2, // map(2)
             0x00, // key 0
@@ -1763,11 +1939,10 @@ mod tests {
             0x01, // key 1
             0x1b, 0xff, 0x0a, 0x89, 0xc6, 0x74, 0xee, 0x78, 0x74, // u64 RainMetaDocumentV1
         ];
-        assert_eq!(
-            RainMetaDocumentV1Item::cbor_decode(&bytes)?,
-            vec![plain_item(KnownMagic::RainMetaDocumentV1, vec![0x01])]
-        );
-        Ok(())
+        // The document magic in an item's magic position is structurally
+        // invalid, so the meta carrying it does not decode.
+        // rainlanguage/rain.metadata#204.
+        assert!(RainMetaDocumentV1Item::cbor_decode(&bytes).is_err());
     }
 
     /// The document magic as an item's own magic marks a payload that is
@@ -1788,11 +1963,14 @@ mod tests {
             KnownMagic::RainMetaDocumentV1,
         )?;
 
-        let decoded = RainMetaDocumentV1Item::cbor_decode(&outer_doc)?;
-        assert_eq!(decoded, vec![outer]);
-        assert_eq!(decoded[0].payload.as_ref(), inner_doc.as_slice());
+        // Encoding can still write the document magic into an item's magic
+        // position, and the payload really is a whole document. Decoding
+        // refuses it anyway: a nested document is not a shape to descend into,
+        // it is a corrupt meta, and the usable item inside does not rescue it.
+        // rainlanguage/rain.metadata#204.
+        assert!(RainMetaDocumentV1Item::cbor_decode(&outer_doc).is_err());
         assert_eq!(
-            RainMetaDocumentV1Item::cbor_decode(decoded[0].payload.as_ref())?,
+            RainMetaDocumentV1Item::cbor_decode(&inner_doc)?,
             vec![inner]
         );
         Ok(())
@@ -1827,8 +2005,8 @@ mod tests {
         Ok(())
     }
 
-    /// The 13 meta magics unpack; the document magic and the Oa magics are
-    /// rejected with UnsupportedMeta.
+    /// The 13 meta magics unpack; the document magic, the web data magic and
+    /// the Oa magics are rejected with UnsupportedMeta.
     #[test]
     fn test_unpack_into_whitelist() {
         use strum::IntoEnumIterator;
@@ -1853,6 +2031,7 @@ mod tests {
         }
         let unsupported = [
             KnownMagic::RainMetaDocumentV1,
+            KnownMagic::WebDataV1,
             KnownMagic::OaSchema,
             KnownMagic::OaHashList,
             KnownMagic::OaStructure,
@@ -2009,6 +2188,7 @@ mod tests {
         }
         for magic in [
             KnownMagic::RainMetaDocumentV1,
+            KnownMagic::WebDataV1,
             KnownMagic::OaSchema,
             KnownMagic::OaHashList,
             KnownMagic::OaStructure,
@@ -2028,7 +2208,6 @@ mod tests {
     #[test]
     fn test_known_meta_strum_parse_display() {
         use std::str::FromStr;
-        assert_eq!(KnownMeta::from_str("op-v1").unwrap(), KnownMeta::OpV1);
         assert_eq!(
             KnownMeta::from_str("solidity-abi-v2").unwrap(),
             KnownMeta::SolidityAbiV2
@@ -2038,41 +2217,6 @@ mod tests {
             KnownMeta::InterpreterCallerMetaV1
         );
         assert_eq!(KnownMeta::SolidityAbiV2.to_string(), "solidity-abi-v2");
-        assert_eq!(KnownMeta::OpV1.to_string(), "op-v1");
-    }
-
-    fn sample_deployer(meta_hash: &[u8], meta_bytes: &[u8]) -> NPE2Deployer {
-        NPE2Deployer {
-            meta_hash: meta_hash.to_vec(),
-            meta_bytes: meta_bytes.to_vec(),
-            bytecode: vec![0xb1],
-            parser: vec![0xb2],
-            store: vec![0xb3],
-            interpreter: vec![0xb4],
-            authoring_meta: None,
-        }
-    }
-
-    fn deployer_json_body(
-        meta_hash_hex: &str,
-        meta_bytes_hex: &str,
-        tx_hex: &str,
-        bytecode_meta_id_hex: &str,
-    ) -> serde_json::Value {
-        json!({
-            "data": {
-                "expressionDeployers": [{
-                    "constructorMetaHash": meta_hash_hex,
-                    "constructorMeta": meta_bytes_hex,
-                    "deployTransaction": {"id": tx_hex},
-                    "bytecode": "0x01",
-                    "parser": {"parser": {"deployedBytecode": "0x02"}},
-                    "store": {"store": {"deployedBytecode": "0x03"}},
-                    "interpreter": {"interpreter": {"deployedBytecode": "0x04"}},
-                    "meta": [{"__typename": "RainMetaV1", "id": bytecode_meta_id_hex}]
-                }]
-            }
-        })
     }
 
     /// search() lowercases the hash before building the query variables.
@@ -2121,67 +2265,28 @@ mod tests {
         assert_eq!(response.bytes, doc);
     }
 
-    /// search_deployer() lowercases the hash before building the query
-    /// variables.
+    /// An empty subgraph list has nothing to fan out to, so the search
+    /// reports a miss rather than reaching futures::select_ok, which panics on
+    /// an empty iterator.
     #[tokio::test]
-    async fn test_search_deployer_lowercases_hash() {
-        use httpmock::prelude::*;
-        let (_, doc) = sample_authoring_doc();
-        let meta_hash_hex = hex::encode_prefixed(keccak256(&doc).0);
-        let hash_upper = format!("0x{}", "CD".repeat(32));
-        let server = MockServer::start();
-        let mock = server.mock(|when, then| {
-            when.method(POST)
-                .body_contains(hash_upper.to_ascii_lowercase());
-            then.status(200).json_body(deployer_json_body(
-                &meta_hash_hex,
-                &hex::encode_prefixed(&doc),
-                &format!("0x{}", "77".repeat(32)),
-                &meta_hash_hex,
-            ));
-        });
-        let response = search_deployer(&hash_upper, &vec![server.url("/sg")])
-            .await
-            .unwrap();
-        assert_eq!(response.meta_bytes, doc);
-        assert_eq!(response.bytecode, vec![0x01]);
-        mock.assert();
+    async fn test_search_empty_subgraphs_is_a_miss() {
+        let hash = format!("0x{}", "33".repeat(32));
+        assert!(matches!(
+            search(&hash, &vec![]).await,
+            Err(Error::NoRecordFound)
+        ));
     }
 
-    /// search_deployer() queries every subgraph and the first success wins
-    /// even when an earlier subgraph fails.
-    #[tokio::test]
-    async fn test_search_deployer_first_success_wins() {
-        use httpmock::prelude::*;
-        let (_, doc) = sample_authoring_doc();
-        let meta_hash_hex = hex::encode_prefixed(keccak256(&doc).0);
-        let bad = MockServer::start();
-        let _bad_mock = bad.mock(|when, then| {
-            when.method(POST);
-            then.status(500).body("subgraph down");
-        });
-        let good = MockServer::start();
-        let _good_mock = good.mock(|when, then| {
-            when.method(POST);
-            then.status(200).json_body(deployer_json_body(
-                &meta_hash_hex,
-                &hex::encode_prefixed(&doc),
-                &format!("0x{}", "77".repeat(32)),
-                &meta_hash_hex,
-            ));
-        });
-        let response = search_deployer(
-            &format!("0x{}", "22".repeat(32)),
-            &vec![bad.url("/sg"), good.url("/sg")],
-        )
-        .await
-        .unwrap();
-        assert_eq!(response.meta_bytes, doc);
-    }
-
-    /// When the erc165 probe answers false or errors, the result is false
-    /// WITHOUT making the IDescribedByMetaV1 supportsInterface call: a queued
-    /// "true" response must never be consumed.
+    /// The erc165 gate short circuits: neither answer reaches the
+    /// IDescribedByMetaV1 supportsInterface call, so the queued "true" is
+    /// never consumed and cannot be mistaken for the contract's own answer.
+    ///
+    /// The two answers are not the same fact. A contract that says no is
+    /// `Ok(false)`; a probe that could not finish is an error, because a
+    /// transport failure is not a contract declining an interface. rain-erc
+    /// makes that distinction itself - "callers can treat that as answer
+    /// unknown rather than silently reading no support" - and an
+    /// `unwrap_or(false)` here threw it away.
     #[tokio::test]
     async fn test_implements_erc165_gate_short_circuits() {
         let address = Address::random();
@@ -2193,9 +2298,13 @@ mod tests {
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        assert!(!implements_i_described_by_meta_v1(&provider, address).await);
+        assert!(!implements_i_described_by_meta_v1(&provider, address)
+            .await
+            .unwrap());
 
-        // erc165 probe errors
+        // erc165 probe errors. Getting an error back is itself the proof of
+        // the short circuit: had the queued "true" been consumed by the
+        // interface probe, this would be Ok(true).
         let asserter = Asserter::new();
         let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
         asserter.push_failure(ErrorPayload {
@@ -2205,13 +2314,15 @@ mod tests {
         });
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
-        assert!(!implements_i_described_by_meta_v1(&provider, address).await);
+        assert!(implements_i_described_by_meta_v1(&provider, address)
+            .await
+            .is_err());
     }
 
-    /// An eth_call response that does not decode as bool must read as "does
-    /// not implement", not silently as true.
+    /// An empty eth_call response is a contract that did not answer, which
+    /// ERC-165 reads as "does not implement".
     #[tokio::test]
-    async fn test_implements_undecodable_response_is_false() {
+    async fn test_implements_empty_response_is_false() {
         let address = Address::random();
         let asserter = Asserter::new();
         let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
@@ -2220,36 +2331,50 @@ mod tests {
         asserter
             .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
         asserter.push_success(&"0x");
-        assert!(!implements_i_described_by_meta_v1(&provider, address).await);
+        assert!(!implements_i_described_by_meta_v1(&provider, address)
+            .await
+            .unwrap());
     }
 
-    /// Each of the six required fields independently marks the record
-    /// corrupt when empty; a fully populated record is not corrupt.
-    #[test]
-    fn test_npe2_deployer_is_corrupt_per_field() {
-        let full = NPE2Deployer {
-            meta_hash: vec![1],
-            meta_bytes: vec![2],
-            bytecode: vec![3],
-            parser: vec![4],
-            store: vec![5],
-            interpreter: vec![6],
-            authoring_meta: None,
-        };
-        assert!(!full.is_corrupt());
-        for field in 0..6usize {
-            let mut record = full.clone();
-            match field {
-                0 => record.meta_hash = vec![],
-                1 => record.meta_bytes = vec![],
-                2 => record.bytecode = vec![],
-                3 => record.parser = vec![],
-                4 => record.store = vec![],
-                5 => record.interpreter = vec![],
-                _ => unreachable!(),
-            }
-            assert!(record.is_corrupt(), "empty field {} must corrupt", field);
-        }
+    /// A non-revert failure of the IDescribedByMetaV1 supportsInterface call is
+    /// "answer unknown": it propagates as Err rather than reading as "does not
+    /// implement".
+    #[tokio::test]
+    async fn test_implements_described_by_call_error_is_unknown() {
+        let address = Address::random();
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
+        asserter.push_failure(ErrorPayload {
+            code: -32005,
+            message: "rate limit exceeded".into(),
+            data: None,
+        });
+        let error = implements_i_described_by_meta_v1(&provider, address)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("rate limit exceeded"));
+    }
+
+    /// A non-empty IDescribedByMetaV1 supportsInterface response that does not
+    /// decode as bool is a decode failure, so "answer unknown" rather than
+    /// "does not implement".
+    #[tokio::test]
+    async fn test_implements_undecodable_response_is_unknown() {
+        let address = Address::random();
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000001");
+        asserter
+            .push_success(&"0x0000000000000000000000000000000000000000000000000000000000000000");
+        asserter.push_success(&"0xdeadbeef");
+        implements_i_described_by_meta_v1(&provider, address)
+            .await
+            .unwrap_err();
     }
 
     /// No constructor injects a subgraph the caller did not ask for, and a
@@ -2260,32 +2385,29 @@ mod tests {
         assert!(Store::new().subgraphs().is_empty());
         assert!(Store::default().subgraphs().is_empty());
         assert!(
-            Store::create(&vec![], &HashMap::new(), &HashMap::new(), &HashMap::new())
+            Store::create(&vec![], &MetaCache::default(), &HashMap::new())
                 .subgraphs()
                 .is_empty()
         );
 
         let hash = [0u8; 32];
         let mut store = Store::default();
-        assert!(store.update(&hash).await.is_none());
-        assert!(store.search_deployer(&hash).await.is_none());
+        assert!(store.update(&hash).await.is_err());
     }
 
-    /// create() takes only the given subgraphs, validates cache entries via
-    /// the keccak gate, and keeps a dotrain uri only when its hash is present
-    /// in the cache.
+    /// create() takes only the given subgraphs, and keeps a dotrain uri only
+    /// when its hash is present in the cache.
+    ///
+    /// This used to assert create() dropped a cache entry whose bytes did not
+    /// hash to its key. That entry is no longer constructible: create() takes
+    /// a [MetaCache], which has no way to hold one, so there is nothing left
+    /// for create() to validate.
     #[test]
     fn test_store_create_validates_entries() {
         let (_, doc) = sample_authoring_doc();
         let good_hash = keccak256(&doc).0.to_vec();
-        let bad_hash = vec![0xEEu8; 32];
-        let mut cache = HashMap::new();
-        cache.insert(good_hash.clone(), doc.clone());
-        cache.insert(bad_hash.clone(), b"does not hash to bad_hash".to_vec());
-        let mut deployer_cache = HashMap::new();
-        let deployer = sample_deployer(&[0xAA; 32], b"dep-meta");
-        let deployer_key = vec![0x33u8; 32];
-        deployer_cache.insert(deployer_key.clone(), deployer.clone());
+        let mut cache = MetaCache::default();
+        cache.insert_verified(&good_hash, doc.clone()).unwrap();
         let mut dotrain_cache = HashMap::new();
         dotrain_cache.insert("a.rain".to_string(), good_hash.clone());
         dotrain_cache.insert("missing.rain".to_string(), vec![0x44u8; 32]);
@@ -2293,7 +2415,6 @@ mod tests {
         let store = Store::create(
             &vec!["https://example.com/custom-sg".to_string()],
             &cache,
-            &deployer_cache,
             &dotrain_cache,
         );
 
@@ -2302,8 +2423,6 @@ mod tests {
             &vec!["https://example.com/custom-sg".to_string()]
         );
         assert_eq!(store.get_meta(&good_hash), Some(&doc));
-        assert_eq!(store.get_meta(&bad_hash), None);
-        assert_eq!(store.get_deployer(&deployer_key), Some(&deployer));
         assert_eq!(store.get_dotrain_hash("a.rain"), Some(&good_hash));
         assert_eq!(store.get_dotrain_hash("missing.rain"), None);
     }
@@ -2318,143 +2437,6 @@ mod tests {
             store.subgraphs(),
             &vec!["sg-a".to_string(), "sg-b".to_string()]
         );
-    }
-
-    /// get_deployer resolves a direct cache hit, then the tx-hash
-    /// indirection, then None; set_deployer populates all three maps.
-    #[test]
-    fn test_store_get_deployer_lookup_chain() {
-        let mut store = Store::new();
-        let deployer = sample_deployer(&[0xAB; 32], b"dep-meta-bytes");
-        let key = vec![0x01u8; 32];
-        let tx = vec![0x02u8; 32];
-        store.set_deployer(&key, &deployer, Some(&tx));
-        assert_eq!(store.get_deployer(&key), Some(&deployer));
-        assert_eq!(store.get_deployer(&tx), Some(&deployer));
-        assert_eq!(store.get_deployer(&[0x03u8; 32]), None);
-        assert_eq!(
-            store.get_meta(&deployer.meta_hash),
-            Some(&deployer.meta_bytes)
-        );
-    }
-
-    /// A successful subgraph search populates the meta cache, the deployer
-    /// cache keyed by the bytecode meta hash, and the tx-hash map, and
-    /// returns the record for the searched hash.
-    #[tokio::test]
-    async fn test_store_search_deployer_populates_caches() {
-        use httpmock::prelude::*;
-        let (authoring_meta, doc) = sample_authoring_doc();
-        let meta_hash = keccak256(&doc).0.to_vec();
-        let meta_hash_hex = hex::encode_prefixed(&meta_hash);
-        let tx = vec![0x77u8; 32];
-        let server = MockServer::start();
-        let _mock = server.mock(|when, then| {
-            when.method(POST);
-            then.status(200).json_body(deployer_json_body(
-                &meta_hash_hex,
-                &hex::encode_prefixed(&doc),
-                &hex::encode_prefixed(&tx),
-                &meta_hash_hex,
-            ));
-        });
-        let mut store = Store::new();
-        store.add_subgraphs(&vec![server.url("/sg")]);
-
-        let record = store.search_deployer(&meta_hash).await.cloned().unwrap();
-        assert_eq!(record.meta_hash, meta_hash);
-        assert_eq!(record.meta_bytes, doc);
-        assert_eq!(record.bytecode, vec![0x01]);
-        assert_eq!(record.parser, vec![0x02]);
-        assert_eq!(record.store, vec![0x03]);
-        assert_eq!(record.interpreter, vec![0x04]);
-        assert_eq!(record.authoring_meta, Some(authoring_meta));
-        assert_eq!(store.get_meta(&meta_hash), Some(&doc));
-        assert_eq!(store.get_deployer(&tx), Some(&record));
-    }
-
-    /// A failed subgraph search returns None and stores nothing.
-    #[tokio::test]
-    async fn test_store_search_deployer_error_returns_none() {
-        use httpmock::prelude::*;
-        let server = MockServer::start();
-        let _mock = server.mock(|when, then| {
-            when.method(POST);
-            then.status(500).body("subgraph down");
-        });
-        let mut store = Store::new();
-        store.add_subgraphs(&vec![server.url("/sg")]);
-        assert!(store.search_deployer(&[0x0Du8; 32]).await.is_none());
-        assert!(store.cache().is_empty());
-        assert!(store.deployer_cache().is_empty());
-    }
-
-    /// search_deployer_check returns from the deployer cache or the tx-hash
-    /// map without any network round trip, and only falls back to the
-    /// subgraphs when neither hits.
-    #[tokio::test]
-    async fn test_store_search_deployer_check_branches() {
-        use httpmock::prelude::*;
-        // cached branches: no subgraphs registered at all
-        let mut store = Store::new();
-        let deployer = sample_deployer(&[0xAC; 32], b"cached-meta");
-        let key = vec![0x11u8; 32];
-        let tx = vec![0x22u8; 32];
-        store.set_deployer(&key, &deployer, Some(&tx));
-        assert_eq!(store.search_deployer_check(&key).await, Some(&deployer));
-        assert_eq!(store.search_deployer_check(&tx).await, Some(&deployer));
-
-        // network fallback
-        let (_, doc) = sample_authoring_doc();
-        let meta_hash = keccak256(&doc).0.to_vec();
-        let meta_hash_hex = hex::encode_prefixed(&meta_hash);
-        let server = MockServer::start();
-        let _mock = server.mock(|when, then| {
-            when.method(POST);
-            then.status(200).json_body(deployer_json_body(
-                &meta_hash_hex,
-                &hex::encode_prefixed(&doc),
-                &format!("0x{}", "66".repeat(32)),
-                &meta_hash_hex,
-            ));
-        });
-        let mut fresh = Store::new();
-        fresh.add_subgraphs(&vec![server.url("/sg")]);
-        let found = fresh
-            .search_deployer_check(&meta_hash)
-            .await
-            .cloned()
-            .unwrap();
-        assert_eq!(found.meta_bytes, doc);
-    }
-
-    /// set_deployer_from_query_response fills the meta cache, the tx-hash
-    /// map and the deployer cache, and returns the assembled record.
-    #[test]
-    fn test_store_set_deployer_from_query_response() {
-        let (authoring_meta, doc) = sample_authoring_doc();
-        let meta_hash = vec![0x0Au8; 32];
-        let bytecode_meta_hash = vec![0x0Bu8; 32];
-        let tx = vec![0x0Cu8; 32];
-        let response = DeployerResponse {
-            tx_hash: tx.clone(),
-            bytecode_meta_hash: bytecode_meta_hash.clone(),
-            meta_hash: meta_hash.clone(),
-            meta_bytes: doc.clone(),
-            bytecode: vec![0xE1],
-            parser: vec![0xE2],
-            store: vec![0xE3],
-            interpreter: vec![0xE4],
-        };
-        let mut store = Store::new();
-        let record = store.set_deployer_from_query_response(response);
-        assert_eq!(record.meta_hash, meta_hash);
-        assert_eq!(record.meta_bytes, doc);
-        assert_eq!(record.bytecode, vec![0xE1]);
-        assert_eq!(record.authoring_meta, Some(authoring_meta));
-        assert_eq!(store.get_meta(&meta_hash), Some(&doc));
-        assert_eq!(store.get_deployer(&bytecode_meta_hash), Some(&record));
-        assert_eq!(store.get_deployer(&tx), Some(&record));
     }
 
     /// set_dotrain on a fresh uri returns (new_hash, empty), keyed by the
@@ -2534,24 +2516,18 @@ mod tests {
     /// the keys it does not already hold, and unions the subgraphs.
     #[test]
     fn test_store_merge_semantics() {
-        let shared_meta_hash = vec![0x5Au8; 32];
-        let deployer_ours = sample_deployer(&shared_meta_hash, b"ours");
-        let deployer_theirs = sample_deployer(&shared_meta_hash, b"theirs");
-        let shared_tx = vec![0x0Fu8; 32];
-        let their_tx = vec![0x1Eu8; 32];
-
         let mut ours = Store::new();
         let mut theirs = Store::new();
-        ours.set_deployer(&[0x01u8; 32], &deployer_ours, Some(&shared_tx));
-        theirs.set_deployer(&[0x02u8; 32], &deployer_theirs, Some(&shared_tx));
-        theirs.set_deployer(&[0x02u8; 32], &deployer_theirs, Some(&their_tx));
 
-        // same deployer cache key in both stores
-        let contested_key = vec![0x03u8; 32];
-        let deployer_a = sample_deployer(&[0x04; 32], b"deployer-a");
-        let deployer_b = sample_deployer(&[0x05; 32], b"deployer-b");
-        ours.set_deployer(&contested_key, &deployer_a, None);
-        theirs.set_deployer(&contested_key, &deployer_b, None);
+        // meta cache: two different metas cannot share a key - the key IS
+        // their digest - so merge takes the other store's entry rather than
+        // choosing between them
+        let mine = b"mine".to_vec();
+        let yours = b"yours".to_vec();
+        let mine_hash = keccak256(&mine).0.to_vec();
+        let yours_hash = keccak256(&yours).0.to_vec();
+        ours.update_with(&mine_hash, &mine).unwrap();
+        theirs.update_with(&yours_hash, &yours).unwrap();
 
         // same dotrain uri, different content
         let (hash_ours, _) = ours.set_dotrain("content a", "x.rain", false).unwrap();
@@ -2561,14 +2537,8 @@ mod tests {
 
         ours.merge(&theirs);
 
-        // meta cache: existing entry wins
-        assert_eq!(ours.get_meta(&shared_meta_hash), Some(&b"ours".to_vec()));
-        // deployer cache: existing entry wins
-        assert_eq!(ours.get_deployer(&contested_key), Some(&deployer_a));
-        // tx-hash map: existing mapping wins
-        assert_eq!(ours.get_deployer(&shared_tx), Some(&deployer_ours));
-        // tx-hash map: a mapping only the other store holds is taken
-        assert_eq!(ours.get_deployer(&their_tx), Some(&deployer_theirs));
+        assert_eq!(ours.get_meta(&mine_hash), Some(&mine));
+        assert_eq!(ours.get_meta(&yours_hash), Some(&yours));
         // dotrain: existing uri mapping wins
         assert_eq!(ours.get_dotrain_hash("x.rain"), Some(&hash_ours));
         // subgraphs merged
@@ -2627,8 +2597,43 @@ mod tests {
         let mut cached_store = Store::new();
         let bytes = b"standalone meta bytes".to_vec();
         let hash = keccak256(&bytes).0.to_vec();
-        assert!(cached_store.update_with(&hash, &bytes).is_some());
-        assert_eq!(cached_store.update_check(&hash).await, Some(&bytes));
+        assert!(cached_store.update_with(&hash, &bytes).is_ok());
+        assert_eq!(cached_store.update_check(&hash).await.unwrap(), &bytes);
+    }
+
+    /// update() applies the same keccak gate as update_with to the subgraph
+    /// response, so bytes that do not hash to the requested hash poison
+    /// neither the requested key nor the inner item keys.
+    #[tokio::test]
+    async fn test_store_update_rejects_hash_mismatch() {
+        use httpmock::prelude::*;
+        let (_, doc) = sample_authoring_doc();
+        let requested = keccak256(b"the real content").0.to_vec();
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).json_body(json!({
+                "data": {"meta": {"__typename": "RainMetaV1", "rawBytes": hex::encode_prefixed(&doc)}}
+            }));
+        });
+        let mut store = Store::new();
+        store.add_subgraphs(&vec![server.url("/sg")]);
+        assert!(store.update(&requested).await.is_err());
+        assert!(store.get_meta(&requested).is_none());
+        assert!(store.cache().is_empty());
+        // the miss is not cached either, so update_check retries and misses again
+        assert!(store.update_check(&requested).await.is_err());
+    }
+
+    /// Store::new() starts with no subgraphs, so every uncached lookup that
+    /// reaches the network on it resolves to None instead of panicking.
+    #[tokio::test]
+    async fn test_store_no_subgraphs_lookups_return_none() {
+        let hash = [0u8; 32];
+        let mut store = Store::new();
+        assert!(store.update(&hash).await.is_err());
+        assert!(store.update_check(&hash).await.is_err());
+        assert!(store.cache().is_empty());
     }
 
     /// update_with enforces keccak(bytes) == hash, leaves an existing entry
@@ -2640,32 +2645,47 @@ mod tests {
         let mut store = Store::new();
         let bytes = b"payload bytes".to_vec();
         let wrong_hash = vec![0x99u8; 32];
-        assert!(store.update_with(&wrong_hash, &bytes).is_none());
+        // A mismatch is CorruptRecord, not NoRecordFound: the responder
+        // answered about one hash with bytes that are another, which is not
+        // the same fact as the hash being absent. #234 and #213 settled that
+        // distinction for the query layer.
+        match store.update_with(&wrong_hash, &bytes).unwrap_err() {
+            Error::CorruptRecord(message) => {
+                assert!(
+                    message.contains(&hex::encode_prefixed(&wrong_hash)),
+                    "{}",
+                    message
+                )
+            }
+            other => panic!("expected CorruptRecord, got {:?}", other),
+        }
         assert!(store.get_meta(&wrong_hash).is_none());
         // valid pair stored
         let hash = keccak256(&bytes).0.to_vec();
-        assert_eq!(store.update_with(&hash, &bytes), Some(&bytes));
+        assert_eq!(store.update_with(&hash, &bytes).unwrap(), &bytes);
 
-        // existing entry is returned untouched, not overwritten
+        // an already cached key returns its entry rather than inserting again.
+        // Note what is no longer expressible here: the old version of this
+        // block seeded one hash with unrelated bytes and asserted a later write
+        // did not overwrite them. Different bytes cannot share a key when the
+        // key is their digest, so "overwritten with something else" is not a
+        // state [MetaCache] can be in.
         let mut seeded = Store::new();
-        let content = b"real content".to_vec();
-        let content_hash = keccak256(&content).0.to_vec();
-        let planted = sample_deployer(&content_hash, b"planted value");
-        seeded.set_deployer(&[0x77u8; 32], &planted, None);
+        let planted = b"planted value".to_vec();
+        let planted_hash = keccak256(&planted).0.to_vec();
+        seeded.update_with(&planted_hash, &planted).unwrap();
+        assert_eq!(seeded.cache().len(), 1);
         assert_eq!(
-            seeded.update_with(&content_hash, &content),
-            Some(&b"planted value".to_vec())
+            seeded.update_with(&planted_hash, &planted).unwrap(),
+            &planted
         );
-        assert_eq!(
-            seeded.get_meta(&content_hash),
-            Some(&b"planted value".to_vec())
-        );
+        assert_eq!(seeded.cache().len(), 1);
 
         // prefixed document: inner item stored under keccak of its encoding
         let (_, doc) = sample_authoring_doc();
         let doc_hash = keccak256(&doc).0.to_vec();
         let mut doc_store = Store::new();
-        assert!(doc_store.update_with(&doc_hash, &doc).is_some());
+        assert!(doc_store.update_with(&doc_hash, &doc).is_ok());
         let inner = doc[8..].to_vec();
         assert_eq!(store_inner_lookup(&doc_store, &inner), Some(inner.clone()));
 
@@ -2676,7 +2696,7 @@ mod tests {
         let seq = [item_a.clone(), item_b].concat();
         let seq_hash = keccak256(&seq).0.to_vec();
         let mut seq_store = Store::new();
-        assert!(seq_store.update_with(&seq_hash, &seq).is_some());
+        assert!(seq_store.update_with(&seq_hash, &seq).is_ok());
         assert_eq!(store_inner_lookup(&seq_store, &item_a), None);
     }
 
