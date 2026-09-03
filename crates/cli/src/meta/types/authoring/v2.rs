@@ -107,10 +107,8 @@ impl AuthoringMetaV2 {
     ///
     /// An AuthoringMetaV2 struct if successful, or an AuthoringMetaV2Error if an error occurs.
     ///
-    /// Deliberately does NOT apply the rain word grammar. v2 metas are already
-    /// published on chain and immutable, so a read that rejects them would
-    /// brick tooling rather than fix the data. Callers that need the grammar
-    /// enforced use [`AuthoringMetaV2::abi_decode_validate`].
+    /// The raw decode, without the rain word grammar. The read path from a
+    /// meta item goes through [`AuthoringMetaV2::abi_decode_validate`].
     pub fn abi_decode(bytes: &[u8]) -> Result<Self, AuthoringMetaV2Error> {
         let decoded = AuthoringMetasV2Sol::abi_decode(bytes)?;
 
@@ -284,7 +282,7 @@ impl TryFrom<RainMetaDocumentV1Item> for AuthoringMetaV2 {
             return Err(AuthoringMetaV2Error::MetaMagicNumberMismatch);
         }
         let payload = value.unpack()?;
-        AuthoringMetaV2::abi_decode(&payload)
+        AuthoringMetaV2::abi_decode_validate(&payload)
     }
 }
 
@@ -684,7 +682,7 @@ mod tests {
     }
 
     /// The empty word (a bytes32 of NULs) is the case issue #168 reproduced:
-    /// abi_decode stays lenient, abi_decode_validate is the enforcement point.
+    /// the raw decode admits it, the grammar rejects it.
     #[tokio::test]
     async fn test_abi_decode_validate_rejects_empty_word() {
         let encoded = AuthoringMetasV2Sol::abi_encode(&vec![word_sol(&[0u8; 32], "")]);
@@ -1083,6 +1081,27 @@ mod tests {
         assert_eq!(result.words[0].word, "test");
         assert_eq!(result.words[1].description, "description 2");
     }
+
+    /// The read path from an item applies the grammar: a word outside it is
+    /// a broken authoring claim, not words with a typo in them.
+    #[tokio::test]
+    async fn test_try_from_rejects_a_word_outside_the_grammar() {
+        let encoded = AuthoringMetasV2Sol::abi_encode(&vec![symbol_sol("BAD", "fine")]);
+        assert!(AuthoringMetaV2::abi_decode(&encoded).is_ok());
+        let item = RainMetaDocumentV1Item {
+            magic: KnownMagic::AuthoringMetaV2,
+            payload: ByteBuf::from(encoded),
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+            content_type: ContentType::None,
+        };
+        match AuthoringMetaV2::try_from(item) {
+            Err(AuthoringMetaV2Error::ValidationErrors(_)) => {}
+            other => panic!("expected ValidationErrors, got {:?}", other),
+        }
+    }
+
     #[tokio::test]
     async fn test_fetch_for_contract_invalid_cbor_is_meta_error() {
         let hash = meta_hex_hash("0x01");
