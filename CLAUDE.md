@@ -29,10 +29,11 @@ means adding it to `LibCopyArtifacts.contracts()` AND
 
 `foundry.toml`'s `ffi = true` and its filesystem permissions exist for
 `CopyArtifacts` and for `test/subgraph/`, which reads the built interface
-artifact with `jq`, the subgraph manifest and compose file with `yq`, and the
-git index with `git` — all over `vm.ffi`, so none of them needs an
-`fs_permissions` entry, and all three binaries have to be on `PATH` in the sol
-shell. Nothing else here shells out or touches the filesystem.
+artifact and `subgraph/schema.graphql` with `jq`, the subgraph manifest and
+compose file with `yq`, and the git index with `git` — all over `vm.ffi`, so
+none of them needs an `fs_permissions` entry, and all three binaries have to be
+on `PATH` in the sol shell. Nothing else here shells out or touches the
+filesystem.
 
 ## The subgraph is SOURCE only (#149)
 
@@ -61,7 +62,10 @@ cheatcodes at a path — not as text. A substring search answers a different
 question: a commented-out line satisfies a positive one, and a key respelled
 `address :` or `"address":` or moved into a flow mapping defeats a negative one.
 So new manifest assertions name the node they are about; do not add one that
-greps the file.
+greps the file. `schema.graphql` is the one file it does read by line, because
+no parser for it is in this lane — guarded by counting the `@entity` lines and
+asserting the types read against that count, so a shape it cannot read fails
+instead of under-reporting.
 
 ## Licensing
 
