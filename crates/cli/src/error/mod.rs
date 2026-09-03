@@ -8,6 +8,7 @@ use crate::meta::KnownMagic;
 #[derive(Debug)]
 pub enum Error {
     CorruptMeta,
+    NotRainMetaDocument,
     InvalidHash,
     UnknownMeta,
     UnknownMagic,
@@ -36,6 +37,9 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::CorruptMeta => f.write_str("corrupt meta"),
+            Error::NotRainMetaDocument => f.write_str(
+                "not a rain meta document: the bytes do not begin with the rain meta magic number",
+            ),
             Error::UnknownMeta => f.write_str("unknown meta"),
             Error::UnknownMagic => f.write_str("unknown magic"),
             Error::UnsupportedMeta => f.write_str("unsupported meta"),
@@ -117,6 +121,10 @@ mod tests {
     #[test]
     fn test_display_fixed_strings() {
         assert_eq!(Error::CorruptMeta.to_string(), "corrupt meta");
+        assert_eq!(
+            Error::NotRainMetaDocument.to_string(),
+            "not a rain meta document: the bytes do not begin with the rain meta magic number"
+        );
         assert_eq!(Error::UnknownMeta.to_string(), "unknown meta");
         assert_eq!(Error::UnknownMagic.to_string(), "unknown magic");
         assert_eq!(Error::UnsupportedMeta.to_string(), "unsupported meta");
