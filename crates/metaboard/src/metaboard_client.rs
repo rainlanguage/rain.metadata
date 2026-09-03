@@ -609,27 +609,14 @@ mod tests {
         let server = MockServer::start_async().await;
         let url = Url::parse(&server.url("/")).unwrap();
 
-        let hash = [11u8; 32];
+        let content = vec![2u8];
+        let hash = keccak256(&content).0;
+        let meta_hex = format!("0x{}", encode(&content));
 
         server.mock(|when, then| {
             when.method(POST).path("/");
             then.status(200).json_body_obj(&serde_json::json!({
-                "data": {
-                    "metaV1S": [
-                        {
-                            "meta": "0x02",
-                            "metaHash": "0x00",
-                            "sender": "0x00",
-                            "id": "0x00",
-                            "metaBoard": {
-                                "id": "0x00",
-                                "metas": [],
-                                "address": "0x00",
-                            },
-                            "subject": "0x00",
-                        }
-                    ]
-                },
+                "data": { "metaV1S": [row(&meta_hex)] },
                 "errors": []
             }));
         });
@@ -637,7 +624,7 @@ mod tests {
         let client = MetaboardSubgraphClient::new(url);
         let result = client.get_metabytes_by_hash(&hash).await.unwrap();
 
-        assert_eq!(result, vec![vec![2u8]]);
+        assert_eq!(result, vec![content]);
     }
 
     /// A transport failure surfaces as CynicClientError::Request, not as
