@@ -203,7 +203,7 @@ impl AuthoringMetaV2 {
             .map_err(|error| wrap_error(error.into()))?;
 
         // every meta here hashes to the describedByMetaV1 hash - the client
-        // drops rows that do not before handing them back (#301) - so each
+        // refuses the whole answer if any row does not (#301) - so each
         // is the contract's own committed bytes, byte for byte. they are
         // cbor sequences, so scan the items of each for an authoring meta,
         // reporting the first failure encountered if none is found.
@@ -876,8 +876,11 @@ mod tests {
         }
     }
 
+    /// The same content emitted twice is two rows under one hash, which is
+    /// the only way a by-hash answer holds more than one row. The first is
+    /// decoded and the words come back once.
     #[tokio::test]
-    async fn test_fetch_for_contract_success_decodes_first_meta() {
+    async fn test_fetch_for_contract_success_on_a_re_emitted_meta() {
         let meta_hex = authoring_meta_v2_cbor_hex();
         let hash = meta_hex_hash(&meta_hex);
         let rpc_server = MockServer::start_async().await;
@@ -889,11 +892,8 @@ mod tests {
             then.status(200).json_body_obj(&serde_json::json!({
                 "data": {
                     "metaV1S": [
-                        // the first meta is the authoring meta document and is
-                        // the one that must be decoded
                         metaboard_meta_entry(&meta_hex),
-                        // a trailing non-decodable meta must be ignored
-                        metaboard_meta_entry("0x00"),
+                        metaboard_meta_entry(&meta_hex),
                     ]
                 }
             }));
@@ -1118,9 +1118,14 @@ mod tests {
         // the error is the subgraph's, naming the hash and the row count
         match error.error {
             AuthoringMetaV2Error::MetaboardSubgraphError(
-                MetaboardSubgraphClientError::UnverifiedByHash { metahash, rows },
+                MetaboardSubgraphClientError::UnverifiedByHash {
+                    metahash,
+                    row,
+                    rows,
+                },
             ) => {
                 assert_eq!(metahash, format!("0x{}", encode(hash)));
+                assert_eq!(row, 0);
                 assert_eq!(rows, 1);
             }
             other => panic!("expected UnverifiedByHash, got {:?}", other),
@@ -1161,7 +1166,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn test_fetch_for_contract_success_authoring_meta_first() {
+    async fn test_fetch_for_contract_success() {
         let meta_hex = authoring_meta_v2_cbor_hex();
         let hash = meta_hex_hash(&meta_hex);
         let rpc_server = MockServer::start_async().await;
@@ -1171,13 +1176,7 @@ mod tests {
         metaboard_server.mock(|when, then| {
             when.method(POST).path("/").body_contains(encode(hash));
             then.status(200).json_body_obj(&serde_json::json!({
-                "data": {
-                    "metaV1S": [
-                        metaboard_meta_entry(&meta_hex),
-                        // a trailing non-decodable meta must be ignored
-                        metaboard_meta_entry("0x00"),
-                    ]
-                }
+                "data": { "metaV1S": [metaboard_meta_entry(&meta_hex)] }
             }));
         });
 
@@ -1194,11 +1193,13 @@ mod tests {
         assert_eq!(meta.words[2].description, "description 3");
     }
 
-    /// the metaboard does not pin down the order of the metas it returns, so an
-    /// authoring meta behind an entry that fails the hash check and does not
-    /// even cbor decode is still found
+    /// The authoring meta is on the board and hashes to the contract's hash,
+    /// and is still not returned, because the subgraph served a row beside it
+    /// that does not. The refusal is the client's (#301) and this function
+    /// never sees the good row: a responder that indexes wrong bytes under a
+    /// hash is not mined for the right ones.
     #[tokio::test]
-    async fn test_fetch_for_contract_authoring_meta_after_unmatched_undecodable_meta() {
+    async fn test_fetch_for_contract_refuses_a_verified_row_beside_an_unverified_one() {
         let meta_hex = authoring_meta_v2_cbor_hex();
         let hash = meta_hex_hash(&meta_hex);
         let rpc_server = MockServer::start_async().await;
@@ -1210,58 +1211,31 @@ mod tests {
             then.status(200).json_body_obj(&serde_json::json!({
                 "data": {
                     "metaV1S": [
+                        // the verified row first, so a caller handed the rows
+                        // that verify would have its answer before the lie
+                        metaboard_meta_entry(&meta_hex),
                         metaboard_meta_entry("0x00"),
-                        metaboard_meta_entry(&meta_hex),
                     ]
                 }
             }));
         });
 
-        let meta = AuthoringMetaV2::fetch_for_contract(
+        let result = AuthoringMetaV2::fetch_for_contract(
             Address::from([0u8; 20]),
             vec![rpc_server.url("/")],
             metaboard_server.url("/"),
         )
-        .await
-        .unwrap();
-        assert_eq!(meta.words.len(), 3);
-        assert_eq!(meta.words[0].description, "description 1");
-        assert_eq!(meta.words[2].description, "description 3");
-    }
-
-    /// an entry that is well formed cbor under some other magic is skipped for
-    /// failing the hash check rather than being taken as the answer, so it does
-    /// not hide the authoring meta behind it: the hash is what decides, not
-    /// whether the leading bytes happen to parse
-    #[tokio::test]
-    async fn test_fetch_for_contract_authoring_meta_after_unmatched_decodable_meta() {
-        let meta_hex = authoring_meta_v2_cbor_hex();
-        let hash = meta_hex_hash(&meta_hex);
-        let rpc_server = MockServer::start_async().await;
-        mock_described_by_rpc(&rpc_server, hash);
-
-        let metaboard_server = MockServer::start_async().await;
-        metaboard_server.mock(|when, then| {
-            when.method(POST).path("/").body_contains(encode(hash));
-            then.status(200).json_body_obj(&serde_json::json!({
-                "data": {
-                    "metaV1S": [
-                        metaboard_meta_entry(&cbor_seq_hex(vec![other_magic_document()])),
-                        metaboard_meta_entry(&meta_hex),
-                    ]
-                }
-            }));
-        });
-
-        let meta = AuthoringMetaV2::fetch_for_contract(
-            Address::from([0u8; 20]),
-            vec![rpc_server.url("/")],
-            metaboard_server.url("/"),
-        )
-        .await
-        .unwrap();
-        assert_eq!(meta.words.len(), 3);
-        assert_eq!(meta.words[2].description, "description 3");
+        .await;
+        let error = result.unwrap_err();
+        match error.error {
+            AuthoringMetaV2Error::MetaboardSubgraphError(
+                MetaboardSubgraphClientError::UnverifiedByHash { row, rows, .. },
+            ) => {
+                assert_eq!(row, 1);
+                assert_eq!(rows, 2);
+            }
+            other => panic!("expected UnverifiedByHash, got {:?}", other),
+        }
     }
 
     /// one meta is a cbor sequence, so an authoring meta that is not the first
@@ -1308,7 +1282,7 @@ mod tests {
                 "data": {
                     "metaV1S": [
                         metaboard_meta_entry(&seq),
-                        metaboard_meta_entry(&cbor_seq_hex(vec![other_magic_document()])),
+                        metaboard_meta_entry(&seq),
                     ]
                 }
             }));

@@ -24,12 +24,21 @@ pub enum MetaboardSubgraphClientError {
     },
     #[error("Subgraph query returned no data for metahash {metahash}")]
     EmptyByHash { metahash: String },
-    /// Rows came back under the hash, and not one of them hashes to it. That
-    /// is not absence - the responder answered - it is the responder serving
+    /// A row came back under the hash whose bytes do not hash to it. That is
+    /// not absence - the responder answered - it is the responder serving
     /// bytes that are not the content asked for, which a by-hash lookup must
-    /// never hand on. Distinct from [Self::EmptyByHash] so the lie is visible.
-    #[error("Subgraph returned {rows} metas for metahash {metahash}, none of which hash to it")]
-    UnverifiedByHash { metahash: String, rows: usize },
+    /// never hand on. The whole answer is refused, not just the row: a
+    /// responder that indexes wrong bytes under a hash is not trusted for the
+    /// rest of what it indexed under it. Distinct from [Self::EmptyByHash] so
+    /// the lie is visible.
+    #[error(
+        "Subgraph returned {rows} metas for metahash {metahash}; row {row} does not hash to it"
+    )]
+    UnverifiedByHash {
+        metahash: String,
+        row: usize,
+        rows: usize,
+    },
     #[error("Subgraph query returned no data for subject {subject}")]
     EmptyBySubject { subject: String },
     #[error("Error decoding metahash {metahash}: {source}")]
@@ -89,30 +98,32 @@ impl MetaboardSubgraphClient {
             return Err(MetaboardSubgraphClientError::EmptyByHash { metahash });
         }
 
-        // Decode every row, and keep only the ones that hash to what was
-        // asked for. The hash is the caller's, not a field the responder
-        // derived from the same bytes it is serving, so the comparison is not
+        // Decode every row and require each to hash to what was asked for.
+        // The hash is the caller's, not a field the responder derived from
+        // the same bytes it is serving, so the comparison is not
         // self-referential: a row that fails it is the subgraph serving bytes
-        // that are not this content, whatever it labelled them. Such a row is
-        // dropped rather than fatal, because every row that passes is
-        // cryptographically the requested content regardless of the company
-        // it arrived in. cas.md puts integrity exactly here, before anything
-        // is handed on under the hash. rainlanguage/rain.metadata#301.
+        // that are not this content, whatever it labelled them. One such row
+        // refuses the whole answer rather than being dropped: the rows that
+        // do verify are the requested content, but they arrived from a
+        // responder shown to index wrong bytes under this hash, and mining
+        // them would hide that. cas.md puts integrity exactly here, before
+        // anything is handed on under the hash. rainlanguage/rain.metadata#301.
         let rows = data.meta_v1_s.len();
-        let mut meta_bytes = Vec::new();
-        for meta in data.meta_v1_s {
+        let mut meta_bytes = Vec::with_capacity(rows);
+        for (row, meta) in data.meta_v1_s.into_iter().enumerate() {
             let bytes =
                 decode(&meta.meta.0).map_err(|e| MetaboardSubgraphClientError::FromHexError {
                     metahash: metahash.clone(),
                     source: e,
                 })?;
-            if keccak256(&bytes).0 == *requested {
-                meta_bytes.push(bytes);
+            if keccak256(&bytes).0 != *requested {
+                return Err(MetaboardSubgraphClientError::UnverifiedByHash {
+                    metahash,
+                    row,
+                    rows,
+                });
             }
-        }
-
-        if meta_bytes.is_empty() {
-            return Err(MetaboardSubgraphClientError::UnverifiedByHash { metahash, rows });
+            meta_bytes.push(bytes);
         }
 
         Ok(meta_bytes)
@@ -242,12 +253,11 @@ mod tests {
     }
 
     /// A row whose bytes do not hash to the requested value is not this
-    /// content, whatever the subgraph labelled it, and is dropped; the rows
-    /// that do verify are returned without it. Per row, because a verified
-    /// row is the requested content by construction regardless of the
-    /// company it arrived in.
+    /// content, whatever the subgraph labelled it, and refuses the whole
+    /// answer: the row that does verify is not returned around it, because
+    /// the responder has been shown to index wrong bytes under this hash.
     #[tokio::test]
-    async fn test_get_metabytes_by_hash_drops_rows_that_do_not_hash_to_it() {
+    async fn test_get_metabytes_by_hash_errors_when_any_row_does_not_hash_to_it() {
         let server = MockServer::start_async().await;
         let url = Url::parse(&server.url("/")).unwrap();
 
@@ -258,20 +268,32 @@ mod tests {
         server.mock(|when, then| {
             when.method(POST).path("/");
             then.status(200).json_body_obj(&serde_json::json!({
-                // the lie first, so a client that stopped at it returns nothing
-                "data": { "metaV1S": [row("0x0badbeef"), row(&meta_hex)] }
+                // the verified row first, so a client that dropped the lie
+                // and kept going would return it
+                "data": { "metaV1S": [row(&meta_hex), row("0x0badbeef")] }
             }));
         });
 
         let client = MetaboardSubgraphClient::new(url);
 
-        let result = client.get_metabytes_by_hash(&hash).await.unwrap();
-        assert_eq!(result, vec![content]);
+        match client.get_metabytes_by_hash(&hash).await.unwrap_err() {
+            MetaboardSubgraphClientError::UnverifiedByHash {
+                metahash,
+                row,
+                rows,
+            } => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+                assert_eq!(row, 1);
+                assert_eq!(rows, 2);
+            }
+            other => panic!("expected UnverifiedByHash, got {:?}", other),
+        }
     }
 
     /// Rows came back and none of them verify: that is the subgraph
     /// answering with something other than the content asked for, reported
-    /// as its own error rather than as absence.
+    /// as its own error rather than as absence, naming the first row that
+    /// failed.
     #[tokio::test]
     async fn test_get_metabytes_by_hash_no_verified_row_is_unverified_error() {
         let server = MockServer::start_async().await;
@@ -289,8 +311,13 @@ mod tests {
         let client = MetaboardSubgraphClient::new(url);
 
         match client.get_metabytes_by_hash(&hash).await.unwrap_err() {
-            MetaboardSubgraphClientError::UnverifiedByHash { metahash, rows } => {
+            MetaboardSubgraphClientError::UnverifiedByHash {
+                metahash,
+                row,
+                rows,
+            } => {
                 assert_eq!(metahash, format!("0x{}", encode(hash)));
+                assert_eq!(row, 0);
                 assert_eq!(rows, 2);
             }
             other => panic!("expected UnverifiedByHash, got {:?}", other),
