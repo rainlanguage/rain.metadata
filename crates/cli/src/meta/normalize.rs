@@ -1,27 +1,13 @@
 use super::{
     KnownMeta,
     super::error::Error,
-    types::{
-        authoring::v1::AuthoringMeta, authoring::v2::AuthoringMetaV2,
-        solidity_abi::v2::SolidityAbiMeta, interpreter_caller::v1::InterpreterCallerMeta,
-    },
+    types::{authoring::v1::AuthoringMeta, authoring::v2::AuthoringMetaV2},
 };
-
-fn normalize_json<'de, T>(data: &'de [u8]) -> Result<Vec<u8>, Error>
-where
-    T: serde::Deserialize<'de> + serde::Serialize + validator::Validate,
-{
-    let parsed = serde_json::from_str::<T>(std::str::from_utf8(data)?)?;
-    parsed.validate()?;
-    Ok(serde_json::to_string(&parsed)?.as_bytes().to_vec())
-}
 
 impl KnownMeta {
     /// normalizes meta types and also performs validation on those that need validation
     pub fn normalize(&self, data: &[u8]) -> Result<Vec<u8>, Error> {
         Ok(match self {
-            KnownMeta::SolidityAbiV2 => normalize_json::<SolidityAbiMeta>(data)?,
-            KnownMeta::InterpreterCallerMetaV1 => normalize_json::<InterpreterCallerMeta>(data)?,
             KnownMeta::AuthoringMetaV1 => {
                 // for AuthoringMeta since it can be a json or abi encoded bytes, we try to abi
                 // decode first and then json deserialize if that fails, if either succeeds
@@ -72,37 +58,30 @@ mod tests {
         assert_eq!(KnownMeta::OpV1.normalize(bytes).unwrap(), bytes.to_vec());
     }
 
-    /// SolidityAbiV2 rejects data that is not json and data that is not utf8.
+    /// SolidityAbiV2 is a known meta this crate no longer models (#317), so
+    /// normalize passes its bytes through: input the deleted model rewrote or
+    /// rejected comes back unchanged.
     #[test]
-    fn test_normalize_solidity_abi_v2_rejects_bad_input() {
-        assert!(matches!(
-            KnownMeta::SolidityAbiV2.normalize(b"not json at all"),
-            Err(Error::SerdeJsonError(_))
-        ));
-        assert!(matches!(
-            KnownMeta::SolidityAbiV2.normalize(&[0xff, 0xfe]),
-            Err(Error::Utf8Error(_))
-        ));
+    fn test_normalize_solidity_abi_v2_is_a_passthrough() {
+        let inputs: [&[u8]; 3] = [b"[ ]", b"not json at all", &[0xff, 0xfe]];
+        for bytes in inputs {
+            assert_eq!(
+                KnownMeta::SolidityAbiV2.normalize(bytes).unwrap(),
+                bytes.to_vec()
+            );
+        }
     }
 
-    /// SolidityAbiV2 normalizes whitespace away to the canonical compact form.
+    /// InterpreterCallerMetaV1 is a known meta this crate no longer models
+    /// (#317), so normalize passes its bytes through: a payload the deleted
+    /// model rejected for having no methods comes back unchanged.
     #[test]
-    fn test_normalize_solidity_abi_v2_canonicalizes() {
+    fn test_normalize_interpreter_caller_meta_v1_is_a_passthrough() {
+        let bytes = br#"{"name":"Test Caller","abiName":"TestCaller","methods":[]}"#;
         assert_eq!(
-            KnownMeta::SolidityAbiV2.normalize(b"[ ]").unwrap(),
-            b"[]".to_vec()
+            KnownMeta::InterpreterCallerMetaV1.normalize(bytes).unwrap(),
+            bytes.to_vec()
         );
-    }
-
-    /// InterpreterCallerMetaV1 parses but rejects metadata failing validation:
-    /// at least one method is required.
-    #[test]
-    fn test_normalize_interpreter_caller_rejects_empty_methods() {
-        let invalid = br#"{"name":"Test Caller","abiName":"TestCaller","methods":[]}"#;
-        assert!(matches!(
-            KnownMeta::InterpreterCallerMetaV1.normalize(invalid),
-            Err(Error::ValidationErrors(_))
-        ));
     }
 
     /// Meta types with no json schema at this level pass through untouched.

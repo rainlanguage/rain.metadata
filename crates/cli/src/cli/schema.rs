@@ -31,17 +31,14 @@ pub fn json_schema(meta: KnownMeta) -> Option<RootSchema> {
         KnownMeta::AuthoringMetaV1 => Some(schema_for!(
             crate::meta::types::authoring::v1::AuthoringMeta
         )),
-        KnownMeta::SolidityAbiV2 => Some(schema_for!(
-            crate::meta::types::solidity_abi::v2::SolidityAbiMeta
-        )),
-        KnownMeta::InterpreterCallerMetaV1 => Some(schema_for!(
-            crate::meta::types::interpreter_caller::v1::InterpreterCallerMeta
-        )),
-        // OpV1 is here rather than absent: rainlanguage/rain.metadata#304
-        // removed the model without removing the meta, so it stays a magic
-        // number this crate can name and `magic ls` still lists it. It has no
-        // type left to derive a schema from, which is exactly what None says.
+        // OpV1, SolidityAbiV2 and InterpreterCallerMetaV1 are here rather
+        // than absent: rainlanguage/rain.metadata#304 and #317 removed the
+        // models without removing the metas, so they stay magic numbers this
+        // crate can name and `magic ls` still lists them. They have no type
+        // left to derive a schema from, which is exactly what None says.
         KnownMeta::OpV1
+        | KnownMeta::SolidityAbiV2
+        | KnownMeta::InterpreterCallerMetaV1
         | KnownMeta::DotrainV1
         | KnownMeta::RainlangV1
         | KnownMeta::AuthoringMetaV2

@@ -9,6 +9,8 @@
 
 use std::process::Output;
 
+const AUTHORING_META_V1_JSON: &str = r#"[{"word":"stack","description":"Copies an existing value from the stack.","operandParserOffset":16}]"#;
+
 fn run(args: &[&str]) -> Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_rain-metadata"))
         .args(args)
@@ -27,13 +29,12 @@ fn stdout_utf8(out: &Output) -> String {
 fn test_dispatch_schema_ls() {
     let out = run(&["schema", "ls"]);
     assert!(out.status.success());
-    // op-v1 is absent because #304 removed the model it derived a schema
-    // from, not because it stopped being a known meta - `magic ls` still
-    // lists it.
+    // op-v1, solidity-abi-v2 and interpreter-caller-meta-v1 are absent
+    // because #304 and #317 removed the models they derived schemas from,
+    // not because they stopped being known metas - `magic ls` still lists
+    // them.
     let expected = "\
-solidity-abi-v2
 authoring-meta-v1
-interpreter-caller-meta-v1
 ";
     assert_eq!(stdout_utf8(&out), expected);
 }
@@ -64,22 +65,22 @@ fn test_dispatch_schema_show() {
 fn test_dispatch_validate() {
     let dir = tempfile::tempdir().unwrap();
     let good = dir.path().join("good.json");
-    std::fs::write(&good, "[]").unwrap();
+    std::fs::write(&good, AUTHORING_META_V1_JSON).unwrap();
     let out = run(&[
         "validate",
         "-m",
-        "solidity-abi-v2",
+        "authoring-meta-v1",
         "-i",
         good.to_str().unwrap(),
     ]);
     assert!(out.status.success());
 
     let bad = dir.path().join("bad.json");
-    std::fs::write(&bad, "this is not abi json").unwrap();
+    std::fs::write(&bad, "this is not authoring meta json").unwrap();
     let out = run(&[
         "validate",
         "-m",
-        "solidity-abi-v2",
+        "authoring-meta-v1",
         "-i",
         bad.to_str().unwrap(),
     ]);
@@ -129,19 +130,20 @@ fn test_dispatch_magic_ls() {
     }
 }
 
-/// `build` routes to `build::build`: a single empty-ABI document encodes to a
-/// hex payload prefixed with the rain meta document magic number.
+/// `build` routes to `build::build`: a single authoring-meta-v1 document
+/// encodes to a hex payload prefixed with the rain meta document magic
+/// number.
 #[test]
 fn test_dispatch_build() {
     let dir = tempfile::tempdir().unwrap();
-    let abi = dir.path().join("abi.json");
-    std::fs::write(&abi, "[]").unwrap();
+    let input = dir.path().join("authoring-meta.json");
+    std::fs::write(&input, AUTHORING_META_V1_JSON).unwrap();
     let out = run(&[
         "build",
         "-i",
-        abi.to_str().unwrap(),
+        input.to_str().unwrap(),
         "-m",
-        "solidity-abi-v2",
+        "authoring-meta-v1",
         "-t",
         "json",
         "-e",
