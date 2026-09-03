@@ -12,22 +12,33 @@ use crate::meta::{KnownMagic, RainMetaDocumentV1Item};
 use rain_erc::erc165::Erc165Error;
 use rain_metadata_bindings::IDescribedByMetaV1;
 use thiserror::Error;
+use validator::Validate;
 use super::super::super::implements_i_described_by_meta_v1;
+use super::super::common::v1::{REGEX_RAIN_SYMBOL, REGEX_RAIN_STRING};
 #[cfg(target_family = "wasm")]
 use wasm_bindgen_utils::{prelude::*, impl_wasm_traits};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(target_family = "wasm", derive(Tsify))]
 pub struct AuthoringMetaV2Word {
+    #[validate(regex(
+        path = "REGEX_RAIN_SYMBOL",
+        message = "Must be alphanumeric lower-kebab-case beginning with a letter.\n"
+    ))]
     pub word: String,
+    #[validate(regex(
+        path = "REGEX_RAIN_STRING",
+        message = "Must be printable ASCII characters and whitespace.\n"
+    ))]
     pub description: String,
 }
 #[cfg(target_family = "wasm")]
 impl_wasm_traits!(AuthoringMetaV2Word);
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Validate, Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(target_family = "wasm", derive(Tsify))]
 pub struct AuthoringMetaV2 {
+    #[validate]
     pub words: Vec<AuthoringMetaV2Word>,
 }
 #[cfg(target_family = "wasm")]
@@ -64,6 +75,8 @@ pub enum AuthoringMetaV2Error {
     Utf8Error(#[from] std::string::FromUtf8Error),
     #[error(transparent)]
     MetaError(#[from] crate::error::Error),
+    #[error(transparent)]
+    ValidationErrors(#[from] validator::ValidationErrors),
     #[error("Contract has no words")]
     HasNoWords,
     #[error(transparent)]
@@ -93,6 +106,9 @@ impl AuthoringMetaV2 {
     /// # Returns
     ///
     /// An AuthoringMetaV2 struct if successful, or an AuthoringMetaV2Error if an error occurs.
+    ///
+    /// The raw decode, without the rain word grammar. The read path from a
+    /// meta item goes through [`AuthoringMetaV2::abi_decode_validate`].
     pub fn abi_decode(bytes: &[u8]) -> Result<Self, AuthoringMetaV2Error> {
         let decoded = AuthoringMetasV2Sol::abi_decode(bytes)?;
 
@@ -112,6 +128,23 @@ impl AuthoringMetaV2 {
         }
 
         Ok(AuthoringMetaV2 { words })
+    }
+
+    /// Decodes the ABI encoded bytes then validates every word against the same
+    /// rain grammar AuthoringMeta v1 enforces: `REGEX_RAIN_SYMBOL` for `word`
+    /// and `REGEX_RAIN_STRING` for `description`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The bytes to decode.
+    ///
+    /// # Returns
+    ///
+    /// An AuthoringMetaV2 struct if successful, or an AuthoringMetaV2Error if an error occurs.
+    pub fn abi_decode_validate(bytes: &[u8]) -> Result<Self, AuthoringMetaV2Error> {
+        let authoring_meta = AuthoringMetaV2::abi_decode(bytes)?;
+        authoring_meta.validate()?;
+        Ok(authoring_meta)
     }
 
     /// Reads the meta hash the contract is described by over a single RPC.
@@ -249,7 +282,7 @@ impl TryFrom<RainMetaDocumentV1Item> for AuthoringMetaV2 {
             return Err(AuthoringMetaV2Error::MetaMagicNumberMismatch);
         }
         let payload = value.unpack()?;
-        AuthoringMetaV2::abi_decode(&payload)
+        AuthoringMetaV2::abi_decode_validate(&payload)
     }
 }
 
@@ -262,7 +295,9 @@ mod tests {
     use httpmock::MockServer;
     use reqwest::Url;
 
-    use crate::meta::{ContentEncoding, ContentLanguage, ContentType};
+    use validator::ValidationErrorsKind;
+
+    use crate::meta::{ContentEncoding, ContentLanguage, ContentType, str_to_bytes32};
 
     use super::*;
 
@@ -628,6 +663,113 @@ mod tests {
         }
     }
 
+    fn word_sol(word: &[u8; 32], description: &str) -> AuthoringMetaV2Sol {
+        AuthoringMetaV2Sol {
+            word: (*word).into(),
+            description: description.to_string(),
+        }
+    }
+
+    fn symbol_sol(word: &str, description: &str) -> AuthoringMetaV2Sol {
+        word_sol(&str_to_bytes32(word).unwrap(), description)
+    }
+
+    #[tokio::test]
+    async fn test_abi_decode_validate_accepts_grammatical_words() {
+        let payload = decode::<String>(WORDS_PAYLOAD_HEX.into()).unwrap();
+        let decoded = AuthoringMetaV2::abi_decode_validate(&payload).unwrap();
+        assert_eq!(decoded, AuthoringMetaV2::abi_decode(&payload).unwrap());
+    }
+
+    /// The empty word (a bytes32 of NULs) is the case issue #168 reproduced:
+    /// the raw decode admits it, the grammar rejects it.
+    #[tokio::test]
+    async fn test_abi_decode_validate_rejects_empty_word() {
+        let encoded = AuthoringMetasV2Sol::abi_encode(&vec![word_sol(&[0u8; 32], "")]);
+
+        assert_eq!(
+            AuthoringMetaV2::abi_decode(&encoded).unwrap().words[0].word,
+            ""
+        );
+
+        match AuthoringMetaV2::abi_decode_validate(&encoded) {
+            Err(AuthoringMetaV2Error::ValidationErrors(_)) => {}
+            other => panic!("expected ValidationErrors, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_abi_decode_validate_rejects_words_outside_the_symbol_grammar() {
+        for word in ["A", "a0A", "0a", "-a", "a-", "a--b", "_", "a b", "a.b"] {
+            let encoded = AuthoringMetasV2Sol::abi_encode(&vec![symbol_sol(word, "")]);
+
+            assert!(
+                AuthoringMetaV2::abi_decode(&encoded).is_ok(),
+                "word '{}' rejected by the lenient decode",
+                word
+            );
+
+            match AuthoringMetaV2::abi_decode_validate(&encoded) {
+                Err(AuthoringMetaV2Error::ValidationErrors(_)) => {}
+                other => panic!(
+                    "word '{}': expected ValidationErrors, got {:?}",
+                    word, other
+                ),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_abi_decode_validate_accepts_the_full_symbol_grammar() {
+        for word in ["a", "a-a", "a0", "abc-def-0"] {
+            let encoded = AuthoringMetasV2Sol::abi_encode(&vec![symbol_sol(word, "")]);
+            assert!(
+                AuthoringMetaV2::abi_decode_validate(&encoded).is_ok(),
+                "word '{}' rejected",
+                word
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_abi_decode_validate_rejects_non_printable_description() {
+        for description in ["♥", "\u{7f}"] {
+            let encoded = AuthoringMetasV2Sol::abi_encode(&vec![symbol_sol("word", description)]);
+
+            assert!(AuthoringMetaV2::abi_decode(&encoded).is_ok());
+
+            match AuthoringMetaV2::abi_decode_validate(&encoded) {
+                Err(AuthoringMetaV2Error::ValidationErrors(_)) => {}
+                other => panic!(
+                    "description '{}': expected ValidationErrors, got {:?}",
+                    description, other
+                ),
+            }
+        }
+    }
+
+    /// A word set is rejected per index, so the caller can name the bad entry.
+    #[tokio::test]
+    async fn test_abi_decode_validate_reports_the_offending_index() {
+        let encoded = AuthoringMetasV2Sol::abi_encode(&vec![
+            symbol_sol("good", "fine"),
+            symbol_sol("BAD", "fine"),
+        ]);
+
+        let error = match AuthoringMetaV2::abi_decode_validate(&encoded) {
+            Err(AuthoringMetaV2Error::ValidationErrors(errors)) => errors,
+            other => panic!("expected ValidationErrors, got {:?}", other),
+        };
+
+        match error.errors().get("words") {
+            Some(ValidationErrorsKind::List(by_index)) => {
+                assert!(!by_index.contains_key(&0));
+                assert!(by_index[&1].errors().contains_key("word"));
+            }
+            other => panic!("expected a per-index list, got {:?}", other),
+        }
+    }
+
     #[tokio::test]
     async fn test_fetch_for_contract_empty_rpcs_is_no_rpcs_error() {
         let result = AuthoringMetaV2::fetch_for_contract(
@@ -939,6 +1081,27 @@ mod tests {
         assert_eq!(result.words[0].word, "test");
         assert_eq!(result.words[1].description, "description 2");
     }
+
+    /// The read path from an item applies the grammar: a word outside it is
+    /// a broken authoring claim, not words with a typo in them.
+    #[tokio::test]
+    async fn test_try_from_rejects_a_word_outside_the_grammar() {
+        let encoded = AuthoringMetasV2Sol::abi_encode(&vec![symbol_sol("BAD", "fine")]);
+        assert!(AuthoringMetaV2::abi_decode(&encoded).is_ok());
+        let item = RainMetaDocumentV1Item {
+            magic: KnownMagic::AuthoringMetaV2,
+            payload: ByteBuf::from(encoded),
+            content_encoding: ContentEncoding::None,
+            content_language: ContentLanguage::None,
+            schema: None,
+            content_type: ContentType::None,
+        };
+        match AuthoringMetaV2::try_from(item) {
+            Err(AuthoringMetaV2Error::ValidationErrors(_)) => {}
+            other => panic!("expected ValidationErrors, got {:?}", other),
+        }
+    }
+
     #[tokio::test]
     async fn test_fetch_for_contract_invalid_cbor_is_meta_error() {
         let hash = meta_hex_hash("0x01");

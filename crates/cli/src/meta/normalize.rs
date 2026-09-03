@@ -21,8 +21,9 @@ impl KnownMeta {
             }
             KnownMeta::AuthoringMetaV2 => {
                 // v2 is abi encoded onchain and this crate has no encoder for
-                // it, so validation is a decode gate over the input as is
-                AuthoringMetaV2::abi_decode(data)
+                // it, so validation is a decode gate over the input as is,
+                // carrying the rain word grammar
+                AuthoringMetaV2::abi_decode_validate(data)
                     .map_err(|e| Error::InvalidInput(e.to_string()))?;
                 data.to_vec()
             }
@@ -174,6 +175,19 @@ mod tests {
         word[0] = 0xc3;
         word[1] = 0x28;
         let abi = authoring_meta_v2_abi(word, "bad word bytes");
+        assert!(matches!(
+            KnownMeta::AuthoringMetaV2.normalize(&abi),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+
+    /// The decode gate carries the rain word grammar: a word the grammar
+    /// rejects does not reach the board through this crate.
+    #[test]
+    fn test_normalize_authoring_meta_v2_rejects_a_word_outside_the_grammar() {
+        let mut word = [0u8; 32];
+        word[..3].copy_from_slice(b"BAD");
+        let abi = authoring_meta_v2_abi(word, "fine");
         assert!(matches!(
             KnownMeta::AuthoringMetaV2.normalize(&abi),
             Err(Error::InvalidInput(_))
