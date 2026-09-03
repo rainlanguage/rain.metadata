@@ -110,42 +110,6 @@ fn schema_show_refuses_op_v1() {
     assert!(!out.status.success());
 }
 
-/// `schema-check` reports the number of verified entities and the source
-/// label on success.
-#[test]
-fn schema_check_prints_verified_entity_count() {
-    let dir = tempfile::tempdir().unwrap();
-    let source = dir.path().join("schema.graphql");
-    std::fs::write(
-        &source,
-        "type MetaBoard @entity { id: Bytes! }\ntype MetaV1 @entity { id: ID! }\n",
-    )
-    .unwrap();
-    let consumer = dir.path().join("consumer.graphql");
-    std::fs::write(
-        &consumer,
-        "type MetaBoard { id: Bytes! }\ntype MetaV1 { id: ID! }\n",
-    )
-    .unwrap();
-
-    let out = bin()
-        .args([
-            "schema-check",
-            "--source",
-            source.to_str().unwrap(),
-            "--consumer",
-            consumer.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(
-        stdout,
-        "schema check ok: 2 entities verified against source\n"
-    );
-}
-
 /// `generate source` reads the dotrain content from stdin when no input
 /// path is given, and writes the emit data JSON to stdout when no output
 /// path is given.

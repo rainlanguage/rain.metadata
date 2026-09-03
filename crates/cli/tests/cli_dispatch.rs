@@ -87,33 +87,6 @@ fn test_dispatch_validate() {
     assert!(!out.status.success());
 }
 
-/// `schema-check` routes to `schema_check::schema_check`: an unreadable
-/// consumer snapshot is a non-zero exit before any network access. A no-op
-/// arm would exit 0.
-#[test]
-fn test_dispatch_schema_check() {
-    let dir = tempfile::tempdir().unwrap();
-    let missing = dir.path().join("does-not-exist.graphql");
-    let out = run(&["schema-check", "--consumer", missing.to_str().unwrap()]);
-    assert!(!out.status.success());
-
-    // Happy path: identical source and consumer entity SDL verifies.
-    let sdl = "type Foo @entity {\n  id: Bytes!\n}\n";
-    let source = dir.path().join("source.graphql");
-    let consumer = dir.path().join("consumer.graphql");
-    std::fs::write(&source, sdl).unwrap();
-    std::fs::write(&consumer, sdl).unwrap();
-    let out = run(&[
-        "schema-check",
-        "--source",
-        source.to_str().unwrap(),
-        "--consumer",
-        consumer.to_str().unwrap(),
-    ]);
-    assert!(out.status.success());
-    assert!(stdout_utf8(&out).contains("schema check ok: 1 entities"));
-}
-
 /// `magic ls` routes to `magic::dispatch` and prints every `KnownMagic` as
 /// `0x<hex> <kebab-name>`, pinning the rain meta document magic to its
 /// published literal.

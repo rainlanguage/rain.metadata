@@ -14,7 +14,6 @@ cli = [
   "dep:tracing-subscriber",
   "dep:clap",
   "dep:tokio",
-  "dep:graphql-parser",
 ]
 json-schema = ["dep:schemars"]
 tokio-full = ["cli", "tokio/full"]
@@ -36,7 +35,6 @@ validator = { version = "0.16", features = ["derive"] }
 reqwest = { version = "0.11.22", features = ["json"] }
 alloy = { version = "1.0.9", features = ["rand", "json", "json-abi"] }
 graphql_client = "0.13.0"
-graphql-parser = { version = "0.4", optional = true }
 rain-metaboard-subgraph = { path = "../metaboard", version = "0.1.52" }
 rain-metadata-bindings = { path = "../bindings", version = "0.1.54" }
 thiserror = "1.0.56"

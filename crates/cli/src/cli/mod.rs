@@ -8,7 +8,6 @@ pub mod solc;
 pub mod build;
 pub mod magic;
 pub mod schema;
-pub mod schema_check;
 pub mod output;
 pub mod validate;
 pub mod generate;
@@ -27,7 +26,6 @@ pub enum Meta {
     #[command(subcommand)]
     Schema(schema::Schema),
     Validate(validate::Validate),
-    SchemaCheck(schema_check::SchemaCheck),
     #[command(subcommand)]
     Magic(magic::Magic),
     Build(build::Build),
@@ -43,7 +41,6 @@ pub async fn dispatch(meta: Meta) -> anyhow::Result<()> {
         Meta::Magic(magic) => magic::dispatch(magic),
         Meta::Schema(schema) => schema::dispatch(schema),
         Meta::Validate(validate) => validate::validate(validate),
-        Meta::SchemaCheck(c) => schema_check::schema_check(c).await,
         Meta::Generate(generate) => generate::generate(generate),
     }
 }
