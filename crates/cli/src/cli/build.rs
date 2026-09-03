@@ -161,6 +161,9 @@ mod tests {
     };
     use super::BuildItem;
     use super::build_bytes;
+    use crate::meta::types::authoring::v1::AuthoringMeta;
+
+    const AUTHORING_META_V1_JSON: &str = r#"[{"word":"stack","description":"Copies an existing value from the stack.","operandParserOffset":16}]"#;
 
     /// Test that the magic number prefix is correct for all known magic numbers
     /// in isolation from all build items.
@@ -173,14 +176,14 @@ mod tests {
         Ok(())
     }
 
-    /// We can build a single document item from a single build item.
-    /// Empty ABI documents are used to avoid testing the normalisation and
-    /// encoding process.
+    /// We can build a single document item from a single build item. A
+    /// dotrain-v1 payload passes through normalisation untouched, so this
+    /// tests the item construction and nothing else.
     #[test]
     fn test_into_meta_document() -> anyhow::Result<()> {
         let build_item = BuildItem {
             data: "[]".as_bytes().to_vec(),
-            magic: KnownMagic::SolidityAbiV2,
+            magic: KnownMagic::DotrainV1,
             content_type: ContentType::Json,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::En,
@@ -189,7 +192,7 @@ mod tests {
         let meta_document = RainMetaDocumentV1Item::try_from(&build_item)?;
         let expected_meta_document = RainMetaDocumentV1Item {
             payload: serde_bytes::ByteBuf::from("[]".as_bytes().to_vec()),
-            magic: KnownMagic::SolidityAbiV2,
+            magic: KnownMagic::DotrainV1,
             content_type: ContentType::Json,
             content_encoding: ContentEncoding::None,
             content_language: ContentLanguage::En,
@@ -199,13 +202,14 @@ mod tests {
         Ok(())
     }
 
-    /// The final CBOR bytes are as expected for a single build item. An empty
-    /// ABI is used to avoid testing the normalisation and encoding process.
+    /// The final CBOR bytes are as expected for a single json content type
+    /// item. A dotrain-v1 payload passes through normalisation untouched, so
+    /// the asserted bytes are all envelope.
     #[test]
     fn test_empty_item() -> anyhow::Result<()> {
         let build_item = BuildItem {
             data: "[]".as_bytes().to_vec(),
-            magic: KnownMagic::SolidityAbiV2,
+            magic: KnownMagic::DotrainV1,
             content_type: ContentType::Json,
             content_encoding: ContentEncoding::Identity,
             content_language: ContentLanguage::En,
@@ -232,7 +236,7 @@ mod tests {
         // major type 0 (unsigned integer) value 27
         assert_eq!(bytes[14], 0b000_11011);
         // magic number
-        assert_eq!(&bytes[15..23], KnownMagic::SolidityAbiV2.to_prefix_bytes());
+        assert_eq!(&bytes[15..23], KnownMagic::DotrainV1.to_prefix_bytes());
         // key 2
         assert_eq!(bytes[23], 0x02);
         // text string application/json length 16
@@ -321,18 +325,21 @@ mod tests {
     /// applies the content encoding.
     #[test]
     fn test_item_normalize_then_encode() -> anyhow::Result<()> {
-        // "[ ]" normalizes to "[]" for a solidity ABI, then deflates.
+        // Json authoring meta normalizes to its abi encoding, then deflates.
         let build_item = BuildItem {
-            data: "[ ]".as_bytes().to_vec(),
-            magic: KnownMagic::SolidityAbiV2,
+            data: AUTHORING_META_V1_JSON.as_bytes().to_vec(),
+            magic: KnownMagic::AuthoringMetaV1,
             content_type: ContentType::Json,
             content_encoding: ContentEncoding::Deflate,
             content_language: ContentLanguage::En,
         };
         let meta_document = RainMetaDocumentV1Item::try_from(&build_item)?;
+        let abi =
+            serde_json::from_str::<AuthoringMeta>(AUTHORING_META_V1_JSON)?.abi_encode_validate()?;
+        assert_ne!(abi, build_item.data);
         assert_eq!(
             meta_document.payload.as_ref(),
-            ContentEncoding::Deflate.encode("[]".as_bytes())
+            ContentEncoding::Deflate.encode(&abi)
         );
 
         // Un-normalizable data is rejected.
@@ -357,9 +364,9 @@ mod tests {
             "-i",
             "does-not-exist.json",
             "-m",
-            "solidity-abi-v2",
+            "authoring-meta-v1",
             "-m",
-            "solidity-abi-v2",
+            "authoring-meta-v1",
         ]);
         assert_eq!(
             build(b).unwrap_err().to_string(),
@@ -371,7 +378,7 @@ mod tests {
             "-i",
             "does-not-exist.json",
             "-m",
-            "solidity-abi-v2",
+            "authoring-meta-v1",
             "-t",
             "json",
             "-t",
@@ -387,7 +394,7 @@ mod tests {
             "-i",
             "does-not-exist.json",
             "-m",
-            "solidity-abi-v2",
+            "authoring-meta-v1",
             "-t",
             "json",
             "-e",
@@ -405,7 +412,7 @@ mod tests {
             "-i",
             "does-not-exist.json",
             "-m",
-            "solidity-abi-v2",
+            "authoring-meta-v1",
             "-t",
             "json",
             "-e",
@@ -427,14 +434,14 @@ mod tests {
     #[test]
     fn test_build_reads_files_and_encodes_output() -> anyhow::Result<()> {
         let mut input = tempfile::NamedTempFile::new()?;
-        input.write_all("[ ]".as_bytes())?;
+        input.write_all(AUTHORING_META_V1_JSON.as_bytes())?;
         let output = tempfile::NamedTempFile::new()?;
 
         let expected = build_bytes(
             KnownMagic::RainMetaDocumentV1,
             vec![BuildItem {
-                data: "[ ]".as_bytes().to_vec(),
-                magic: KnownMagic::SolidityAbiV2,
+                data: AUTHORING_META_V1_JSON.as_bytes().to_vec(),
+                magic: KnownMagic::AuthoringMetaV1,
                 content_type: ContentType::Json,
                 content_encoding: ContentEncoding::Identity,
                 content_language: ContentLanguage::En,
@@ -449,7 +456,7 @@ mod tests {
             "-i",
             &input_path,
             "-m",
-            "solidity-abi-v2",
+            "authoring-meta-v1",
             "-t",
             "json",
             "-e",
@@ -467,7 +474,7 @@ mod tests {
             "-i",
             &input_path,
             "-m",
-            "solidity-abi-v2",
+            "authoring-meta-v1",
             "-t",
             "json",
             "-e",

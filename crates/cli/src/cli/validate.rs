@@ -30,9 +30,12 @@ mod tests {
     #[test]
     fn test_validate_ok_for_valid_meta() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(b"[]").unwrap();
+        file.write_all(
+            br#"[{"word":"stack","description":"Copies an existing value from the stack.","operandParserOffset":16}]"#,
+        )
+        .unwrap();
         let v = Validate {
-            meta: KnownMeta::SolidityAbiV2,
+            meta: KnownMeta::AuthoringMetaV1,
             input_path: file.path().to_path_buf(),
         };
         assert!(validate(v).is_ok());
@@ -43,9 +46,9 @@ mod tests {
     #[test]
     fn test_validate_err_for_invalid_meta() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(b"{\"not\": \"an abi\"}").unwrap();
+        file.write_all(b"{\"not\": \"an authoring meta\"}").unwrap();
         let v = Validate {
-            meta: KnownMeta::SolidityAbiV2,
+            meta: KnownMeta::AuthoringMetaV1,
             input_path: file.path().to_path_buf(),
         };
         assert!(validate(v).is_err());

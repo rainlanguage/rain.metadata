@@ -62,11 +62,18 @@ mod tests {
         assert!(!s.contains('\n'));
     }
 
-    /// OpV1 is a known meta with no schema here, so show refuses it rather
-    /// than producing one.
+    /// OpV1 (#304), SolidityAbiV2 and InterpreterCallerMetaV1 (#317) are
+    /// known metas with no schema here, so show refuses them rather than
+    /// producing one.
     #[test]
-    fn test_show_refuses_op_v1() {
-        assert!(show_to_string(KnownMeta::OpV1, false).is_err());
+    fn test_show_refuses_unmodelled_metas() {
+        for meta in [
+            KnownMeta::OpV1,
+            KnownMeta::SolidityAbiV2,
+            KnownMeta::InterpreterCallerMetaV1,
+        ] {
+            assert!(show_to_string(meta, false).is_err(), "{:?}", meta);
+        }
     }
 
     /// The pretty flag pretty-prints the same schema.
@@ -76,24 +83,6 @@ mod tests {
         assert!(s.starts_with("{\n"));
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert!(v["title"].is_string());
-    }
-
-    /// All three supported arms return the schema of their own meta type.
-    #[test]
-    fn test_show_supported_schemas_are_distinct() {
-        let authoring = show_to_string(KnownMeta::AuthoringMetaV1, false).unwrap();
-        assert!(authoring.contains("AuthoringMeta"));
-        let solidity = show_to_string(KnownMeta::SolidityAbiV2, false).unwrap();
-        assert!(solidity.contains("SolidityAbi"));
-        let caller = show_to_string(KnownMeta::InterpreterCallerMetaV1, false).unwrap();
-        assert!(caller.contains("InterpreterCallerMeta"));
-        for pair in [
-            (&authoring, &solidity),
-            (&authoring, &caller),
-            (&solidity, &caller),
-        ] {
-            assert_ne!(pair.0, pair.1);
-        }
     }
 
     /// Metas without a JSON schema error with the exact unsupported

@@ -42,9 +42,14 @@ pub enum KnownMeta {
     OpV1,
     DotrainV1,
     RainlangV1,
+    /// Solidity abi v2. Still a known meta, no longer modelled here: the org
+    /// has no producer or consumer of it and the live metaboard holds no
+    /// item carrying it (#317).
     SolidityAbiV2,
     AuthoringMetaV1,
     AuthoringMetaV2,
+    /// Interpreter caller meta v1. Still a known meta, no longer modelled
+    /// here, for the same reason as SolidityAbiV2 (#317).
     InterpreterCallerMetaV1,
     ExpressionDeployerV2BytecodeV1,
     RainlangSourceV1,
@@ -2294,14 +2299,14 @@ mod tests {
     fn test_known_meta_strum_parse_display() {
         use std::str::FromStr;
         assert_eq!(
-            KnownMeta::from_str("solidity-abi-v2").unwrap(),
-            KnownMeta::SolidityAbiV2
+            KnownMeta::from_str("authoring-meta-v1").unwrap(),
+            KnownMeta::AuthoringMetaV1
         );
         assert_eq!(
-            KnownMeta::from_str("interpreter-caller-meta-v1").unwrap(),
-            KnownMeta::InterpreterCallerMetaV1
+            KnownMeta::from_str("authoring-meta-v2").unwrap(),
+            KnownMeta::AuthoringMetaV2
         );
-        assert_eq!(KnownMeta::SolidityAbiV2.to_string(), "solidity-abi-v2");
+        assert_eq!(KnownMeta::AuthoringMetaV1.to_string(), "authoring-meta-v1");
     }
 
     /// search() lowercases the hash before building the query variables.
