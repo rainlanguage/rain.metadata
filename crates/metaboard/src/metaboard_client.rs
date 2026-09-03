@@ -2,7 +2,7 @@ use crate::cynic_client::{CynicClient, CynicClientError};
 use crate::types::metas::*;
 use alloy::primitives::{
     hex::{decode, encode, FromHexError},
-    Address,
+    keccak256, Address,
 };
 use core::str::FromStr;
 use reqwest::Url;
@@ -24,6 +24,21 @@ pub enum MetaboardSubgraphClientError {
     },
     #[error("Subgraph query returned no data for metahash {metahash}")]
     EmptyByHash { metahash: String },
+    /// A row came back under the hash whose bytes do not hash to it. That is
+    /// not absence - the responder answered - it is the responder serving
+    /// bytes that are not the content asked for, which a by-hash lookup must
+    /// never hand on. The whole answer is refused, not just the row: a
+    /// responder that indexes wrong bytes under a hash is not trusted for the
+    /// rest of what it indexed under it. Distinct from [Self::EmptyByHash] so
+    /// the lie is visible.
+    #[error(
+        "Subgraph returned {rows} metas for metahash {metahash}; row {row} does not hash to it"
+    )]
+    UnverifiedByHash {
+        metahash: String,
+        row: usize,
+        rows: usize,
+    },
     #[error("Subgraph query returned no data for subject {subject}")]
     EmptyBySubject { subject: String },
     #[error("Error decoding metahash {metahash}: {source}")]
@@ -65,6 +80,7 @@ impl MetaboardSubgraphClient {
         &self,
         metahash: &[u8; 32],
     ) -> Result<Vec<Vec<u8>>, MetaboardSubgraphClientError> {
+        let requested = metahash;
         let hex_string = encode(metahash);
         let metahash = format!("0x{}", hex_string);
 
@@ -82,15 +98,32 @@ impl MetaboardSubgraphClient {
             return Err(MetaboardSubgraphClientError::EmptyByHash { metahash });
         }
 
-        // decode all the metas
-        let mut meta_bytes = Vec::new();
-        for meta in data.meta_v1_s {
-            meta_bytes.push(decode(&meta.meta.0).map_err(|e| {
-                MetaboardSubgraphClientError::FromHexError {
+        // Decode every row and require each to hash to what was asked for.
+        // The hash is the caller's, not a field the responder derived from
+        // the same bytes it is serving, so the comparison is not
+        // self-referential: a row that fails it is the subgraph serving bytes
+        // that are not this content, whatever it labelled them. One such row
+        // refuses the whole answer rather than being dropped: the rows that
+        // do verify are the requested content, but they arrived from a
+        // responder shown to index wrong bytes under this hash, and mining
+        // them would hide that. cas.md puts integrity exactly here, before
+        // anything is handed on under the hash. rainlanguage/rain.metadata#301.
+        let rows = data.meta_v1_s.len();
+        let mut meta_bytes = Vec::with_capacity(rows);
+        for (row, meta) in data.meta_v1_s.into_iter().enumerate() {
+            let bytes =
+                decode(&meta.meta.0).map_err(|e| MetaboardSubgraphClientError::FromHexError {
                     metahash: metahash.clone(),
                     source: e,
-                }
-            })?);
+                })?;
+            if keccak256(&bytes).0 != *requested {
+                return Err(MetaboardSubgraphClientError::UnverifiedByHash {
+                    metahash,
+                    row,
+                    rows,
+                });
+            }
+            meta_bytes.push(bytes);
         }
 
         Ok(meta_bytes)
@@ -172,64 +205,123 @@ mod tests {
     //
     // By hash
     //
+    /// A row in the shape the subgraph serves, carrying `meta`. The other
+    /// fields are filler the client never reads.
+    fn row(meta_hex: &str) -> serde_json::Value {
+        serde_json::json!({
+            "meta": meta_hex,
+            "metaHash": "0x00",
+            "sender": "0x00",
+            "id": "0x00",
+            "metaBoard": { "id": "0x00", "metas": [], "address": "0x00" },
+            "subject": "0x00",
+        })
+    }
+
     #[tokio::test]
     async fn test_get_metabytes_by_hash_success() {
         let server = MockServer::start_async().await;
         let url = Url::parse(&server.url("/")).unwrap();
 
-        let hash = [1u8; 32];
+        // the rows have to hash to what is asked for - the fixture used to
+        // serve arbitrary bytes under an arbitrary hash, which no by-hash
+        // lookup can honestly return. two rows of the same content is what a
+        // re-emission looks like on the board.
+        let content = vec![1u8, 2, 3];
+        let hash = keccak256(&content).0;
+        let meta_hex = format!("0x{}", encode(&content));
 
-        // Mock a successful response. body_contains pins the wire shape: the
-        // hash must be sent 0x-prefixed and the query must filter on the
-        // metaHash field (rendering verified against cynic's output).
+        // body_contains pins the wire shape: the hash must be sent 0x-prefixed
+        // and the query must filter on the metaHash field (rendering verified
+        // against cynic's output).
         server.mock(|when, then| {
             when.method(POST)
                 .path("/")
                 .body_contains(format!("0x{}", encode(hash)))
                 .body_contains("where: {metaHash: $metahash}");
-            then.status(200).json_body_obj(&{
-                serde_json::json!({
-                    "data": {
-                        "metaV1S": [
-                            {
-                                "meta": "0x01",
-                                "metaHash": "0x00",
-                                "sender": "0x00",
-                                "id": "0x00",
-                                "metaBoard": {
-                                    "id": "0x00",
-                                    "metas": [],
-                                    "address": "0x00",
-                                },
-                                "subject": "0x00",
-                            },
-                            {
-                                "meta": "0x02",
-                                "metaHash": "0x00",
-                                "sender": "0x00",
-                                "id": "0x00",
-                                "metaBoard": {
-                                    "id": "0x00",
-                                    "metas": [],
-                                    "address": "0x00",
-                                },
-                                "subject": "0x00",
-                            }
-                        ]
-                    }
-                })
-            });
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [row(&meta_hex), row(&meta_hex)] }
+            }));
         });
 
         let client = MetaboardSubgraphClient::new(url);
 
-        let result = client.get_metabytes_by_hash(&hash).await;
-
-        assert!(result.is_ok());
-        let result = result.unwrap();
+        let result = client.get_metabytes_by_hash(&hash).await.unwrap();
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0], vec![1]);
-        assert_eq!(result[1], vec![2]);
+        assert_eq!(result[0], content);
+        assert_eq!(result[1], content);
+    }
+
+    /// A row whose bytes do not hash to the requested value is not this
+    /// content, whatever the subgraph labelled it, and refuses the whole
+    /// answer: the row that does verify is not returned around it, because
+    /// the responder has been shown to index wrong bytes under this hash.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_errors_when_any_row_does_not_hash_to_it() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let content = vec![1u8, 2, 3];
+        let hash = keccak256(&content).0;
+        let meta_hex = format!("0x{}", encode(&content));
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&serde_json::json!({
+                // the verified row first, so a client that dropped the lie
+                // and kept going would return it
+                "data": { "metaV1S": [row(&meta_hex), row("0x0badbeef")] }
+            }));
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+
+        match client.get_metabytes_by_hash(&hash).await.unwrap_err() {
+            MetaboardSubgraphClientError::UnverifiedByHash {
+                metahash,
+                row,
+                rows,
+            } => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+                assert_eq!(row, 1);
+                assert_eq!(rows, 2);
+            }
+            other => panic!("expected UnverifiedByHash, got {:?}", other),
+        }
+    }
+
+    /// Rows came back and none of them verify: that is the subgraph
+    /// answering with something other than the content asked for, reported
+    /// as its own error rather than as absence, naming the first row that
+    /// failed.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_no_verified_row_is_unverified_error() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let hash = [1u8; 32];
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [row("0x01"), row("0x02")] }
+            }));
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+
+        match client.get_metabytes_by_hash(&hash).await.unwrap_err() {
+            MetaboardSubgraphClientError::UnverifiedByHash {
+                metahash,
+                row,
+                rows,
+            } => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+                assert_eq!(row, 0);
+                assert_eq!(rows, 2);
+            }
+            other => panic!("expected UnverifiedByHash, got {:?}", other),
+        }
     }
 
     #[tokio::test]
@@ -476,13 +568,10 @@ mod tests {
         }
     }
 
-    /// A response with null data and no errors never reaches the
-    /// `data.ok_or(Empty)` arm: cynic's `GraphQlResponse` deserializer
-    /// rejects any body without data or errors ("Either data or errors must
-    /// be present in a GraphQL response"), so it surfaces as a Request
-    /// decode error. This pins the deserializer boundary and documents that
-    /// `CynicClientError::Empty` is unreachable from `query` while that
-    /// deserializer holds (see the audit issue on the dead arm).
+    /// A response with null data and no errors key at all is rejected by
+    /// cynic's `GraphQlResponse` deserializer ("Either data or errors must be
+    /// present in a GraphQL response"), so it surfaces as a Request decode
+    /// error rather than as Empty.
     #[tokio::test]
     async fn test_get_metabytes_by_hash_null_data_is_request_decode_error() {
         let server = MockServer::start_async().await;
@@ -509,6 +598,60 @@ mod tests {
             }
             other => panic!("unexpected result: {:?}", other),
         }
+    }
+
+    /// Null data alongside an empty errors array passes the deserializer and
+    /// carries no error to report, so it surfaces as Empty.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_null_data_empty_errors_is_empty() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let hash = [10u8; 32];
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({ "data": null, "errors": [] }));
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_hash(&hash).await;
+
+        match result {
+            Err(MetaboardSubgraphClientError::RequestErrorByHash {
+                metahash,
+                source: CynicClientError::Empty,
+            }) => {
+                assert_eq!(metahash, format!("0x{}", encode(hash)));
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+
+    /// An empty errors array beside real data reports no error: the data is
+    /// returned rather than a GraphqlError carrying nothing.
+    #[tokio::test]
+    async fn test_get_metabytes_by_hash_empty_errors_returns_data() {
+        let server = MockServer::start_async().await;
+        let url = Url::parse(&server.url("/")).unwrap();
+
+        let content = vec![2u8];
+        let hash = keccak256(&content).0;
+        let meta_hex = format!("0x{}", encode(&content));
+
+        server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "data": { "metaV1S": [row(&meta_hex)] },
+                "errors": []
+            }));
+        });
+
+        let client = MetaboardSubgraphClient::new(url);
+        let result = client.get_metabytes_by_hash(&hash).await.unwrap();
+
+        assert_eq!(result, vec![content]);
     }
 
     /// A transport failure surfaces as CynicClientError::Request, not as

@@ -14,10 +14,11 @@ cbor_metadata = false
 # `script/CopyArtifacts.sol` and its freshness test shell out to `jq` via
 # `vm.ffi` to extract the deterministic subset of the forge artifact,
 # `test/subgraph/SubgraphManifest.t.sol` shells out to `jq` for that artifact's
-# event signatures and to `yq` to read `subgraph/subgraph.yaml` as parsed YAML
-# rather than as text, and `test/subgraph/SubgraphMatchstick.t.sol` shells out
-# to `git` for what the index tracks and to `yq` for the compose file. All
-# three are on `PATH` in the rainix sol shell.
+# event signatures and for `subgraph/schema.graphql`'s entity types and to `yq`
+# to read `subgraph/subgraph.yaml` as parsed YAML rather than as text, and
+# `test/subgraph/SubgraphMatchstick.t.sol` shells out to `git` for what the
+# index tracks and to `yq` for the compose file. All three are on `PATH` in the
+# rainix sol shell.
 ffi = true
 
 libs = ["dependencies"]
@@ -25,8 +26,8 @@ libs = ["dependencies"]
 # The filesystem access in this repo. `script/CopyArtifacts.sol` reads forge
 # build output and writes the stable subset for the rust bindings to consume;
 # `test/script/CopyArtifacts.t.sol` reads both back to assert the committed copy
-# is fresh. The `test/subgraph/` tests need no entry: they read through `yq` and
-# `git` over `vm.ffi`, which this list does not gate.
+# is fresh. The `test/subgraph/` tests need no entry: they read through `jq`,
+# `yq` and `git` over `vm.ffi`, which this list does not gate.
 fs_permissions = [
   { access = "read", path = "out/" },
   { access = "read", path = "test/fixtures/" },
