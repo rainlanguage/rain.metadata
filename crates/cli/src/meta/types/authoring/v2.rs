@@ -602,7 +602,16 @@ mod tests {
             schema: None,
             content_type: ContentType::None,
         };
-        format!("0x{}", encode(item.cbor_encode().unwrap()))
+        format!(
+            "0x{}",
+            encode(
+                RainMetaDocumentV1Item::cbor_encode_seq(
+                    &vec![item],
+                    KnownMagic::RainMetaDocumentV1
+                )
+                .unwrap()
+            )
+        )
     }
 
     /// Mocks a metaboard answering `metahash` with the three word authoring meta.

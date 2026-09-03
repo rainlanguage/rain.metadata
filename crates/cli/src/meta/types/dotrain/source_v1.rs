@@ -288,7 +288,11 @@ mod tests {
         let original_code = "/* dotrain source code */\nlet x = 42;".to_string();
         let original_source = DotrainSourceV1(original_code.clone());
         let document_item: RainMetaDocumentV1Item = original_source.into();
-        let cbor_bytes = document_item.cbor_encode().unwrap();
+        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![document_item.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
 
         // Decode from CBOR
         let decoded_items = RainMetaDocumentV1Item::cbor_decode(&cbor_bytes).unwrap();
@@ -329,7 +333,11 @@ mod tests {
         let dotrain_code = "/* test dotrain code */";
         let dotrain_source = DotrainSourceV1(dotrain_code.to_string());
         let document: RainMetaDocumentV1Item = dotrain_source.into();
-        let cbor_bytes = document.cbor_encode().unwrap();
+        let cbor_bytes = RainMetaDocumentV1Item::cbor_encode_seq(
+            &vec![document.clone()],
+            KnownMagic::RainMetaDocumentV1,
+        )
+        .unwrap();
         let cbor_hex = hex::encode(&cbor_bytes);
 
         // Mock the GraphQL response
