@@ -41,6 +41,10 @@ contract SubgraphManifestTest is Test {
     /// The subgraph manifest, as a template: no deployment fact in it.
     string constant SUBGRAPH_YAML = "subgraph/subgraph.yaml";
 
+    /// The schema the mapping stores into, and the other side of the
+    /// `mapping.entities` check.
+    string constant SCHEMA_GRAPHQL = "subgraph/schema.graphql";
+
     /// The interface whose ABI the manifest decodes with. Named rather than
     /// read out of the manifest, so that the manifest is compared to an
     /// expectation instead of to itself.
@@ -275,6 +279,107 @@ contract SubgraphManifestTest is Test {
                 " for graph codegen to read"
             )
         );
+    }
+
+    /// The schema's entity declarations, as JSON: `types` are the entity type
+    /// names, `declarations` is how many lines declare one.
+    ///
+    /// A LINE read, which every manifest check here is forbidden from being,
+    /// because there is no schema parser to reach for: this lane deliberately
+    /// has no node, and `yq` does not speak GraphQL. `declarations` is what
+    /// makes that safe. It counts every non-comment line carrying the entity
+    /// directive at all, and `schemaEntityTypes` holds `types` to that count,
+    /// so a schema written in a shape this cannot read — the directive on a
+    /// line of its own, a description carrying the word — fails loudly rather
+    /// than silently reporting fewer entities than the file declares. Comment
+    /// lines are dropped first, since a commented-out declaration is not one,
+    /// which is the same distinction reading the manifest as YAML gets for
+    /// free.
+    /// @return The `{declarations, types}` object as JSON.
+    function schemaEntityJson() internal returns (string memory) {
+        string[] memory cmd = new string[](4);
+        cmd[0] = "jq";
+        cmd[1] = "-Rn";
+        cmd[2] = "[inputs | select(test(\"^[[:space:]]*#\") | not) | select(test(\"@entity\"))]"
+            " | {declarations: length, types: [.[]"
+            " | scan(\"^type[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]+@entity\") | .[0]]}";
+        cmd[3] = SCHEMA_GRAPHQL;
+        return string(vm.ffi(cmd));
+    }
+
+    /// Every entity type the schema declares.
+    /// @return The entity type names.
+    function schemaEntityTypes() internal returns (string[] memory) {
+        string memory json = schemaEntityJson();
+        string[] memory types = vm.parseJsonStringArray(json, ".types");
+        assertEq(
+            types.length,
+            vm.parseJsonUint(json, ".declarations"),
+            "schema.graphql declares @entity on a line that is not a type declaration this can read"
+        );
+        return types;
+    }
+
+    /// The manifest MUST declare the entities the mapping stores.
+    ///
+    /// `mapping.entities` is the manifest's claim about which schema entities
+    /// the handler writes. Nothing downstream contradicts a stale one —
+    /// graph-node does not enforce the list at runtime and `graph codegen` does
+    /// not read it — which is how `Transaction`, stored by
+    /// `createTransactionEntity` on every event, sat unlisted
+    /// (rainlanguage/rain.metadata#151).
+    ///
+    /// The schema is the other side, rather than a list restated here, because
+    /// it is a separate file that codegen does read, and because
+    /// `dataSources` is pinned to one entry: there is exactly one mapping for
+    /// its entities to belong to, so an entity the schema declares is one that
+    /// mapping stores or dead schema. Both directions are asserted and neither
+    /// implies the other: a schema entity the manifest omits is #151 again, and
+    /// a manifest entity the schema does not declare is a name `graph build`
+    /// rejects.
+    function testManifestDeclaresTheEntitiesTheMappingStores() external {
+        string memory json = manifestJson();
+        string memory entitiesPath = string.concat(THE_DATA_SOURCE, ".mapping.entities");
+        assertTrue(vm.keyExistsJson(json, entitiesPath), "subgraph.yaml declares no mapping.entities");
+
+        string[] memory declared = vm.parseJsonStringArray(json, entitiesPath);
+        string[] memory schema = schemaEntityTypes();
+
+        for (uint256 i = 0; i < schema.length; i++) {
+            assertTrue(
+                _holds(declared, schema[i]),
+                string.concat(
+                    "subgraph.yaml's mapping.entities omits ", schema[i], ", which schema.graphql declares @entity"
+                )
+            );
+        }
+        for (uint256 i = 0; i < declared.length; i++) {
+            assertTrue(
+                _holds(schema, declared[i]),
+                string.concat(
+                    "subgraph.yaml's mapping.entities declares ",
+                    declared[i],
+                    ", which schema.graphql declares no @entity type for"
+                )
+            );
+        }
+        assertEq(
+            declared.length,
+            schema.length,
+            "subgraph.yaml's mapping.entities and schema.graphql name the same entities, one of them twice"
+        );
+    }
+
+    /// @param names The names to search.
+    /// @param name The name to find.
+    /// @return Whether the list holds the name.
+    function _holds(string[] memory names, string memory name) internal pure returns (bool) {
+        for (uint256 i = 0; i < names.length; i++) {
+            if (keccak256(bytes(names[i])) == keccak256(bytes(name))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// Every node in the document keyed `network` that is not the placeholder,
