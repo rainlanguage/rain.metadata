@@ -113,7 +113,9 @@ impl TryFrom<u64> for KnownMagic {
             v if v == KnownMagic::OaTokenCredentialLinks as u64 => {
                 Ok(KnownMagic::OaTokenCredentialLinks)
             }
-            v if v == KnownMagic::ConfigRegistryNameV1 as u64 => Ok(KnownMagic::ConfigRegistryNameV1),
+            v if v == KnownMagic::ConfigRegistryNameV1 as u64 => {
+                Ok(KnownMagic::ConfigRegistryNameV1)
+            }
             v if v == KnownMagic::ConfigRegistryValueTypeV1 as u64 => {
                 Ok(KnownMagic::ConfigRegistryValueTypeV1)
             }
