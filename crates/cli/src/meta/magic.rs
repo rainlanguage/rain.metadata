@@ -59,6 +59,14 @@ pub enum KnownMagic {
     OaTokenImage = 0xff8cd2927c8c86cb,
     /// OffchainAsset token credential links
     OaTokenCredentialLinks = 0xffbc38eb14ad2209,
+    /// UTF-8 config name whose keccak256 is a config registry bytes32 name.
+    ConfigRegistryNameV1 = 0xffcdcfae6227d5e9,
+    /// UTF-8 ABI type string whose keccak256 is a config registry value type hash.
+    ConfigRegistryValueTypeV1 = 0xffcdb2cc1b1d53be,
+    /// UTF-8 namespace whose keccak256 is a migration registry bytes32 namespace.
+    MigrationRegistryNamespaceV1 = 0xff82e354bb91c055,
+    /// UTF-8 migration name whose keccak256 is a migration registry bytes32 migration.
+    MigrationRegistryMigrationV1 = 0xffae12bf8892cc25,
 }
 
 impl KnownMagic {
@@ -104,6 +112,16 @@ impl TryFrom<u64> for KnownMagic {
             v if v == KnownMagic::OaTokenImage as u64 => Ok(KnownMagic::OaTokenImage),
             v if v == KnownMagic::OaTokenCredentialLinks as u64 => {
                 Ok(KnownMagic::OaTokenCredentialLinks)
+            }
+            v if v == KnownMagic::ConfigRegistryNameV1 as u64 => Ok(KnownMagic::ConfigRegistryNameV1),
+            v if v == KnownMagic::ConfigRegistryValueTypeV1 as u64 => {
+                Ok(KnownMagic::ConfigRegistryValueTypeV1)
+            }
+            v if v == KnownMagic::MigrationRegistryNamespaceV1 as u64 => {
+                Ok(KnownMagic::MigrationRegistryNamespaceV1)
+            }
+            v if v == KnownMagic::MigrationRegistryMigrationV1 as u64 => {
+                Ok(KnownMagic::MigrationRegistryMigrationV1)
             }
             _ => Err(crate::error::Error::UnknownMagic),
         }
@@ -302,7 +320,7 @@ mod tests {
     #[test]
     fn test_all_discriminants_pinned() {
         use strum::IntoEnumIterator;
-        let expected: [(KnownMagic, &str); 20] = [
+        let expected: [(KnownMagic, &str); 24] = [
             (KnownMagic::RainMetaDocumentV1, "ff0a89c674ee7874"),
             (KnownMagic::OpMetaV1, "ffe5282f43e495b4"),
             (KnownMagic::DotrainV1, "ffdac2f2f37be894"),
@@ -326,6 +344,10 @@ mod tests {
             (KnownMagic::OaStructure, "ffc47a6299e8a911"),
             (KnownMagic::OaTokenImage, "ff8cd2927c8c86cb"),
             (KnownMagic::OaTokenCredentialLinks, "ffbc38eb14ad2209"),
+            (KnownMagic::ConfigRegistryNameV1, "ffcdcfae6227d5e9"),
+            (KnownMagic::ConfigRegistryValueTypeV1, "ffcdb2cc1b1d53be"),
+            (KnownMagic::MigrationRegistryNamespaceV1, "ff82e354bb91c055"),
+            (KnownMagic::MigrationRegistryMigrationV1, "ffae12bf8892cc25"),
         ];
         // every variant is pinned exactly once
         assert_eq!(expected.len(), KnownMagic::iter().count());
@@ -385,7 +407,7 @@ mod tests {
     #[test]
     fn test_strum_kebab_case_parse_display() {
         use std::str::FromStr;
-        let cases: [(KnownMagic, &str); 20] = [
+        let cases: [(KnownMagic, &str); 24] = [
             (KnownMagic::RainMetaDocumentV1, "rain-meta-document-v1"),
             (KnownMagic::OpMetaV1, "op-meta-v1"),
             (KnownMagic::DotrainV1, "dotrain-v1"),
@@ -417,6 +439,19 @@ mod tests {
             (
                 KnownMagic::OaTokenCredentialLinks,
                 "oa-token-credential-links",
+            ),
+            (KnownMagic::ConfigRegistryNameV1, "config-registry-name-v1"),
+            (
+                KnownMagic::ConfigRegistryValueTypeV1,
+                "config-registry-value-type-v1",
+            ),
+            (
+                KnownMagic::MigrationRegistryNamespaceV1,
+                "migration-registry-namespace-v1",
+            ),
+            (
+                KnownMagic::MigrationRegistryMigrationV1,
+                "migration-registry-migration-v1",
             ),
         ];
         for (magic, name) in cases {
