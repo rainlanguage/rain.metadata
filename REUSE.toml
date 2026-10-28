@@ -5,6 +5,7 @@ path = [
   ".cargo/config.toml",
   ".envrc",
   ".gas-snapshot",
+  ".github/pull_request_template.md",
   ".github/workflows/**/",
   ".gitignore",
   "audit/**/",
