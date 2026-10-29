@@ -15,9 +15,7 @@ import {
   OTHER_CONTRACT_ADDRESS,
 } from "./utils";
 import { Bytes, BigInt, ethereum, Address } from "@graphprotocol/graph-ts";
-import {
-  MetaV1_2,
-} from "../generated/metaboard0/MetaBoard";
+import { MetaV1_2 } from "../generated/metaboard0/MetaBoard";
 import {
   MetaBoard,
   MetaV1 as MetaV1Entity,
