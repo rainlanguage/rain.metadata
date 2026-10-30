@@ -41,6 +41,10 @@ fn magic_ls_prints_all_known_magic_numbers() {
 0xffc47a6299e8a911 oa-structure
 0xff8cd2927c8c86cb oa-token-image
 0xffbc38eb14ad2209 oa-token-credential-links
+0xffcdcfae6227d5e9 config-registry-name-v1
+0xffcdb2cc1b1d53be config-registry-value-type-v1
+0xff82e354bb91c055 migration-registry-namespace-v1
+0xffae12bf8892cc25 migration-registry-migration-v1
 ";
     assert_eq!(stdout, expected);
 }

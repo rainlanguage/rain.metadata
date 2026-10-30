@@ -2127,6 +2127,10 @@ mod tests {
             KnownMagic::OaStructure,
             KnownMagic::OaTokenImage,
             KnownMagic::OaTokenCredentialLinks,
+            KnownMagic::ConfigRegistryNameV1,
+            KnownMagic::ConfigRegistryValueTypeV1,
+            KnownMagic::MigrationRegistryNamespaceV1,
+            KnownMagic::MigrationRegistryMigrationV1,
         ];
         for magic in unsupported {
             let result: Result<Vec<u8>, Error> = plain_item(magic, vec![0x61]).unpack_into();
@@ -2284,6 +2288,10 @@ mod tests {
             KnownMagic::OaStructure,
             KnownMagic::OaTokenImage,
             KnownMagic::OaTokenCredentialLinks,
+            KnownMagic::ConfigRegistryNameV1,
+            KnownMagic::ConfigRegistryValueTypeV1,
+            KnownMagic::MigrationRegistryNamespaceV1,
+            KnownMagic::MigrationRegistryMigrationV1,
         ] {
             assert!(
                 matches!(KnownMeta::try_from(magic), Err(Error::UnsupportedMeta)),
