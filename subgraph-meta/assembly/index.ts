@@ -576,6 +576,7 @@ export function decode(meta: Bytes): DecodeResult {
  * holds at least one item of the check's magic and every item of that magic has
  * content encoding `None` or `Identity` and a payload whose `keccak256` is the
  * check's key. Returns each check's preimage, in order, when verified; else null.
+ * Consumers read a preimage as a string with `preimageString`, never `toString()`.
  */
 export function verifyPreimages(
   meta: Bytes,
@@ -609,4 +610,12 @@ export function verifyPreimages(
     preimages.push(found!);
   }
   return preimages;
+}
+
+/** `preimage` as a string when it is valid UTF-8 containing no NUL; else null. */
+export function preimageString(preimage: Bytes): string | null {
+  if (!utf8(preimage) || preimage.includes(0)) {
+    return null;
+  }
+  return String.UTF8.decodeUnsafe(preimage.dataStart, preimage.length);
 }
