@@ -7,7 +7,9 @@ const [wasmPath, docsPath] = process.argv.slice(2);
 const exports = instantiate(wasmPath);
 if (docsPath === "magics") {
   const named = Object.entries(exports)
-    .filter(([, v]) => v instanceof WebAssembly.Global && typeof v.value === "bigint")
+    .filter(([, v]) =>
+      v instanceof WebAssembly.Global && typeof v.value === "bigint"
+    )
     .map(([name, v]) =>
       `${name} ${BigInt.asUintN(64, v.value).toString(16).padStart(16, "0")}`
     )

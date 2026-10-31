@@ -29,7 +29,8 @@ function nibble(c: i32): u8 {
 function unhex(s: string): Bytes {
   const bytes = new Uint8Array(s.length >> 1);
   for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = (nibble(s.charCodeAt(2 * i)) << 4) | nibble(s.charCodeAt(2 * i + 1));
+    bytes[i] =
+      (nibble(s.charCodeAt(2 * i)) << 4) | nibble(s.charCodeAt(2 * i + 1));
   }
   return changetype<Bytes>(bytes);
 }
@@ -54,7 +55,7 @@ function hex64(v: u64): string {
 function unhex64(s: string): u64 {
   let v: u64 = 0;
   for (let i = 0; i < s.length; i++) {
-    v = (v << 4) | <u64>nibble(s.charCodeAt(i));
+    v = (v << 4) | (<u64>nibble(s.charCodeAt(i)));
   }
   return v;
 }
@@ -104,7 +105,11 @@ function utf8Hex(text: string | null): string {
 
 function schemaText(item: RainMetaItem): string {
   const schema = item.schema;
-  return (schema === null ? "null" : hex(schema!)) + "," + utf8Hex(item.schemaString());
+  return (
+    (schema === null ? "null" : hex(schema!)) +
+    "," +
+    utf8Hex(item.schemaString())
+  );
 }
 
 function decoded(bytes: Bytes): string {
