@@ -109,3 +109,41 @@ jobs:
         run: docker compose -f subgraph/docker-compose.graph-node.yml logs
       - name: The subgraph source carries no build residue
         run: git diff --exit-code -- subgraph/
+  subgraph-meta-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - uses: cachix/cachix-action@v15
+        continue-on-error: true
+        with:
+          name: rainlanguage
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          useDaemon: false
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 1G
+      - name: Install soldeer dependencies
+        run: nix develop github:rainlanguage/rainix#sol-shell -c forge soldeer install
+      - name: Build the ABIs the crates read
+        run: nix develop github:rainlanguage/rainix#sol-shell -c forge build
+      - name: Expand the corpus and decode it with cbor_decode
+        run: |
+          nix develop -c cargo run -q -p rain-metadata --example subgraph-meta-parity -- subgraph-meta/corpus/cases.txt docs > docs.tsv
+          nix develop -c cargo run -q -p rain-metadata --example subgraph-meta-parity -- subgraph-meta/corpus/cases.txt decode > cbor_decode.tsv
+      - name: Decode the corpus with the AssemblyScript decoder
+        run: nix develop -c bash -c 'cd subgraph-meta && npm install --no-save && npm run parity:build && npm run --silent parity -- ../docs.tsv > ../subgraph-meta.tsv'
+      - name: Both decoders agree on every case
+        run: |
+          test "$(wc -l < docs.tsv)" -gt 0
+          diff cbor_decode.tsv subgraph-meta.tsv

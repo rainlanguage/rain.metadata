@@ -8,5 +8,14 @@
   "author": "Rain Open Source Software Ltd",
   "license": "LicenseRef-DCL-1.0",
   "repository": {"type": "git", "url": "https://github.com/rainlanguage/rain.metadata", "directory": "subgraph-meta"},
-  "peerDependencies": {"@graphprotocol/graph-ts": ">=0.31.0"}
+  "scripts": {
+    "parity:build": "asc parity/runner.ts --outFile parity/runner.wasm --exportRuntime",
+    "parity": "node parity/run.mjs parity/runner.wasm"
+  },
+  "peerDependencies": {"@graphprotocol/graph-ts": ">=0.31.0"},
+  "devDependencies": {
+    "@assemblyscript/loader": "0.19.10",
+    "@graphprotocol/graph-ts": "0.31.0",
+    "assemblyscript": "0.19.10"
+  }
 }
