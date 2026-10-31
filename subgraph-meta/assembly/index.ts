@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-DCL-1.0
+// SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 import { Bytes, crypto } from "@graphprotocol/graph-ts";
 
 export const RAIN_META_DOCUMENT_V1: u64 = 0xff0a89c674ee7874;
