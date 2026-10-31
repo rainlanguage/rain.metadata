@@ -172,7 +172,16 @@ fn pseudo_random_bytes(len: usize, mut state: u64) -> Vec<u8> {
 
 fn assert_size_exceeded(result: Result<Vec<u8>, Error>) {
     match result {
-        Err(Error::InflatedSizeExceeded(max)) => assert_eq!(max, MAX_INFLATED_SIZE),
+        Err(error @ Error::InflatedSizeExceeded(_)) => {
+            assert!(matches!(
+                error,
+                Error::InflatedSizeExceeded(MAX_INFLATED_SIZE)
+            ));
+            assert_eq!(
+                error.to_string(),
+                "inflated content exceeds the maximum of 16777216 bytes"
+            );
+        }
         Err(other) => panic!("expected InflatedSizeExceeded, got {other:?}"),
         Ok(decoded) => panic!(
             "expected InflatedSizeExceeded, inflated {} bytes",
@@ -205,11 +214,13 @@ fn zlib_bomb_stops_at_the_bound_without_inflating_the_rest() {
 #[test]
 fn deflate_output_of_exactly_the_bound_inflates_and_one_more_byte_does_not() -> Result<(), Error> {
     assert_eq!(MAX_INFLATED_SIZE, 16 * 1024 * 1024);
-    let decoded = ContentEncoding::Deflate.decode(&zlib_zeros(MAX_INFLATED_SIZE))?;
-    assert_eq!(decoded.len(), MAX_INFLATED_SIZE);
-    assert!(decoded.iter().all(|&b| b == 0));
-    drop(decoded);
-    assert_size_exceeded(ContentEncoding::Deflate.decode(&zlib_zeros(MAX_INFLATED_SIZE + 1)));
+    for zeros in [zlib_zeros as fn(usize) -> Vec<u8>, raw_deflate_zeros] {
+        let decoded = ContentEncoding::Deflate.decode(&zeros(MAX_INFLATED_SIZE))?;
+        assert_eq!(decoded.len(), MAX_INFLATED_SIZE);
+        assert!(decoded.iter().all(|&b| b == 0));
+        drop(decoded);
+        assert_size_exceeded(ContentEncoding::Deflate.decode(&zeros(MAX_INFLATED_SIZE + 1)));
+    }
     Ok(())
 }
 
@@ -238,10 +249,36 @@ fn raw_deflate_bomb_stops_at_the_bound_without_inflating_the_rest() {
 }
 
 #[test]
-fn data_neither_zlib_nor_raw_deflate_is_an_inflate_error() {
+fn zlib_over_the_bound_is_not_retried_as_raw_deflate() {
+    // Raw deflate reads 78 as a stored block of LEN 1 (01 00) holding 01, then
+    // an empty stored block and an empty final fixed block from the zlib
+    // stored block's first six bytes.
+    let mut first = vec![0x00, 0x00, 0xff, 0xff, 0x03, 0x00];
+    first.resize(0xfffe, 0);
+    let mut stream = vec![0x78, 0x01];
+    stream.extend(stored_block(0x00, &first));
+    stream.extend(raw_deflate_zeros(16 * MAX_INFLATED_SIZE));
+    let (a, b) = (adler32(&first) & 0xffff, adler32(&first) >> 16);
+    let b = (u64::from(b) + u64::from(a) * (16 * MAX_INFLATED_SIZE as u64)) % 65521;
+    stream.extend((((b as u32) << 16) | a).to_be_bytes());
+    assert_eq!(stream[..7], [0x78, 0x01, 0x00, 0xfe, 0xff, 0x01, 0x00]);
+    assert_eq!(
+        miniz_oxide::inflate::decompress_to_vec_with_limit(&stream, MAX_INFLATED_SIZE).unwrap(),
+        [0x01]
+    );
+    assert_size_exceeded(ContentEncoding::Deflate.decode(&stream));
+}
+
+#[test]
+fn data_neither_zlib_nor_raw_deflate_reports_the_zlib_error() {
+    let mut raw_error_differs = 0;
     for garbage in [
         vec![],
         vec![0x78u8],
+        // A cut zlib header that raw deflate reads as a reserved block type.
+        vec![0xffu8],
+        // A reserved block type after a zlib header, a cut stored block to raw.
+        vec![0x78u8, 0x01, 0x07],
         vec![0xffu8, 0xff, 0xff, 0xff],
         // A zlib header with no deflate data, then one with a cut stored block.
         vec![0x78u8, 0x01],
@@ -253,8 +290,22 @@ fn data_neither_zlib_nor_raw_deflate_is_an_inflate_error() {
         // A zlib header asking for a preset dictionary.
         vec![0x78u8, 0x20, 0x00, 0x00, 0x00, 0x00],
     ] {
-        assert_inflate_error(ContentEncoding::Deflate.decode(&garbage), &garbage);
+        let zlib_error =
+            miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&garbage, MAX_INFLATED_SIZE)
+                .unwrap_err()
+                .to_string();
+        let raw_error =
+            miniz_oxide::inflate::decompress_to_vec_with_limit(&garbage, MAX_INFLATED_SIZE)
+                .unwrap_err()
+                .to_string();
+        assert!(!zlib_error.is_empty());
+        raw_error_differs += usize::from(raw_error != zlib_error);
+        match ContentEncoding::Deflate.decode(&garbage) {
+            Err(Error::InflateError(message)) => assert_eq!(message, zlib_error, "{garbage:02x?}"),
+            other => panic!("{garbage:02x?}: expected InflateError({zlib_error:?}), got {other:?}"),
+        }
     }
+    assert!(raw_error_differs > 0);
 }
 
 #[test]
