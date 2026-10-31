@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-DCL-1.0
+// SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 import { Bytes } from "@graphprotocol/graph-ts";
 import { decode, Decoded, KNOWN_MAGICS } from "../assembly/index";
 
