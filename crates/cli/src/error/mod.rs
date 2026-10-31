@@ -17,6 +17,7 @@ pub enum Error {
     BiggerThan32Bytes,
     NulByteInInput,
     InflateError(String),
+    InflatedSizeExceeded(usize),
     InvalidInput(String),
     InvalidUrl(String),
     CorruptRecord(String),
@@ -55,6 +56,9 @@ impl std::fmt::Display for Error {
             Error::SubgraphError(v) => write!(f, "subgraph error: {}", v),
             Error::ReqwestError(v) => write!(f, "{}", v),
             Error::InflateError(v) => write!(f, "{}", v),
+            Error::InflatedSizeExceeded(max) => {
+                write!(f, "inflated content exceeds the maximum of {} bytes", max)
+            }
             Error::Utf8Error(v) => write!(f, "{}", v),
             Error::AbiCoderError(v) => write!(f, "{}", v),
             Error::SerdeCborError(v) => write!(f, "{}", v),
