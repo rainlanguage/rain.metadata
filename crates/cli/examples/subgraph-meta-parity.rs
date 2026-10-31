@@ -2,6 +2,8 @@ use alloy::primitives::keccak256;
 use rain_metadata::{ContentEncoding, Error, KnownMagic, RainMetaDocumentV1Item};
 use strum::IntoEnumIterator;
 
+mod fuzz;
+
 const P: &str = "ff0a89c674ee7874";
 const NP: &str = "737430782e726261632e75732e7631";
 const NM: &str = "1bffcdcfae6227d5e9";
@@ -83,12 +85,15 @@ fn decoded(decode: &Result<Vec<RainMetaDocumentV1Item>, Error>) -> String {
     }
 }
 
-fn verified(decode: &Result<Vec<RainMetaDocumentV1Item>, Error>) -> String {
+fn verified(
+    decode: &Result<Vec<RainMetaDocumentV1Item>, Error>,
+    checks: &[(u64, [u8; 32])],
+) -> String {
     let Ok(items) = decode else {
         return "UNVERIFIED".to_string();
     };
     let mut preimages = vec![];
-    for (magic, key) in checks() {
+    for &(magic, key) in checks {
         let of: Vec<&RainMetaDocumentV1Item> =
             items.iter().filter(|i| i.magic as u64 == magic).collect();
         let good = |i: &&RainMetaDocumentV1Item| {
@@ -105,21 +110,47 @@ fn verified(decode: &Result<Vec<RainMetaDocumentV1Item>, Error>) -> String {
     format!("VERIFIED {}", preimages.join(","))
 }
 
+fn emit(label: impl std::fmt::Display, doc: &[u8], checks: &[(u64, [u8; 32])], mode: &str) {
+    let out = match mode {
+        "docs" => format!(
+            "{}\t{}",
+            hex(doc),
+            checks
+                .iter()
+                .map(|(magic, key)| format!("{magic:016x}:{}", hex(key)))
+                .collect::<Vec<_>>()
+                .join(";")
+        ),
+        "decode" => {
+            let decode = RainMetaDocumentV1Item::cbor_decode(doc);
+            format!("{}\t{}", decoded(&decode), verified(&decode, checks))
+        }
+        m => panic!("unknown mode {m}"),
+    };
+    println!("{label}\t{out}");
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
-    let cases = args.next().expect("cases.txt path or magics");
+    let cases = args.next().expect("cases.txt path, fuzz or magics");
     if cases == "magics" {
         for m in KnownMagic::iter().filter(|m| KnownMagic::try_from(*m as u64).is_ok()) {
             println!("{:016x}", m as u64);
         }
         return;
     }
+    if cases == "fuzz" {
+        let seed: u64 = args.next().expect("seed").parse().expect("seed");
+        let count: u64 = args.next().expect("count").parse().expect("count");
+        let mode = args.next().expect("mode: docs | decode");
+        for i in 0..count {
+            let (doc, checks) = fuzz::document(seed, i);
+            emit(i, &doc, &checks, &mode);
+        }
+        return;
+    }
     let mode = args.next().expect("mode: docs | decode");
-    let checks = checks()
-        .iter()
-        .map(|(magic, key)| format!("{magic:016x}:{}", hex(key)))
-        .collect::<Vec<_>>()
-        .join(";");
+    let checks = checks();
     let text = std::fs::read_to_string(cases).expect("read cases");
     for (n, line) in text.lines().enumerate() {
         if line.is_empty() || line.starts_with("## ") {
@@ -135,14 +166,6 @@ fn main() {
             g => panic!("unknown group {g}"),
         };
         assert!(doc.len() % 2 == 0, "odd hex: {line}");
-        let out = match mode.as_str() {
-            "docs" => format!("{doc}\t{checks}"),
-            "decode" => {
-                let decode = RainMetaDocumentV1Item::cbor_decode(&unhex(&doc));
-                format!("{}\t{}", decoded(&decode), verified(&decode))
-            }
-            m => panic!("unknown mode {m}"),
-        };
-        println!("{}\t{}", n + 1, out);
+        emit(n + 1, &unhex(&doc), &checks, &mode);
     }
 }
