@@ -7,12 +7,18 @@ import { keccak_256 } from "@noble/hashes/sha3.js";
 const [wasmPath, docsPath] = process.argv.slice(2);
 const module = new WebAssembly.Module(readFileSync(wasmPath));
 let exports;
+// __getUint8Array sizes a subarray by its whole buffer; read the view's own fields.
+const bytesAt = (ptr) => {
+  const [, dataStart, byteLength] = new Uint32Array(
+    exports.memory.buffer,
+    ptr,
+    3,
+  );
+  return new Uint8Array(exports.memory.buffer, dataStart, byteLength);
+};
 const hosts = {
   "crypto.keccak256": (ptr) =>
-    exports.__newArray(
-      exports.BYTE_ARRAY_ID,
-      keccak_256(exports.__getUint8Array(ptr)),
-    ),
+    exports.__newArray(exports.BYTE_ARRAY_ID, keccak_256(bytesAt(ptr))),
 };
 const imports = {};
 for (
