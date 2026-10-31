@@ -927,3 +927,29 @@ doc P NAME a2004161 01 1bffffffffffffffff TYPE
 doc P a2004161 01 1bffffffffffffffff NAME TYPE
 doc P NAME TYPE dbffffffffffffffff
 doc P NAME TYPE 1bffffffffffffffff
+## every known magic is kept as an item under its own magic
+item a2 00 4161 01 1bffe5282f43e495b4
+item a2 00 4161 01 1bffdac2f2f37be894
+item a2 00 4161 01 1bff1c198cec3b48a7
+item a2 00 4161 01 1bffe5ffb4a3ff2cde
+item a2 00 4161 01 1bffe9e3a02ca8e235
+item a2 00 4161 01 1bff52fe42f1a05093
+item a2 00 4161 01 1bffc21bbf86cc199b
+item a2 00 4161 01 1bffdb988a8cd04d32
+item a2 00 4161 01 1bff13109e41336ff2
+item a2 00 4161 01 1bffb2637608c09e38
+item a2 00 4161 01 1bffa15ef0fc437099
+item a2 00 4161 01 1bffda7b2fb167c286
+item a2 00 4161 01 1bff7a1507ba4419ca
+item a2 00 4161 01 1bff5dcce9b571ba42
+item a2 00 4161 01 1bffa8e8a9b9cf4a31
+item a2 00 4161 01 1bff9fae3cc645f463
+item a2 00 4161 01 1bffc47a6299e8a911
+item a2 00 4161 01 1bff8cd2927c8c86cb
+item a2 00 4161 01 1bffbc38eb14ad2209
+item a2 00 4161 01 1bffcdcfae6227d5e9
+item a2 00 4161 01 1bffcdb2cc1b1d53be
+item a2 00 4161 01 1bff82e354bb91c055
+item a2 00 4161 01 1bffae12bf8892cc25
+## a document shorter than its prefix is not a rain meta document
+doc ff0a89c674ee78
