@@ -1,0 +1,929 @@
+## a skipped integer or simple value verifies exactly when cbor_decode reads it
+value 00
+value 17
+value 1801
+value 1817
+value 190001
+value 1a00000001
+value 1b0000000000000001
+value 1bffffffffffffffff
+value 1c
+value 1d
+value 1e
+value 1f
+value 20
+value 37
+value 3801
+value 39ffff
+value 3affffffff
+value 3b7fffffffffffffff
+value 3b8000000000000000
+value 3bffffffffffffffff
+value 3c
+value 3d
+value 3e
+value 3f
+value e0
+value f3
+value f4
+value f5
+value f6
+value f7
+value f800
+value f813
+value f818
+value f820
+value f8ff
+value f93c00
+value f97e00
+value fa3f800000
+value fb3ff0000000000000
+value fc
+value fd
+value fe
+value ff
+## a skipped byte or text string verifies exactly when cbor_decode reads it
+value 40
+value 4161
+value 5801 61
+value 5800
+value 590001 61
+value 5a00000001 61
+value 5b0000000000000001 61
+value 5bffffffffffffffff
+value 5c
+value 5d
+value 5e
+value 5fff
+value 5f 4161 ff
+value 5f 40 ff
+value 5f 4161 426263 ff
+value 5f 5800 ff
+value 5f 6161 ff
+value 5f 5fff ff
+value 5f c24161 ff
+value 5f 00 ff
+value 5f 5c ff
+value 60
+value 6161
+value 61ff
+value 61c3
+value 6180
+value 61fe
+value 62c3a9
+value 62c0af
+value 62c1bf
+value 62e0a0
+value 63c3a961
+value 63e08080
+value 63e0a080
+value 63eda080
+value 63ed9fbf
+value 63efbfbf
+value 64f0808080
+value 64f0908080
+value 64f48fbfbf
+value 64f4908080
+value 64f5808080
+value 7801 61
+value 7b0000000000000001 61
+value 7bffffffffffffffff
+value 7c
+value 7d
+value 7e
+value 7fff
+value 7f 6161 6162 ff
+value 7f 61c3 61a9 ff
+value 7f 61c3 ff
+value 7f 61ff ff
+value 7f 4161 ff
+value 7f 7fff ff
+value 7f c26161 ff
+value 617f
+value 62c280
+value 62dfbf
+value 63e0a0c0
+value 62c3c0
+value 62c37f
+value 63e0a041
+value 626180
+value 64f09080c0
+value 64f090807f
+value 64f0c08080
+item bf 00 4161 01 RL 05 5f 5f ff ff
+item bf 00 4161 01 RL 05 7f 7f ff ff
+## a skipped array or map verifies exactly when cbor_decode reads it
+value 80
+value 8100
+value 820001
+value 9801 00
+value 990001 00
+value 9a00000001 00
+value 9b0000000000000001 00
+value 9c
+value 9d
+value 9e
+value 9fff
+value 9f 00 01 ff
+value 9f 9fff ff
+value 9f 00
+value 9f 61ff ff
+value 9affffffff
+value 9b8000000000000000
+value 9bffffffffffffffff
+value a0
+value a1 00 01
+value a1 6161 00
+value a1 61ff 00
+value a1 00 61ff
+value a1 a0 00
+value a1 80 00
+value a2 00 01 00 02
+value b801 00 01
+value bc
+value bd
+value be
+value bfff
+value bf 00 01 ff
+value bf 00 ff
+value bf ff
+value bf 00 01
+value bf 61ff 00 ff
+value baffffffff
+value bb8000000000000000
+value bbffffffffffffffff
+## a skipped map's text and other non-integer keys verify exactly when cbor_decode reads them
+value a1 60 00
+value a1 63616263 00
+value a1 62c3a9 00
+value a1 63e282ac 00
+value a1 64f09f9880 00
+value a1 6100 00
+value a1 617f 00
+value a1 61c3 00
+value a1 6180 00
+value a1 61fe 00
+value a1 62c0af 00
+value a1 62c1bf 00
+value a1 63e08080 00
+value a1 63eda080 00
+value a1 64f4908080 00
+value a1 64f8888080 00
+value a1 7801 61 00
+value a1 790001 61 00
+value a1 7a00000001 61 00
+value a1 7b0000000000000001 61 00
+value a1 7bffffffffffffffff 00
+value a1 7c 00
+value a1 7d 00
+value a1 7e 00
+value a1 7fff 00
+value a1 7f 6161 ff 00
+value a1 7f 6161 6162 ff 00
+value a1 7f 60 ff 00
+value a1 7f 61c3 61a9 ff 00
+value a1 7f 61c3 ff 00
+value a1 7f 61ff ff 00
+value a1 7f 4161 ff 00
+value a1 7f 7fff ff 00
+value a1 7f c26161 ff 00
+value a1 7f 00 ff 00
+value a1 6161 61ff
+value a1 6161 7f 61c3 ff
+value a1 6161 a1 6162 00
+value a1 6161 a1 6162 a1 6163 00
+value a1 6161 a1 61ff 00
+value a1 6161 81 6162
+value a1 6161 c1 6162
+value a2 6161 00 6162 01
+value a2 6161 00 6161 01
+value a2 6161 00 00 01
+value a2 00 01 6161 00
+value a2 6161 00 4161 01
+value a2 6161 00 61ff 01
+value a3 6161 00 4161 01 f6 02
+value a1 40 00
+value a1 4161 00
+value a1 41ff 00
+value a1 4bffffffffffffffffffffff 00
+value a1 5801 61 00
+value a1 5bffffffffffffffff 00
+value a1 5c 00
+value a1 5fff 00
+value a1 5f 4161 ff 00
+value a1 5f 4161 4162 ff 00
+value a1 5f 6161 ff 00
+value a1 5f c24161 ff 00
+value a1 20 00
+value a1 37 00
+value a1 38ff 00
+value a1 3bffffffffffffffff 00
+value a1 3c 00
+value a1 1bffffffffffffffff 00
+value a1 1c 00
+value a1 1f 00
+value a1 f4 00
+value a1 f5 00
+value a1 f6 00
+value a1 f7 00
+value a1 e0 00
+value a1 f3 00
+value a1 f800 00
+value a1 f818 00
+value a1 f820 00
+value a1 f8ff 00
+value a1 f93c00 00
+value a1 f97e00 00
+value a1 f97c00 00
+value a1 fa3f800000 00
+value a1 fb3ff0000000000000 00
+value a1 fc 00
+value a1 ff 00
+value a1 c1 00 00
+value a1 c1 6161 00
+value a1 c1 61ff 00
+value a1 c2 4161 00
+value a1 c1 c1 6161 00
+value a1 d8ff 6161 00
+value a1 dc 00 00
+value a1 df 00 00
+value a1 8100 00
+value a1 816161 00
+value a1 8161ff 00
+value a1 9fff 00
+value a1 9f 6161 ff 00
+value a1 a1 6161 00 00
+value a1 a1 61ff 00 00
+value a1 a1 a1 6161 00 00 00
+value a1 bfff 00
+value a1 bf 6161 00 ff 00
+value a1 6161
+value a2 6161 00 6162
+value bf 6161 00 ff
+value bf 6161 00 6162 01 ff
+value bf 6161 00 00 01 ff
+value bf 60 00 ff
+value bf 7f 6161 ff 00 ff
+value bf 7f 61c3 61a9 ff 00 ff
+value bf 7f 61c3 ff 00 ff
+value bf 4161 00 ff
+value bf 5f 4161 ff 00 ff
+value bf 20 00 ff
+value bf f6 00 ff
+value bf f93c00 00 ff
+value bf c1 6161 00 ff
+value bf 80 00 ff
+value bf a0 00 ff
+value bf 61c3 00 ff
+value bf e0 00 ff
+value bf 6161 ff
+value bf 6161 00 6162 ff
+value bf 6161 ff ff
+value b801 6161 00
+value b90001 6161 00
+value 81 a1 6161 00
+value 82 a1 6161 00 a1 4161 01
+value 9f a1 6161 00 ff
+value 9f bf 6161 00 ff ff
+value c1 a1 6161 00
+value c1 bf 6161 00 ff
+value a1 6161 81*125 00
+value a1 81*125 00 00
+value a1 81*126 00 00
+value a1 6161 81*126 00
+value a1 81*125 80 00
+value bf 81*125 00 00 ff
+value bf 81*126 00 00 ff
+value 81*125 a1 6161 00
+value 81*126 a1 6161 00
+value 81*125 bf 6161 00 ff
+value 81*126 bf 6161 00 ff
+## a skipped tag verifies exactly when cbor_decode reads its content
+value c000
+value c100
+value d700
+value d8ff 00
+value d9ffff 00
+value daffffffff 00
+value dbffffffffffffffff 00
+value dc00
+value dd00
+value de00
+value df00
+value c24161
+value c34100
+value c2c200
+value c1f6
+value c1ff
+value c19fff
+value c1a0
+value d9d9f7 a0
+value c161ff
+value c1 7f 61c3 ff
+## nesting verifies to 126 containers and tags deep and no deeper
+value 81*125 00
+value 81*126 00
+value 81*127 00
+value 81*128 00
+value 81*125 80
+value 81*126 80
+value 81*125 a0
+value 81*126 a0
+value 9f*126 00 ff*126
+value 9f*127 00 ff*127
+value a100*126 00
+value a100*127 00
+value bf00*126 00 ff*126
+value bf00*127 00 ff*127
+value c1*126 00
+value c1*127 00
+value 81*63 c1*63 00
+value 81*64 c1*63 00
+value 81*125 c100
+value 81*126 c100
+item c1*125 a2 00 4161 01 RL
+item c1*126 a2 00 4161 01 RL
+item c1*127 a2 00 4161 01 RL
+item c1*128 a2 00 4161 01 RL
+item c1*63 a3 00 4161 01 RL 05 81*63 00
+item c1*63 a3 00 4161 01 RL 05 81*64 00
+item a2 c1*126 00 4161 01 RL
+item a2 c1*127 00 4161 01 RL
+item a2 00 4161 c1*126 01 RL
+item a2 00 4161 c1*127 01 RL
+item a2 00 4161 01 c1*126 RL
+item a2 00 4161 01 c1*127 RL
+item a2 00 c1*126 4161 01 RL
+item a2 00 c1*127 4161 01 RL
+item a2 00 c1*125 8101 01 RL
+item a2 00 c1*126 8101 01 RL
+item a2 00 81 c1*125 01 01 RL
+item a2 00 81 c1*126 01 01 RL
+item a2 00 9f c1*125 01 ff 01 RL
+item a2 00 9f c1*126 01 ff 01 RL
+item a3 00 4161 01 RL 03 c1*126 00
+item a3 00 4161 01 RL 03 c1*127 00
+item a3 00 4161 01 RL 03 a1 c1*125 00 f6
+item a3 00 4161 01 RL 03 a1 c1*126 00 f6
+item a3 00 4161 01 RL 03 a1 00 c1*125 f6
+item a3 00 4161 01 RL 03 a1 00 c1*126 f6
+item a3 00 4161 01 RL 03 82 c1*125 00 f6
+item a3 00 4161 01 RL 03 82 c1*126 00 f6
+item a3 00 4161 01 RL 03 82 00 c1*125 f6
+item a3 00 4161 01 RL 03 82 00 c1*126 f6
+item a3 00 4161 01 RL SK c1*126 6161
+item a3 00 4161 01 RL SK c1*127 6161
+item c1*125 a3 00 4161 01 RL 03 a1 00 f6
+item c1*126 a3 00 4161 01 RL 03 a1 00 f6
+item c1*125 a3 00 4161 01 RL 03 82 00 f6
+item c1*126 a3 00 4161 01 RL 03 82 00 f6
+item c1*126 a3 00 4161 01 RL 03 00
+item c1*126 a2 00 8101 01 RL
+item c1*125 a2 00 8101 01 RL
+item a3 00 4161 01 RL 02 c1*126 00
+item a3 00 4161 01 RL 02 c1*127 00
+item a3 00 4161 01 RL 04 c1*126 00
+item a3 00 4161 01 RL 04 c1*127 00
+value 81*126 4161
+value 81*126 6161
+value 81*126 5f ff
+## item map keys, counts and tags verify exactly when cbor_decode reads them
+item a2 c100 4161 01 RL
+item a2 1800 4161 01 RL
+item a2 190000 4161 01 RL
+item a2 1b0000000000000000 4161 01 RL
+item a2 00 4161 1801 RL
+item a2 20 4161 01 RL
+item a3 00 4161 01 RL 20 00
+item a3 00 4161 01 RL 6161 00
+item a3 00 4161 01 RL 4161 00
+item a3 00 4161 01 RL f6 00
+item a3 00 4161 01 RL f4 00
+item a3 00 4161 01 RL f93c00 00
+item a3 00 4161 01 RL 80 00
+item a3 00 4161 01 RL 1f 00
+item a3 00 4161 01 RL 1bffffffffffffffff 00
+item a3 00 4161 01 RL 3bffffffffffffffff 00
+item a4 00 4161 01 RL 05 00 05 00
+item a4 00 4161 01 RL 05 00 1805 00
+item a4 00 4161 01 RL 05 00 06 00
+item a3 00 4161 01 RL 00 4162
+item a3 00 4161 01 RL 01 RL
+item a3 00 4161 01 RL 1800 4162
+item a4 00 4161 01 RL 02 00 02 00
+item a4 00 4161 01 RL 03 00 03 00
+item a4 00 4161 01 RL 04 00 04 00
+item a4 00 4161 01 RL SK 6161 SK 6161
+item a2 01 RL 00 4161
+item a0
+item a1 00 4161
+item a1 01 RL
+item bf 00 4161 01 RL ff
+item bf ff
+item bf 00 4161 01 RL 05 00 ff
+item bf 00 4161 01 RL
+item bf 00 4161 01 RL 05 ff
+item b802 00 4161 01 RL
+item b90002 00 4161 01 RL
+item bb0000000000000002 00 4161 01 RL
+item a3 00 4161 01 RL
+item a1 00 4161 01 RL
+item bb8000000000000000 00 4161 01 RL
+item 82004161011bff13109e41336ff2
+item 80
+item 9f ff
+item f6
+item 00
+item 4161
+item 6161
+item c1 a2 00 4161 01 RL
+item d8ff a2 00 4161 01 RL
+item dbffffffffffffffff a2 00 4161 01 RL
+item c1 c2 a2 00 4161 01 RL
+item df a2 00 4161 01 RL
+item a2 00 4161 01 1b0000000000000001
+item a2 00 4161 01 00
+item a2 00 61ff 01 1b0000000000000001
+item a3 00 4161 01 1b0000000000000001 03 03
+item a3 00 4161 01 1b0000000000000001 05 61ff
+item a3 00 4161 01 1b0000000000000001 05 81*127 00
+item a2 00 4161 01 1bff0a89c674ee7874
+item a2 00 4161 01 c1 1bff0a89c674ee7874
+item a2 00 4161 01 RL a2 00 4161 01 1bff0a89c674ee7874
+item a4 00 4161 1b0100000000000000 00 00 4162 01 RL
+item a4 00 4161 190100 00 00 4162 01 RL
+item a4 00 4161 1880 00 00 4162 01 RL
+item a4 00 4161 1b8000000000000000 00 00 4162 01 RL
+item a4 00 4161 05 00 00 4162 01 RL
+item a3 190100 00 00 4161 01 RL
+item a3 1b0100000000000000 00 00 4161 01 RL
+item a3 1880 00 00 4161 01 RL
+item a4 190180 00 1880 00 00 4161 01 RL
+item a5 1b0100000000000000 00 190100 00 1880 00 00 4161 01 RL
+item a2 1f 4161 01 RL
+item a2 01 RL 1f 4161
+item bf 1f 4161 01 RL ff
+item a2 c1 1f 4161 01 RL
+## item magic forms verify exactly when cbor_decode reads them
+item a2 00 4161 01 c1 RL
+item a2 00 4161 01 c1 c1 RL
+item a2 00 4161 01 20
+item a2 00 4161 01 3bff13109e41336ff2
+item a2 00 4161 01 48ff13109e41336ff2
+item a2 00 4161 01 6161
+item a2 00 4161 01 f6
+item a2 00 4161 01 f93c00
+item a2 00 4161 01 81 RL
+item a2 00 4161 01 1f
+item a2 00 4161 01 1c
+## item payload forms verify exactly when cbor_decode reads them
+item a2 00 40 01 RL
+item a2 00 5fff 01 RL
+item a2 00 5f 4161 ff 01 RL
+item a2 00 5f 6161 ff 01 RL
+item a2 00 5f c24161 ff 01 RL
+item a2 00 60 01 RL
+item a2 00 61ff 01 RL
+item a2 00 7fff 01 RL
+item a2 00 7f 61c3 61a9 ff 01 RL
+item a2 00 7f 61c3 ff 01 RL
+item a2 00 7f 4161 ff 01 RL
+item a2 00 80 01 RL
+item a2 00 8100 01 RL
+item a2 00 8118ff 01 RL
+item a2 00 811900ff 01 RL
+item a2 00 81190100 01 RL
+item a2 00 811b00000000000000ff 01 RL
+item a2 00 8120 01 RL
+item a2 00 81f4 01 RL
+item a2 00 81f6 01 RL
+item a2 00 81c100 01 RL
+item a2 00 818100 01 RL
+item a2 00 814161 01 RL
+item a2 00 9f0102ff 01 RL
+item a2 00 9fff 01 RL
+item a2 00 9f 01 01 RL
+item a2 00 980101 01 RL
+item a2 00 9b000000000000000101 01 RL
+item a2 00 9bffffffffffffffff 01 RL
+item a2 00 a0 01 RL
+item a2 00 a10001 01 RL
+item a2 00 f6 01 RL
+item a2 00 00 01 RL
+item a2 00 c14161 01 RL
+item a2 00 c18101 01 RL
+item a2 00 5b0000000000000001 61 01 RL
+item a2 00 5bffffffffffffffff 01 RL
+item a2 00 7b0000000000000001 61 01 RL
+item a2 00 5820 00*32 01 RL
+item a2 00 811f 01 RL
+## item content type forms verify exactly when cbor_decode reads them
+item a3 00 4161 01 RL 02 00
+item a3 00 4161 01 RL 02 01
+item a3 00 4161 01 RL 02 02
+item a3 00 4161 01 RL 02 03
+item a3 00 4161 01 RL 02 04
+item a3 00 4161 01 RL 02 17
+item a3 00 4161 01 RL 02 1803
+item a3 00 4161 01 RL 02 1b0000000000000003
+item a3 00 4161 01 RL 02 20
+item a3 00 4161 01 RL 02 644e6f6e65
+item a3 00 4161 01 RL 02 646e6f6e65
+item a3 00 4161 01 RL 02 706170706c69636174696f6e2f6a736f6e
+item a3 00 4161 01 RL 02 706170706c69636174696f6e2f63626f72
+item a3 00 4161 01 RL 02 78186170706c69636174696f6e2f6f637465742d73747265616d
+item a3 00 4161 01 RL 02 646a736f6e
+item a3 00 4161 01 RL 02 444e6f6e65
+item a3 00 4161 01 RL 02 7f 624e6f 626e65 ff
+item a3 00 4161 01 RL 02 c100
+item a3 00 4161 01 RL 02 c1644e6f6e65
+item a3 00 4161 01 RL 02 a1 00 f6
+item a3 00 4161 01 RL 02 a1 03 f7
+item a3 00 4161 01 RL 02 a1 644e6f6e65 f6
+item a3 00 4161 01 RL 02 a1 04 f6
+item a3 00 4161 01 RL 02 a1 00 00
+item a3 00 4161 01 RL 02 a1 00 f4
+item a3 00 4161 01 RL 02 a1 00 c1f6
+item a3 00 4161 01 RL 02 a1 c100 f6
+item a3 00 4161 01 RL 02 82 00 f6
+item a3 00 4161 01 RL 02 82 644e6f6e65 f6
+item a3 00 4161 01 RL 02 82 00 f7
+item a3 00 4161 01 RL 02 82 00 c1f6
+item a3 00 4161 01 RL 02 82 c100 f6
+item a3 00 4161 01 RL 02 82 00 00
+item a3 00 4161 01 RL 02 81 00
+item a3 00 4161 01 RL 02 80
+item a3 00 4161 01 RL 02 83 00 f6 f6
+item a3 00 4161 01 RL 02 9f 00 f6 ff
+item a3 00 4161 01 RL 02 9f 00 ff
+item a3 00 4161 01 RL 02 9f 00 f6 f6 ff
+item a3 00 4161 01 RL 02 9802 00 f6
+item a3 00 4161 01 RL 02 a2 00 f6 01 f6
+item a3 00 4161 01 RL 02 b801 00 f6
+item a3 00 4161 01 RL 02 bf 00 f6 ff
+item a3 00 4161 01 RL 02 a0
+item a3 00 4161 01 RL 02 f6
+item a3 00 4161 01 RL 02 f4
+item a3 00 4161 01 RL 02 c1 a1 00 f6
+item a3 00 4161 01 RL 02 c1 82 00 f6
+item a3 00 4161 01 RL 02 4161
+item a3 00 4161 01 RL 02 61ff
+item a4 00 4161 01 RL 02 a2 00 f6 05 f6
+item a4 00 4161 01 RL 02 b802 00 f6 05 f6
+item a3 00 4161 01 RL 02 a1 00 16
+item a3 00 4161 01 RL 02 a1 00 17
+item a3 00 4161 01 RL 02 82 00 17
+item a3 00 4161 01 RL 02 1f
+item a3 00 4161 01 RL 02 a1 00 f5
+item a3 00 4161 01 RL 02 82 00 f5
+item a3 00 4161 01 RL 02 9f 00 f5 ff
+## item content encoding forms verify exactly when cbor_decode reads them
+item a3 00 4161 01 RL 03 00
+item a3 00 4161 01 RL 03 01
+item a3 00 4161 01 RL 03 02
+item a3 00 4161 01 RL 03 03
+item a3 00 4161 01 RL 03 1802
+item a3 00 4161 01 RL 03 1b0000000000000002
+item a3 00 4161 01 RL 03 20
+item a3 00 4161 01 RL 03 646e6f6e65
+item a3 00 4161 01 RL 03 686964656e74697479
+item a3 00 4161 01 RL 03 676465666c617465
+item a3 00 4161 01 RL 03 644e6f6e65
+item a3 00 4161 01 RL 03 674445464c415445
+item a3 00 4161 01 RL 03 446e6f6e65
+item a3 00 4161 01 RL 03 476465666c617465
+item a3 00 4161 01 RL 03 7f 63646566 646c617465 ff
+item a3 00 4161 01 RL 03 c102
+item a3 00 4161 01 RL 03 a1 02 f6
+item a3 00 4161 01 RL 03 a1 676465666c617465 f6
+item a3 00 4161 01 RL 03 a1 03 f6
+item a3 00 4161 01 RL 03 82 02 f6
+item a3 00 4161 01 RL 03 82 676465666c617465 f6
+item a3 00 4161 01 RL 03 9f 02 f6 ff
+item a3 00 4161 01 RL 03 81 02
+item a3 00 4161 01 RL 03 f6
+item a3 00 4161 01 RL 03 a0
+item bf 00 4161 01 RL 03 9f 00 f6 f6 ff
+item a4 00 4161 01 RL 03 83 00 f6 05 00
+item a3 00 4161 01 RL 03 1f
+item a3 00 4161 01 RL 03 a1 01 f5
+## item content language forms verify exactly when cbor_decode reads them
+item a3 00 4161 01 RL 04 00
+item a3 00 4161 01 RL 04 01
+item a3 00 4161 01 RL 04 02
+item a3 00 4161 01 RL 04 646e6f6e65
+item a3 00 4161 01 RL 04 62656e
+item a3 00 4161 01 RL 04 62454e
+item a3 00 4161 01 RL 04 42656e
+item a3 00 4161 01 RL 04 7f 6165 616e ff
+item a3 00 4161 01 RL 04 c101
+item a3 00 4161 01 RL 04 a1 01 f6
+item a3 00 4161 01 RL 04 a1 62656e f6
+item a3 00 4161 01 RL 04 82 01 f6
+item a3 00 4161 01 RL 04 20
+item a3 00 4161 01 RL 04 f6
+item a3 00 4161 01 RL 04 a1 01 f5
+## item schema forms verify exactly when cbor_decode reads them
+item a3 00 4161 01 RL SK 6161
+item a3 00 4161 01 RL SK 60
+item a3 00 4161 01 RL SK 4161
+item a3 00 4161 01 RL SK 40
+item a3 00 4161 01 RL SK 41ff
+item a3 00 4161 01 RL SK 61ff
+item a3 00 4161 01 RL SK 7f 6161 ff
+item a3 00 4161 01 RL SK 5f 4161 ff
+item a3 00 4161 01 RL SK 5f 41c3 41a9 ff
+item a3 00 4161 01 RL SK 7f 61c3 61a9 ff
+item a3 00 4161 01 RL SK c16161
+item a3 00 4161 01 RL SK 01
+item a3 00 4161 01 RL SK f6
+item a3 00 4161 01 RL SK 80
+item a3 00 4161 01 RL SK a0
+item a3 00 4161 01 RL SK 816161
+## a name preimage verifies in every payload form cbor_decode reads
+name a2 00 4f NP 01 NM
+name a2 00 6f NP 01 NM
+name a2 00 5f 47737430782e7262 4861632e75732e7631 ff 01 NM
+name a2 00 7f 67737430782e7262 6861632e75732e7631 ff 01 NM
+name a2 00 5f 4f NP 40 ff 01 NM
+name a2 00 8f 1873 1874 1830 1878 182e 1872 1862 1861 1863 182e 1875 1873 182e 1876 1831 01 NM
+name a2 00 9f 1873 1874 1830 1878 182e 1872 1862 1861 1863 182e 1875 1873 182e 1876 1831 ff 01 NM
+name a2 00 8f 1873 1874 1830 1878 182e 1872 1862 1861 1863 182e 1875 1873 182e 1876 c11831 01 NM
+name a2 00 c1 4f NP 01 NM
+name c1 a2 00 4f NP 01 NM
+name a2 01 NM 00 4f NP
+name bf 00 4f NP 01 NM ff
+name a2 00 4f NP 01 c1 NM
+name a3 00 4f NP 01 NM 05 00
+name a6 00 4f NP 01 NM 02 00 03 01 04 01 SK 6161
+name a2 00 4f NP 01 NM a2 00 6f NP 01 NM
+## a name preimage verifies exactly when cbor_decode reads it unencoded
+name a3 00 4f NP 01 NM 03 00
+name a3 00 4f NP 01 NM 03 01
+name a3 00 4f NP 01 NM 03 02
+name a3 00 4f NP 01 NM 03 03
+name a3 00 4f NP 01 NM 03 1801
+name a3 00 4f NP 01 NM 03 1b0000000000000001
+name a3 00 4f NP 01 NM 03 1b0000000000000002
+name a3 00 4f NP 01 NM 03 20
+name a3 00 4f NP 01 NM 03 646e6f6e65
+name a3 00 4f NP 01 NM 03 686964656e74697479
+name a3 00 4f NP 01 NM 03 676465666c617465
+name a3 00 4f NP 01 NM 03 644e6f6e65
+name a3 00 4f NP 01 NM 03 446e6f6e65
+name a3 00 4f NP 01 NM 03 486964656e74697479
+name a3 00 4f NP 01 NM 03 476465666c617465
+name a3 00 4f NP 01 NM 03 7f 626e6f 626e65 ff
+name a3 00 4f NP 01 NM 03 5f 426e6f 426e65 ff
+name a3 00 4f NP 01 NM 03 c100
+name a3 00 4f NP 01 NM 03 c101
+name a3 00 4f NP 01 NM 03 c102
+name a3 00 4f NP 01 NM 03 c1646e6f6e65
+name a3 00 4f NP 01 NM 03 a1 00 f6
+name a3 00 4f NP 01 NM 03 a1 01 f7
+name a3 00 4f NP 01 NM 03 a1 02 f6
+name a3 00 4f NP 01 NM 03 a1 646e6f6e65 f6
+name a3 00 4f NP 01 NM 03 a1 686964656e74697479 f6
+name a3 00 4f NP 01 NM 03 a1 676465666c617465 f6
+name a3 00 4f NP 01 NM 03 a1 c101 c1f6
+name a3 00 4f NP 01 NM 03 82 00 f6
+name a3 00 4f NP 01 NM 03 82 01 f6
+name a3 00 4f NP 01 NM 03 82 02 f6
+name a3 00 4f NP 01 NM 03 82 686964656e74697479 f6
+name a3 00 4f NP 01 NM 03 9f 01 f6 ff
+name a3 00 4f NP 01 NM 03 9802 01 f6
+name a3 00 4f NP 01 NM 03 81 01
+name a3 00 4f NP 01 NM 03 f6
+name a3 00 4f NP 01 NM 03 a0
+name a2 00 4f NP 01 NM a3 00 4f NP 01 NM 03 01
+name a2 00 4f NP 01 NM a3 00 4f NP 01 NM 03 02
+## a document verifies only whole, under its own prefix
+doc P NAME TYPE
+doc NAME TYPE
+doc ff0a89c674ee7875 NAME TYPE
+doc P P NAME TYPE
+doc P NAME P TYPE
+doc P NAME TYPE ff
+doc P NAME TYPE 00
+doc P NAME TYPE f6
+doc P NAME TYPE a0
+doc P NAME TYPE a20041
+doc P NAME TYPE a2004161
+doc P NAME TYPE a2004161 01
+doc P NAME TYPE c1
+doc P NAME TYPE 5f
+doc P NAME TYPE bf
+doc P NAME TYPE 18
+doc P NAME TYPE 1900
+doc P NAME TYPE 9f
+doc P NAME TYPE a100
+doc P NAME TYPE a3004161 01 RL 05 9f
+doc P NAME TYPE a3004161 01 RL 05 5f4161
+doc P NAME TYPE a3004161 01 RL 05 1900
+doc P NAME TYPE a2004161 01 1b0000000000000001
+doc P a2004161 01 1b0000000000000001
+doc P NAME a2004161 01 1b0000000000000001 TYPE
+doc P NAME TYPE NAME
+doc P NAME TYPE TYPE
+doc P NAME a2004761646472657373011bffcdb2cc1b1d53
+doc P NAME TYPE a3004161 01 RL 05 4161
+doc P NAME TYPE a3004161 01 RL 05 6161
+doc P NAME TYPE a2 01 RL 00 4161
+doc P NAME TYPE a3004161 01 RL 05 82 00 00
+doc P NAME TYPE a3004161 01 RL 05 a1 00 00
+doc P NAME TYPE a3004161 01 RL 03
+doc P NAME TYPE a3004161 01 RL 03 a1
+doc P NAME TYPE a3004161 01 RL 03 82
+doc P NAME TYPE a3004161 01 RL 03 c1
+doc P NAME TYPE a3004161 01 RL 02
+doc P NAME TYPE a3004161 01 RL 04
+## every head argument up to 2^64-1 verifies exactly when cbor_decode reads it
+value 1bfffffffffffffffe
+value 1b8000000000000000
+value 1b7fffffffffffffff
+value 1b0000000100000000
+value 1bffffffff00000000
+value 3bfffffffffffffffe
+value 3b0000000100000000
+value fbffffffffffffffff
+value 81 1bffffffffffffffff
+value 81 3bffffffffffffffff
+value 81 fbffffffffffffffff
+value 81 dbffffffffffffffff 00
+value 81 5bffffffffffffffff
+value 81 7bffffffffffffffff
+value 81 9bffffffffffffffff
+value 81 bbffffffffffffffff
+value 82 1bffffffffffffffff 3bffffffffffffffff
+value 9f 1bffffffffffffffff ff
+value 9f 3bffffffffffffffff ff
+value 9f dbffffffffffffffff 00 ff
+value 9bfffffffffffffffe
+value 9b0000000100000001 00
+value a1 00 1bffffffffffffffff
+value a1 00 3bffffffffffffffff
+value a1 1bffffffffffffffff 1bffffffffffffffff
+value a1 3bffffffffffffffff 3bffffffffffffffff
+value a2 1bffffffffffffffff 00 1bfffffffffffffffe 00
+value a2 1bffffffffffffffff 00 1bffffffffffffffff 00
+value bf 1bffffffffffffffff 1bffffffffffffffff ff
+value bf 1bffffffffffffffff ff
+value a1 dbffffffffffffffff 00 00
+value a1 00 dbffffffffffffffff 00
+value a1 fbffffffffffffffff 00
+value a1 00 fbffffffffffffffff
+value a1 00 5bffffffffffffffff
+value a1 00 7bffffffffffffffff
+value a1 00 9bffffffffffffffff
+value a1 00 bbffffffffffffffff
+value bbfffffffffffffffe
+value bb0000000100000001 00 00
+value dbffffffffffffffff 1bffffffffffffffff
+value dbffffffffffffffff 3bffffffffffffffff
+value dbffffffffffffffff dbffffffffffffffff 00
+value dbffffffffffffffff 80
+value dbffffffffffffffff a0
+value dbffffffffffffffff 9f ff
+value dbffffffffffffffff 4161
+value dbffffffffffffffff fbffffffffffffffff
+value dbffffffffffffffff 9bffffffffffffffff
+value dbffffffffffffffff ff
+value dbfffffffffffffffe 00
+value db8000000000000000 00
+value db7fffffffffffffff 00
+value dbffffffffffffffff*125 00
+value dbffffffffffffffff*126 00
+value dbffffffffffffffff*127 00
+value 81*125 dbffffffffffffffff 00
+value 81*126 dbffffffffffffffff 00
+value 5bfffffffffffffffe
+value 5b0000000100000001 61
+value 7b0000000100000001 61
+value 5f 5bffffffffffffffff ff
+value 7f 7bffffffffffffffff ff
+value 5f 5b0000000100000001 61 ff
+value 7f 7b0000000100000001 61 ff
+item a3 00 4161 01 RL 1bffffffffffffffff 1bffffffffffffffff
+item a3 00 4161 01 RL 1bffffffffffffffff 3bffffffffffffffff
+item a3 00 4161 01 RL 1bffffffffffffffff dbffffffffffffffff 00
+item a3 00 4161 01 RL 1bffffffffffffffff fbffffffffffffffff
+item a3 00 4161 01 RL 1bffffffffffffffff 9f ff
+item a3 00 4161 01 RL 1bffffffffffffffff 5f ff
+item a3 00 4161 01 RL 1bffffffffffffffff 5bffffffffffffffff
+item a3 00 4161 01 RL 1bffffffffffffffff 9bffffffffffffffff
+item a3 00 4161 01 RL 1bffffffffffffffff bbffffffffffffffff
+item a3 00 4161 01 RL 1bffffffffffffffff ff
+item a4 00 4161 01 RL 1bffffffffffffffff 00 1bffffffffffffffff 00
+item a4 00 4161 01 RL 1bffffffffffffffff 00 1bfffffffffffffffe 00
+item a4 00 4161 01 RL 1bffffffffffffffff 00 05 00
+item a3 00 4161 01 RL 1bfffffffffffffffe 00
+item a3 00 4161 01 RL 1b8000000000000000 00
+item a3 00 4161 01 RL 1b0000000100000000 00
+item a3 00 4161 01 RL 1b0000000100000001 00
+item a3 00 4161 01 RL 1b0000000100000002 04
+item a3 00 4161 01 RL 1b0000000100000003 03
+item a3 00 4161 01 RL 3bfffffffffffffffe 00
+item a2 dbffffffffffffffff 00 4161 01 RL
+item a2 00 4161 dbffffffffffffffff 01 RL
+item a3 00 4161 01 RL dbffffffffffffffff 1bffffffffffffffff 00
+item a3 00 4161 01 RL dbffffffffffffffff 3bffffffffffffffff 00
+item bf 00 4161 01 RL 1bffffffffffffffff 00 ff
+item bf 00 4161 01 RL 1bffffffffffffffff ff
+item bbffffffffffffffff 00 4161 01 RL
+item bbfffffffffffffffe 00 4161 01 RL
+item bb0000000100000002 00 4161 01 RL
+item 9bffffffffffffffff 00 4161 01 RL
+item 1bffffffffffffffff
+item 3bffffffffffffffff
+item 5bffffffffffffffff
+item 7bffffffffffffffff
+item fbffffffffffffffff
+item dbffffffffffffffff dbffffffffffffffff a2 00 4161 01 RL
+item dbffffffffffffffff*126 a2 00 4161 01 RL
+item dbffffffffffffffff*127 a2 00 4161 01 RL
+item a2 00 4161 01 1bffffffffffffffff
+item a2 01 1bffffffffffffffff 00 4161
+item a2 00 4161 01 dbffffffffffffffff 1bffffffffffffffff
+item a2 00 4161 01 dbffffffffffffffff RL
+item a2 00 4161 01 1bfffffffffffffffe
+item a2 00 4161 01 1b8000000000000000
+item a2 00 4161 01 3bffffffffffffffff
+item a2 00 4161 01 fbffffffffffffffff
+item a2 00 4161 01 5bffffffffffffffff
+item a2 00 4161 01 9bffffffffffffffff
+item a3 00 4161 01 1bffffffffffffffff 05 1bffffffffffffffff
+item a3 00 4161 01 1bffffffffffffffff 1bffffffffffffffff 00
+item a3 00 4161 01 1bffffffffffffffff 03 03
+item a3 00 4161 01 1bffffffffffffffff 03 1bffffffffffffffff
+item a3 00 4161 01 1bffffffffffffffff 02 1bffffffffffffffff
+item a3 00 4161 01 1bffffffffffffffff 01 RL
+item a2 00 61ff 01 1bffffffffffffffff
+item a2 00 4161 01 1bffffffffffffffff a2 00 4161 01 1bffffffffffffffff
+item a2 00 4161 01 1bffffffffffffffff a2 00 4161 01 RL
+item a2 00 4161 01 1bffffffffffffffff 00
+item a2 00 7bffffffffffffffff 01 RL
+item a2 00 81 1bffffffffffffffff 01 RL
+item a2 00 81 3bffffffffffffffff 01 RL
+item a2 00 81 fbffffffffffffffff 01 RL
+item a2 00 81 dbffffffffffffffff 01 01 RL
+item a2 00 81 1b0000000100000001 01 RL
+item a2 00 81 1bffffffffffffff01 01 RL
+item a2 00 9f 1bffffffffffffffff ff 01 RL
+item a2 00 9bfffffffffffffffe 01 RL
+item a2 00 9b0000000100000001 01 01 RL
+item a2 00 5f 5bffffffffffffffff ff 01 RL
+item a2 00 7f 7bffffffffffffffff ff 01 RL
+item a2 00 5b0000000100000001 61 01 RL
+item a2 00 5f 5b0000000100000001 61 ff 01 RL
+item a2 00 dbffffffffffffffff 4161 01 RL
+item a2 00 dbffffffffffffffff 81 dbffffffffffffffff 01 01 RL
+item a2 00 5f dbffffffffffffffff 4161 ff 01 RL
+item a2 00 1bffffffffffffffff 01 RL
+item a3 00 4161 01 RL 02 1bffffffffffffffff
+item a3 00 4161 01 RL 03 1bffffffffffffffff
+item a3 00 4161 01 RL 04 1bffffffffffffffff
+item a3 00 4161 01 RL 03 1b0000000100000000
+item a3 00 4161 01 RL 03 1b0000000100000002
+item a3 00 4161 01 RL 03 3bffffffffffffffff
+item a3 00 4161 01 RL 03 fbffffffffffffffff
+item a3 00 4161 01 RL 03 dbffffffffffffffff 02
+item a3 00 4161 01 RL 03 dbffffffffffffffff 676465666c617465
+item a3 00 4161 01 RL 03 5bffffffffffffffff
+item a3 00 4161 01 RL 03 7bffffffffffffffff
+item a3 00 4161 01 RL 03 a1 1bffffffffffffffff f6
+item a3 00 4161 01 RL 03 a1 dbffffffffffffffff 02 f6
+item a3 00 4161 01 RL 03 a1 02 dbffffffffffffffff f6
+item a3 00 4161 01 RL 03 a1 02 fbffffffffffffffff
+item a3 00 4161 01 RL 03 a1 02 1bffffffffffffffff
+item a3 00 4161 01 RL 03 82 1bffffffffffffffff f6
+item a3 00 4161 01 RL 03 82 dbffffffffffffffff 02 dbffffffffffffffff f6
+item a3 00 4161 01 RL 03 82 02 fbffffffffffffffff
+item a3 00 4161 01 RL 03 9bffffffffffffffff 02 f6
+item a3 00 4161 01 RL 03 9b0000000000000002 02 f6
+item a3 00 4161 01 RL 03 9b0000000100000002 02 f6
+item a3 00 4161 01 RL 03 bbffffffffffffffff 02 f6
+item a3 00 4161 01 RL 03 bb0000000000000001 02 f6
+item a3 00 4161 01 RL 03 9f 02 dbffffffffffffffff f6 ff
+item a3 00 4161 01 RL 02 a1 dbffffffffffffffff 00 dbffffffffffffffff f6
+item a3 00 4161 01 RL 04 82 dbffffffffffffffff 01 f6
+item a3 00 4161 01 RL SK 7bffffffffffffffff
+item a3 00 4161 01 RL SK 5bffffffffffffffff
+item a3 00 4161 01 RL SK dbffffffffffffffff 6161
+item a3 00 4161 01 RL SK 1bffffffffffffffff
+item a3 00 4161 01 RL SK 7f 7bffffffffffffffff ff
+item a3 00 4161 01 RL dbffffffffffffffff SK 6161
+name a2 00 4f NP 01 NM a2 00 4161 01 1bffffffffffffffff
+name a3 00 4f NP 01 NM 1bffffffffffffffff 00
+name a3 00 4f NP 01 NM 03 1bffffffffffffffff
+name a3 00 4f NP 01 NM 03 dbffffffffffffffff 01
+name a3 00 4f NP 01 NM 03 dbffffffffffffffff 02
+name a3 00 4f NP 01 NM 03 a1 dbffffffffffffffff 01 dbffffffffffffffff f6
+name a2 00 dbffffffffffffffff 4f NP 01 NM
+name a2 00 4f NP 01 dbffffffffffffffff NM
+name dbffffffffffffffff a2 00 4f NP 01 NM
+name a2 00 8f 1873 1874 1830 1878 182e 1872 1862 1861 1863 182e 1875 1873 182e 1876 dbffffffffffffffff 1831 01 NM
+doc P a2004161 01 1bffffffffffffffff
+doc P NAME a2004161 01 1bffffffffffffffff TYPE
+doc P a2004161 01 1bffffffffffffffff NAME TYPE
+doc P NAME TYPE dbffffffffffffffff
+doc P NAME TYPE 1bffffffffffffffff
