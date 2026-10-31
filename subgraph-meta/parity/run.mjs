@@ -4,8 +4,14 @@ import loader from "@assemblyscript/loader";
 const [wasmPath, docsPath] = process.argv.slice(2);
 const module = new WebAssembly.Module(readFileSync(wasmPath));
 const imports = {};
-for (const { module: name, name: field, kind } of WebAssembly.Module.imports(module)) {
-  if (kind !== "function") throw new Error(`unexpected import ${name}.${field}`);
+for (
+  const { module: name, name: field, kind } of WebAssembly.Module.imports(
+    module,
+  )
+) {
+  if (kind !== "function") {
+    throw new Error(`unexpected import ${name}.${field}`);
+  }
   imports[name] ??= {};
   imports[name][field] = () => {
     throw new Error(`host import ${name}.${field} called`);
