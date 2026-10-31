@@ -15,7 +15,7 @@
     "directory": "subgraph-meta"
   },
   "scripts": {
-    "parity:build": "asc parity/runner.ts --outFile parity/runner.wasm --exportRuntime",
+    "parity:build": "asc parity/runner.ts --outFile parity/runner.wasm --tsdFile parity/runner.d.ts --exportRuntime",
     "parity": "node parity/run.mjs parity/runner.wasm",
     "cost": "node parity/cost.mjs parity/runner.wasm"
   },

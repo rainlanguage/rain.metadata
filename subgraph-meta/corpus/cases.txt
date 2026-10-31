@@ -640,6 +640,36 @@ item a3 00 4161 01 RL SK f6
 item a3 00 4161 01 RL SK 80
 item a3 00 4161 01 RL SK a0
 item a3 00 4161 01 RL SK 816161
+## an item schema is kept exactly as cbor_decode yields it, its string only when it holds no NUL
+item a2 00 4161 01 RL
+item a3 00 4161 01 RL SK 62c3a9
+item a3 00 4161 01 RL SK 42c3a9
+item a3 00 4161 01 RL SK 64f09f9880
+item a3 00 4161 01 RL SK 44f09f9880
+item a3 00 4161 01 RL SK 6c 516d536368656d6148617368
+item a3 00 4161 01 RL SK 4c 516d536368656d6148617368
+item a3 00 4161 01 RL SK 6100
+item a3 00 4161 01 RL SK 4100
+item a3 00 4161 01 RL SK 63610062
+item a3 00 4161 01 RL SK 43610062
+item a3 00 4161 01 RL SK 7f 6161 6100 ff
+item a3 00 4161 01 RL SK 5f 4161 4100 ff
+item a3 00 4161 01 RL SK 62c0af
+item a3 00 4161 01 RL SK 42c0af
+item a3 00 4161 01 RL SK 63eda080
+item a3 00 4161 01 RL SK 43eda080
+item a3 00 4161 01 RL SK 61c3
+item a3 00 4161 01 RL SK 41c3
+item a3 00 4161 01 RL SK 7f 61c3 ff
+item a3 00 4161 01 RL SK 5f 41c3 ff
+item a3 00 4161 01 RL SK 61 80
+item a3 00 4161 01 RL SK 41 80
+item a3 00 4161 01 05 SK 6161
+item a3 00 4161 01 05 SK 41ff
+item a3 00 4161 01 05 SK 6100
+name a3 00 4f NP 01 NM SK 6100
+name a3 00 4f NP 01 NM SK 4162
+doc P a3 00 4161 01 RL SK 6161 a3 00 4162 01 RL SK 4100 a2 00 4163 01 RL
 ## a name preimage verifies in every payload form cbor_decode reads
 name a2 00 4f NP 01 NM
 name a2 00 6f NP 01 NM
