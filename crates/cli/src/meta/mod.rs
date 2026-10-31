@@ -20,6 +20,7 @@ use alloy::sol_types::private::Address;
 use alloy::providers::Provider;
 use alloy::contract::Error as ContractError;
 use rain_erc::erc165::{Erc165Error, IERC165, XorSelectors, supports_erc165};
+use miniz_oxide::inflate::TINFLStatus;
 
 pub mod magic;
 pub(crate) mod normalize;
@@ -140,17 +141,15 @@ impl ContentEncoding {
         Ok(match self {
             ContentEncoding::None | ContentEncoding::Identity => data.to_vec(),
             ContentEncoding::Deflate => {
-                match inflate_bounded(inflate::InflateStream::from_zlib(), data) {
-                    Ok(v) => v,
-                    Err(Error::InflateError(error)) => {
-                        match inflate_bounded(inflate::InflateStream::new(), data) {
-                            Ok(v) => v,
-                            Err(Error::InflateError(_)) => Err(Error::InflateError(error))?,
-                            Err(e) => Err(e)?,
-                        }
-                    }
-                    Err(e) => Err(e)?,
-                }
+                let inflated = if is_zlib_header(data) {
+                    miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(data, MAX_INFLATED_SIZE)
+                } else {
+                    miniz_oxide::inflate::decompress_to_vec_with_limit(data, MAX_INFLATED_SIZE)
+                };
+                inflated.map_err(|error| match error.status {
+                    TINFLStatus::HasMoreOutput => Error::InflatedSizeExceeded(MAX_INFLATED_SIZE),
+                    _ => Error::InflateError(error.to_string()),
+                })?
             }
         })
     }
@@ -158,19 +157,12 @@ impl ContentEncoding {
 
 pub const MAX_INFLATED_SIZE: usize = 16 * 1024 * 1024;
 
-fn inflate_bounded(mut inflater: inflate::InflateStream, data: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut decoded = Vec::new();
-    let mut n = 0;
-    loop {
-        let (read, bytes) = inflater.update(&data[n..]).map_err(Error::InflateError)?;
-        if bytes.is_empty() {
-            return Ok(decoded);
+fn is_zlib_header(data: &[u8]) -> bool {
+    match data {
+        [cmf, flg, ..] => {
+            cmf & 0x0f == 8 && cmf >> 4 <= 7 && u16::from_be_bytes([*cmf, *flg]) % 31 == 0
         }
-        if decoded.len() + bytes.len() > MAX_INFLATED_SIZE {
-            return Err(Error::InflatedSizeExceeded(MAX_INFLATED_SIZE));
-        }
-        n += read;
-        decoded.extend_from_slice(bytes);
+        _ => false,
     }
 }
 
