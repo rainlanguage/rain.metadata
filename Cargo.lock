@@ -3564,6 +3564,7 @@ dependencies = [
  "httpmock",
  "inflate",
  "itertools 0.10.5",
+ "miniz_oxide",
  "once_cell",
  "rain-erc",
  "rain-metaboard-subgraph",
