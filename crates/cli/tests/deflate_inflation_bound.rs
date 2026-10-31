@@ -1,4 +1,5 @@
-//! Deflate meta payloads inflate to at most MAX_INFLATED_SIZE bytes.
+//! Deflate meta payloads inflate only as whole streams, to at most
+//! MAX_INFLATED_SIZE bytes.
 #![cfg(not(target_family = "wasm"))]
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -138,6 +139,26 @@ fn zlib_zeros(len: usize) -> Vec<u8> {
     stream
 }
 
+/// A raw deflate stored block (RFC 1951) whose first byte is `header`: bit 0 is
+/// BFINAL, bits 1-2 are BTYPE 00, and the other five bits are padding.
+fn stored_block(header: u8, data: &[u8]) -> Vec<u8> {
+    let len = u16::try_from(data.len()).unwrap();
+    let mut block = vec![header];
+    block.extend(len.to_le_bytes());
+    block.extend((!len).to_le_bytes());
+    block.extend(data);
+    block
+}
+
+fn adler32(data: &[u8]) -> u32 {
+    let (mut a, mut b) = (1u32, 0u32);
+    for &byte in data {
+        a = (a + u32::from(byte)) % 65521;
+        b = (b + a) % 65521;
+    }
+    (b << 16) | a
+}
+
 fn pseudo_random_bytes(len: usize, mut state: u64) -> Vec<u8> {
     (0..len)
         .map(|_| {
@@ -155,6 +176,17 @@ fn assert_size_exceeded(result: Result<Vec<u8>, Error>) {
         Err(other) => panic!("expected InflatedSizeExceeded, got {other:?}"),
         Ok(decoded) => panic!(
             "expected InflatedSizeExceeded, inflated {} bytes",
+            decoded.len()
+        ),
+    }
+}
+
+fn assert_inflate_error(result: Result<Vec<u8>, Error>, input: &[u8]) {
+    match result {
+        Err(Error::InflateError(_)) => {}
+        Err(other) => panic!("{input:02x?}: expected InflateError, got {other:?}"),
+        Ok(decoded) => panic!(
+            "{input:02x?}: expected InflateError, inflated {} bytes",
             decoded.len()
         ),
     }
@@ -205,21 +237,130 @@ fn raw_deflate_bomb_stops_at_the_bound_without_inflating_the_rest() {
 }
 
 #[test]
-fn data_neither_zlib_nor_raw_deflate_reports_the_zlib_error() {
-    // A bad zlib header; a good zlib header over a reserved block type, which raw
-    // deflate reads as a stored block whose LEN and NLEN disagree.
+fn data_neither_zlib_nor_raw_deflate_is_an_inflate_error() {
     for garbage in [
+        vec![],
+        vec![0x78u8],
         vec![0xffu8, 0xff, 0xff, 0xff],
+        // A zlib header with no deflate data, then one with a cut stored block.
+        vec![0x78u8, 0x01],
+        vec![0x78u8, 0x9c, 0x00],
+        // A good zlib header over a reserved block type, which raw deflate reads
+        // as a stored block whose LEN and NLEN disagree.
+        vec![0x78u8, 0x01, 0x07, 0x07, 0x07],
         vec![0x78u8, 0x01, 0x07, 0x07, 0x07, 0x00, 0x00, 0x00, 0x00],
+        // A zlib header asking for a preset dictionary.
+        vec![0x78u8, 0x20, 0x00, 0x00, 0x00, 0x00],
     ] {
-        let zlib_error = inflate::inflate_bytes_zlib(&garbage).unwrap_err();
-        let raw_error = inflate::inflate_bytes(&garbage).unwrap_err();
-        assert_ne!(zlib_error, raw_error, "{garbage:?}");
-        match ContentEncoding::Deflate.decode(&garbage) {
-            Err(Error::InflateError(message)) => assert_eq!(message, zlib_error, "{garbage:?}"),
-            other => panic!("{garbage:?}: expected the zlib InflateError, got {other:?}"),
+        assert_inflate_error(ContentEncoding::Deflate.decode(&garbage), &garbage);
+    }
+}
+
+#[test]
+fn zlib_truncated_before_the_end_of_its_deflate_data_is_an_error() -> Result<(), Error> {
+    let mut content = b"#calculate-io\n_ _: 1 2;\n".repeat(40);
+    content.extend(pseudo_random_bytes(500, 4));
+    let encoded = ContentEncoding::Deflate.encode(&content);
+    assert_eq!(ContentEncoding::Deflate.decode(&encoded)?, content);
+    for cut in 0..encoded.len() - 4 {
+        assert_inflate_error(
+            ContentEncoding::Deflate.decode(&encoded[..cut]),
+            &encoded[..cut],
+        );
+    }
+
+    // Cut exactly after a complete non-final block.
+    let first = b"rain meta first block";
+    let mut content = first.to_vec();
+    content.extend(vec![0u8; 1000]);
+    let mut stream = vec![0x78, 0x01];
+    stream.extend(stored_block(0x00, first));
+    let boundary = stream.len();
+    stream.extend(raw_deflate_zeros(1000));
+    stream.extend(adler32(&content).to_be_bytes());
+    assert_eq!(ContentEncoding::Deflate.decode(&stream)?, content);
+    assert_inflate_error(
+        ContentEncoding::Deflate.decode(&stream[..boundary]),
+        &stream[..boundary],
+    );
+    Ok(())
+}
+
+#[test]
+fn zlib_missing_all_or_part_of_its_adler32_trailer_is_an_error() {
+    let mut content = pseudo_random_bytes(5_000, 5);
+    content.extend(b"rain meta ".repeat(500));
+    for (encoded, content) in [
+        (ContentEncoding::Deflate.encode(&content), content),
+        (zlib_zeros(1000), vec![0u8; 1000]),
+    ] {
+        let deflate_end = encoded.len() - 4;
+        assert_eq!(
+            inflate::inflate_bytes(&encoded[2..deflate_end]).unwrap(),
+            content
+        );
+        for dropped in 1..=4 {
+            let cut = &encoded[..encoded.len() - dropped];
+            assert_inflate_error(ContentEncoding::Deflate.decode(cut), cut);
         }
     }
+}
+
+#[test]
+fn zlib_with_a_wrong_adler32_is_an_error() -> Result<(), Error> {
+    let mut content = pseudo_random_bytes(5_000, 6);
+    content.extend(b"rain meta ".repeat(500));
+    for encoded in [ContentEncoding::Deflate.encode(&content), zlib_zeros(1000)] {
+        ContentEncoding::Deflate.decode(&encoded)?;
+        for byte in encoded.len() - 4..encoded.len() {
+            for bit in 0..8 {
+                let mut corrupt = encoded.clone();
+                corrupt[byte] ^= 1 << bit;
+                assert_inflate_error(ContentEncoding::Deflate.decode(&corrupt), &corrupt);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn raw_deflate_whose_first_two_bytes_pass_the_zlib_header_check_inflates() {
+    // A non-final stored block's first byte has five padding bits, so it can hold
+    // CM 8 and CINFO <= 7, and with LEN's low byte as FLG the first two bytes are
+    // a valid zlib CMF/FLG pair.
+    let mut rejected = Vec::new();
+    let mut cases = 0;
+    for cinfo in 0..=7u8 {
+        let cmf = (cinfo << 4) | 8;
+        for flg in (0..=255u8).filter(|&flg| u16::from_be_bytes([cmf, flg]) % 31 == 0) {
+            cases += 1;
+            let first: Vec<u8> = (0..flg).map(|i| b'a' + i % 26).collect();
+            let mut content = first.clone();
+            content.extend(vec![0u8; 1000]);
+            let mut raw = stored_block(cmf, &first);
+            raw.extend(raw_deflate_zeros(1000));
+            assert_eq!(raw[..2], [cmf, flg]);
+            assert!(
+                inflate::inflate_bytes_zlib(&raw).is_err(),
+                "{:02x?}",
+                &raw[..5]
+            );
+            assert_eq!(inflate::inflate_bytes(&raw).unwrap(), content);
+            match ContentEncoding::Deflate.decode(&raw) {
+                Ok(decoded) if decoded == content => {}
+                other => rejected.push(format!(
+                    "{:02x?}: {:?}",
+                    &raw[..5],
+                    other.map(|decoded| decoded.len())
+                )),
+            }
+        }
+    }
+    assert!(
+        rejected.is_empty(),
+        "{} of {cases} rejected: {rejected:?}",
+        rejected.len()
+    );
 }
 
 #[test]
