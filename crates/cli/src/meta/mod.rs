@@ -139,14 +139,38 @@ impl ContentEncoding {
     pub fn decode(&self, data: &[u8]) -> Result<Vec<u8>, Error> {
         Ok(match self {
             ContentEncoding::None | ContentEncoding::Identity => data.to_vec(),
-            ContentEncoding::Deflate => match inflate::inflate_bytes_zlib(data) {
-                Ok(v) => v,
-                Err(error) => match inflate::inflate_bytes(data) {
+            ContentEncoding::Deflate => {
+                match inflate_bounded(inflate::InflateStream::from_zlib(), data) {
                     Ok(v) => v,
-                    Err(_) => Err(Error::InflateError(error))?,
-                },
-            },
+                    Err(Error::InflateError(error)) => {
+                        match inflate_bounded(inflate::InflateStream::new(), data) {
+                            Ok(v) => v,
+                            Err(Error::InflateError(_)) => Err(Error::InflateError(error))?,
+                            Err(e) => Err(e)?,
+                        }
+                    }
+                    Err(e) => Err(e)?,
+                }
+            }
         })
+    }
+}
+
+pub const MAX_INFLATED_SIZE: usize = 16 * 1024 * 1024;
+
+fn inflate_bounded(mut inflater: inflate::InflateStream, data: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut decoded = Vec::new();
+    let mut n = 0;
+    loop {
+        let (read, bytes) = inflater.update(&data[n..]).map_err(Error::InflateError)?;
+        if bytes.is_empty() {
+            return Ok(decoded);
+        }
+        if decoded.len() + bytes.len() > MAX_INFLATED_SIZE {
+            return Err(Error::InflatedSizeExceeded(MAX_INFLATED_SIZE));
+        }
+        n += read;
+        decoded.extend_from_slice(bytes);
     }
 }
 
