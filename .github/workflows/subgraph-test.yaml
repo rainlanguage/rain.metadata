@@ -148,3 +148,5 @@ jobs:
           diff known-magic.rs.txt known-magic.as.txt
           test "$(wc -l < fuzz-docs.tsv)" -eq 100000
           diff fuzz-cbor_decode.tsv fuzz-subgraph-meta.tsv
+      - name: AssemblyScript decoder cost is linear in document size
+        run: nix develop -c bash -c 'cd subgraph-meta && npm run --silent cost'

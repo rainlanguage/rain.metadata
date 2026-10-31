@@ -10,7 +10,8 @@
   "repository": {"type": "git", "url": "https://github.com/rainlanguage/rain.metadata", "directory": "subgraph-meta"},
   "scripts": {
     "parity:build": "asc parity/runner.ts --outFile parity/runner.wasm --exportRuntime",
-    "parity": "node parity/run.mjs parity/runner.wasm"
+    "parity": "node parity/run.mjs parity/runner.wasm",
+    "cost": "node parity/cost.mjs parity/runner.wasm"
   },
   "peerDependencies": {"@graphprotocol/graph-ts": ">=0.31.0"},
   "devDependencies": {

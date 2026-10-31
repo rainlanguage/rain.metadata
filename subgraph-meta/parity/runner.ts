@@ -121,14 +121,18 @@ function decoded(bytes: Bytes): string {
   return "DecodeResult";
 }
 
-function verified(bytes: Bytes, spec: string): string {
+function preimageChecks(spec: string): PreimageCheck[] {
   const specs = spec.split(";");
   const checks = new Array<PreimageCheck>(specs.length);
   for (let i = 0; i < specs.length; i++) {
     const pair = specs[i].split(":");
     checks[i] = new PreimageCheck(unhex64(pair[0]), unhex(pair[1]));
   }
-  const preimages = verifyPreimages(bytes, checks);
+  return checks;
+}
+
+function verified(bytes: Bytes, spec: string): string {
+  const preimages = verifyPreimages(bytes, preimageChecks(spec));
   if (preimages === null) {
     return "UNVERIFIED";
   }
@@ -142,6 +146,23 @@ function verified(bytes: Bytes, spec: string): string {
 export function run(doc: string, checks: string): string {
   const bytes = unhex(doc);
   return decoded(bytes) + "\t" + verified(bytes, checks);
+}
+
+export const BYTES_ID = idof<Bytes>();
+
+/** The item count, or -1 for NotRainMetaDocument and -2 for MalformedDocument. */
+export function decodedItems(meta: Bytes): i32 {
+  const result = decode(meta);
+  if (result instanceof Decoded) {
+    return (<Decoded>result).items.length;
+  }
+  return result instanceof NotRainMetaDocument ? -1 : -2;
+}
+
+/** The preimage count, or -1 when not verified. */
+export function verifiedPreimages(meta: Bytes, checks: string): i32 {
+  const preimages = verifyPreimages(meta, preimageChecks(checks));
+  return preimages === null ? -1 : preimages.length;
 }
 
 export function magics(): string {
