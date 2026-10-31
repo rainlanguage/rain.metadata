@@ -96,6 +96,7 @@ class CborReader {
   ok: boolean = true;
   major: u8 = 0;
   info: u8 = 0;
+  seen: Array<u64> = new Array<u64>();
 
   constructor(public data: Bytes) {}
 
@@ -387,7 +388,8 @@ class CborReader {
     let contentType = ContentType.None;
     let contentEncoding = ContentEncoding.None;
     let contentLanguage = ContentLanguage.None;
-    let seen = new Array<u64>();
+    let seen = this.seen;
+    seen.length = 0;
     let read: u64 = 0;
     while (this.ok) {
       if (indefinite) {
@@ -456,8 +458,21 @@ class CborReader {
   }
 }
 
+const DISTINCT_PAIRWISE_MAX = 16;
+
 function distinct(keys: Array<u64>): boolean {
   let n = keys.length;
+  if (n <= DISTINCT_PAIRWISE_MAX) {
+    for (let i = 1; i < n; i++) {
+      let key = keys[i];
+      for (let j = 0; j < i; j++) {
+        if (keys[j] == key) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
   let from = keys;
   let to = new Array<u64>(n);
   let counts = new Int32Array(256);
