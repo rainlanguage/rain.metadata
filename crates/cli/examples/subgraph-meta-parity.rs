@@ -1,10 +1,12 @@
-use rain_metadata::{KnownMagic, RainMetaDocumentV1Item};
+use alloy::primitives::keccak256;
+use rain_metadata::{ContentEncoding, Error, KnownMagic, RainMetaDocumentV1Item};
 use strum::IntoEnumIterator;
 
 const P: &str = "ff0a89c674ee7874";
 const NP: &str = "737430782e726261632e75732e7631";
 const NM: &str = "1bffcdcfae6227d5e9";
 const TP: &str = "61646472657373";
+const TM: &str = "1bffcdb2cc1b1d53be";
 const RL: &str = "1bff13109e41336ff2";
 const SK: &str = "1bffa8e8a9b9cf4a31";
 const FK5: &str = "a3004161011bff13109e41336ff205";
@@ -14,7 +16,19 @@ fn name() -> String {
 }
 
 fn type_item() -> String {
-    format!("a20047{TP}011bffcdb2cc1b1d53be")
+    format!("a20047{TP}01{TM}")
+}
+
+fn checks() -> Vec<(u64, [u8; 32])> {
+    [(NM, NP), (TM, TP)]
+        .iter()
+        .map(|(magic, preimage)| {
+            (
+                u64::from_str_radix(&magic[2..], 16).expect("magic"),
+                keccak256(unhex(preimage)).0,
+            )
+        })
+        .collect()
 }
 
 fn expand(tokens: &[&str]) -> String {
@@ -48,8 +62,8 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }
 
-fn decoded(doc: &[u8]) -> String {
-    match RainMetaDocumentV1Item::cbor_decode(doc) {
+fn decoded(decode: &Result<Vec<RainMetaDocumentV1Item>, Error>) -> String {
+    match decode {
         Ok(items) => {
             let mut line = format!("OK {}", items.len());
             for i in items {
@@ -64,8 +78,31 @@ fn decoded(doc: &[u8]) -> String {
             }
             line
         }
-        Err(_) => "ERR".to_string(),
+        Err(Error::NotRainMetaDocument) => "NotRainMetaDocument".to_string(),
+        Err(_) => "MalformedDocument".to_string(),
     }
+}
+
+fn verified(decode: &Result<Vec<RainMetaDocumentV1Item>, Error>) -> String {
+    let Ok(items) = decode else {
+        return "UNVERIFIED".to_string();
+    };
+    let mut preimages = vec![];
+    for (magic, key) in checks() {
+        let of: Vec<&RainMetaDocumentV1Item> =
+            items.iter().filter(|i| i.magic as u64 == magic).collect();
+        let good = |i: &&RainMetaDocumentV1Item| {
+            matches!(
+                i.content_encoding,
+                ContentEncoding::None | ContentEncoding::Identity
+            ) && keccak256(i.payload.as_ref()).0 == key
+        };
+        match of.last() {
+            Some(last) if of.iter().all(good) => preimages.push(hex(last.payload.as_ref())),
+            _ => return "UNVERIFIED".to_string(),
+        }
+    }
+    format!("VERIFIED {}", preimages.join(","))
 }
 
 fn main() {
@@ -78,6 +115,11 @@ fn main() {
         return;
     }
     let mode = args.next().expect("mode: docs | decode");
+    let checks = checks()
+        .iter()
+        .map(|(magic, key)| format!("{magic:016x}:{}", hex(key)))
+        .collect::<Vec<_>>()
+        .join(";");
     let text = std::fs::read_to_string(cases).expect("read cases");
     for (n, line) in text.lines().enumerate() {
         if line.is_empty() || line.starts_with("## ") {
@@ -94,8 +136,11 @@ fn main() {
         };
         assert!(doc.len() % 2 == 0, "odd hex: {line}");
         let out = match mode.as_str() {
-            "docs" => doc,
-            "decode" => decoded(&unhex(&doc)),
+            "docs" => format!("{doc}\t{checks}"),
+            "decode" => {
+                let decode = RainMetaDocumentV1Item::cbor_decode(&unhex(&doc));
+                format!("{}\t{}", decoded(&decode), verified(&decode))
+            }
             m => panic!("unknown mode {m}"),
         };
         println!("{}\t{}", n + 1, out);
