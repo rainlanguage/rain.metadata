@@ -1,10 +1,6 @@
 import { Bytes, crypto } from "@graphprotocol/graph-ts";
 
 export const RAIN_META_DOCUMENT_V1: u64 = 0xff0a89c674ee7874;
-export const CONFIG_REGISTRY_NAME_V1: u64 = 0xffcdcfae6227d5e9;
-export const CONFIG_REGISTRY_VALUE_TYPE_V1: u64 = 0xffcdb2cc1b1d53be;
-export const MIGRATION_REGISTRY_NAMESPACE_V1: u64 = 0xff82e354bb91c055;
-export const MIGRATION_REGISTRY_MIGRATION_V1: u64 = 0xffae12bf8892cc25;
 
 const OA_SCHEMA: u64 = 0xffa8e8a9b9cf4a31;
 const CONTENT_TYPES: string[] = [
@@ -17,6 +13,24 @@ const CONTENT_ENCODINGS: string[] = ["none", "identity", "deflate"];
 const CONTENT_LANGUAGES: string[] = ["none", "en"];
 const MAX_DEPTH: i32 = 127;
 
+export enum ContentType {
+  None,
+  Json,
+  Cbor,
+  OctetStream,
+}
+
+export enum ContentEncoding {
+  None,
+  Identity,
+  Deflate,
+}
+
+export enum ContentLanguage {
+  None,
+  En,
+}
+
 /** One rain meta item magic and the `bytes32` key its payload must hash to. */
 export class PreimageCheck {
   constructor(
@@ -25,13 +39,30 @@ export class PreimageCheck {
   ) {}
 }
 
-class Item {
+/** One rain meta item; an absent content field is its `None` variant. */
+export class RainMetaItem {
   constructor(
     public magic: u64,
     public payload: Bytes,
-    public plain: boolean,
+    public contentType: ContentType,
+    public contentEncoding: ContentEncoding,
+    public contentLanguage: ContentLanguage,
   ) {}
 }
+
+export abstract class DecodeResult {}
+
+export class Decoded extends DecodeResult {
+  constructor(public items: RainMetaItem[]) {
+    super();
+  }
+}
+
+/** Shorter than 8 bytes or not prefixed by `RAIN_META_DOCUMENT_V1`. */
+export class NotRainMetaDocument extends DecodeResult {}
+
+/** Prefixed, but its items are not what `cbor_decode` accepts. */
+export class MalformedDocument extends DecodeResult {}
 
 class CborReader {
   pos: i32 = 0;
@@ -315,7 +346,7 @@ class CborReader {
   }
 
   /** One rain meta item map: mandatory payload (0) and magic (1), each once. */
-  item(depth: i32): Item | null {
+  item(depth: i32): RainMetaItem | null {
     depth = this.tags(depth);
     let entries = this.head();
     let indefinite = this.info == 31;
@@ -326,7 +357,9 @@ class CborReader {
     let payload: Bytes | null = null;
     let magic: u64 = 0;
     let hasMagic = false;
-    let plain = true;
+    let contentType = ContentType.None;
+    let contentEncoding = ContentEncoding.None;
+    let contentLanguage = ContentLanguage.None;
     let seen = new Array<u64>();
     let read: u64 = 0;
     while (this.ok) {
@@ -356,11 +389,17 @@ class CborReader {
           this.fail();
         }
       } else if (key == 2) {
-        this.variant(CONTENT_TYPES, depth + 1);
+        contentType = this.variant(CONTENT_TYPES, depth + 1) as ContentType;
       } else if (key == 3) {
-        plain = this.variant(CONTENT_ENCODINGS, depth + 1) < 2;
+        contentEncoding = this.variant(
+          CONTENT_ENCODINGS,
+          depth + 1,
+        ) as ContentEncoding;
       } else if (key == 4) {
-        this.variant(CONTENT_LANGUAGES, depth + 1);
+        contentLanguage = this.variant(
+          CONTENT_LANGUAGES,
+          depth + 1,
+        ) as ContentLanguage;
       } else if (key == OA_SCHEMA) {
         let schema = this.string(depth + 1);
         if (schema !== null && !utf8(schema)) {
@@ -380,7 +419,13 @@ class CborReader {
       this.fail();
       return null;
     }
-    return new Item(magic, payload!, plain);
+    return new RainMetaItem(
+      magic,
+      payload!,
+      contentType,
+      contentEncoding,
+      contentLanguage,
+    );
   }
 }
 
@@ -470,43 +515,45 @@ function utf8(bytes: Bytes): boolean {
   return true;
 }
 
-/** Every item of a rain meta document, or null when it is not one. */
-function documentItems(meta: Bytes): Item[] | null {
+/** Every item of `meta`, accepting and rejecting exactly what `cbor_decode` does. */
+export function decode(meta: Bytes): DecodeResult {
   if (meta.length < 8) {
-    return null;
+    return new NotRainMetaDocument();
   }
   let prefix: u64 = 0;
   for (let i = 0; i < 8; i++) {
     prefix = (prefix << 8) | (meta[i] as u64);
   }
   if (prefix != RAIN_META_DOCUMENT_V1) {
-    return null;
+    return new NotRainMetaDocument();
   }
   let reader = new CborReader(Bytes.fromUint8Array(meta.subarray(8)));
-  let items = new Array<Item>();
+  let items = new Array<RainMetaItem>();
   while (!reader.done()) {
     let item = reader.item(0);
     if (item === null) {
-      return null;
+      return new MalformedDocument();
     }
-    items.push(item);
+    items.push(item!);
   }
-  return items;
+  return new Decoded(items);
 }
 
 /**
- * Each check's preimage, in order, when `meta` is a well formed rain meta
- * document holding at least one item of each check's magic and every such item
- * is unencoded with a payload whose `keccak256` is the check's key; else null.
+ * `meta` is verified against `checks` when it decodes and, for every check, it
+ * holds at least one item of the check's magic and every item of that magic has
+ * content encoding `None` or `Identity` and a payload whose `keccak256` is the
+ * check's key. Returns each check's preimage, in order, when verified; else null.
  */
 export function verifyPreimages(
   meta: Bytes,
   checks: PreimageCheck[],
 ): Bytes[] | null {
-  let items = documentItems(meta);
-  if (items === null) {
+  let result = decode(meta);
+  if (!(result instanceof Decoded)) {
     return null;
   }
+  let items = (result as Decoded).items;
   let preimages = new Array<Bytes>();
   for (let c = 0; c < checks.length; c++) {
     let check = checks[c];
@@ -517,7 +564,7 @@ export function verifyPreimages(
         continue;
       }
       if (
-        !item.plain ||
+        item.contentEncoding == ContentEncoding.Deflate ||
         !Bytes.fromByteArray(crypto.keccak256(item.payload)).equals(check.key)
       ) {
         return null;
