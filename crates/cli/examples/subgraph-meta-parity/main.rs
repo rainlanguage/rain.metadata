@@ -64,18 +64,26 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }
 
+fn preimage_string(preimage: &[u8]) -> String {
+    match std::str::from_utf8(preimage) {
+        Ok(text) if !text.contains('\0') => hex(text.as_bytes()),
+        _ => "null".to_string(),
+    }
+}
+
 fn decoded(decode: &Result<Vec<RainMetaDocumentV1Item>, Error>) -> String {
     match decode {
         Ok(items) => {
             let mut line = format!("OK {}", items.len());
             for i in items {
                 line.push_str(&format!(
-                    ";{:016x},{},{:?},{:?},{:?}",
+                    ";{:016x},{},{:?},{:?},{:?},{}",
                     i.magic as u64,
                     hex(i.payload.as_ref()),
                     i.content_type,
                     i.content_encoding,
-                    i.content_language
+                    i.content_language,
+                    preimage_string(i.payload.as_ref())
                 ));
             }
             line

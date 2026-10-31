@@ -11,6 +11,7 @@ import {
   MalformedDocument,
   NotRainMetaDocument,
   PreimageCheck,
+  preimageString,
   verifyPreimages,
 } from "../assembly/index";
 
@@ -91,6 +92,14 @@ function contentLanguage(l: ContentLanguage): string {
   return "ContentLanguage(" + (<i32>l).toString() + ")";
 }
 
+function preimageText(preimage: Bytes): string {
+  const text = preimageString(preimage);
+  if (text === null) {
+    return "null";
+  }
+  return hex(Uint8Array.wrap(String.UTF8.encode(text!)));
+}
+
 function decoded(bytes: Bytes): string {
   const result = decode(bytes);
   if (result instanceof Decoded) {
@@ -108,7 +117,9 @@ function decoded(bytes: Bytes): string {
         "," +
         contentEncoding(item.contentEncoding) +
         "," +
-        contentLanguage(item.contentLanguage);
+        contentLanguage(item.contentLanguage) +
+        "," +
+        preimageText(item.payload);
     }
     return parts.join(";");
   }
