@@ -175,10 +175,12 @@ impl Gen {
             } else {
                 INVALID_UTF8
             };
-            s.extend_from_slice(self.rng.pick(set));
+            let fragment: &[u8] = *self.rng.pick::<&[u8]>(set);
+            s.extend_from_slice(fragment);
         }
         if !valid && !s.iter().any(|b| *b >= 0x80) {
-            s.extend_from_slice(self.rng.pick(INVALID_UTF8));
+            let fragment: &[u8] = *self.rng.pick::<&[u8]>(INVALID_UTF8);
+            s.extend_from_slice(fragment);
         }
         s
     }
@@ -197,7 +199,8 @@ impl Gen {
     fn string(&mut self, major: u8, content: &[u8]) {
         if !self.rng.chance(25) {
             if self.rng.chance(3) {
-                self.head(major, content.len() as u64 + 1 + self.rng.below(3));
+                let n = content.len() as u64 + 1 + self.rng.below(3);
+                self.head(major, n);
             } else {
                 self.head(major, content.len() as u64);
             }
@@ -253,20 +256,32 @@ impl Gen {
                 let s = self.utf8(valid);
                 self.text(&s)
             }
-            5 => self.byte(0xe0 + self.rng.below(24) as u8),
+            5 => {
+                let b = 0xe0 + self.rng.below(24) as u8;
+                self.byte(b)
+            }
             6 => {
                 self.byte(0xf8);
-                self.byte(self.rng.next() as u8)
+                let b = self.rng.next() as u8;
+                self.byte(b)
             }
             7 => {
-                self.byte(0xf9 + self.rng.below(3) as u8);
+                let b = 0xf9 + self.rng.below(3) as u8;
+                self.byte(b);
                 let n = [2, 4, 8][self.rng.below(3) as usize];
                 for _ in 0..n {
-                    self.byte(self.rng.next() as u8);
+                    let b = self.rng.next() as u8;
+                    self.byte(b);
                 }
             }
-            8 => self.byte(*self.rng.pick(&[0xfc, 0xfd, 0xfe, 0xff, 0x1f, 0x3f, 0xdf])),
-            _ => self.byte(0xf4 + self.rng.below(4) as u8),
+            8 => {
+                let b = *self.rng.pick(&[0xfc, 0xfd, 0xfe, 0xff, 0x1f, 0x3f, 0xdf]);
+                self.byte(b)
+            }
+            _ => {
+                let b = 0xf4 + self.rng.below(4) as u8;
+                self.byte(b)
+            }
         }
     }
 
@@ -399,7 +414,10 @@ impl Gen {
                 for b in &content {
                     self.tags();
                     match self.rng.below(40) {
-                        0 => self.head(0, 256 + self.rng.below(1000)),
+                        0 => {
+                            let v = 256 + self.rng.below(1000);
+                            self.head(0, v)
+                        }
                         1 => self.head(1, *b as u64),
                         2 => self.byte(0xf6),
                         _ => self.head(0, *b as u64),
