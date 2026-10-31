@@ -1,19 +1,27 @@
 {
   "name": "@rainlanguage/subgraph-meta",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AssemblyScript rain meta decoder for subgraph mappings, held to rain_metadata cbor_decode.",
   "ascMain": "assembly/index.ts",
   "types": "assembly/index.ts",
-  "files": ["assembly"],
+  "files": [
+    "assembly"
+  ],
   "author": "Rain Open Source Software Ltd",
   "license": "LicenseRef-DCL-1.0",
-  "repository": {"type": "git", "url": "https://github.com/rainlanguage/rain.metadata", "directory": "subgraph-meta"},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rainlanguage/rain.metadata",
+    "directory": "subgraph-meta"
+  },
   "scripts": {
     "parity:build": "asc parity/runner.ts --outFile parity/runner.wasm --exportRuntime",
     "parity": "node parity/run.mjs parity/runner.wasm",
     "cost": "node parity/cost.mjs parity/runner.wasm"
   },
-  "peerDependencies": {"@graphprotocol/graph-ts": ">=0.31.0"},
+  "peerDependencies": {
+    "@graphprotocol/graph-ts": ">=0.31.0"
+  },
   "devDependencies": {
     "@assemblyscript/loader": "0.19.10",
     "@graphprotocol/graph-ts": "0.31.0",
