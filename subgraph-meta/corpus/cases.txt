@@ -953,3 +953,5 @@ item a2 00 4161 01 1bff82e354bb91c055
 item a2 00 4161 01 1bffae12bf8892cc25
 ## a document shorter than its prefix is not a rain meta document
 doc ff0a89c674ee78
+## a document that is only its prefix is malformed, not foreign
+doc P
