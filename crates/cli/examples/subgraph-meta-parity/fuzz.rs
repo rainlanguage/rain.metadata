@@ -258,7 +258,9 @@ impl Gen {
 
     fn scalar(&mut self) {
         if self.fault(8) {
-            let b = self.rng.pick(&[0xfc, 0xfd, 0xfe, 0xff, 0x1f, 0x3f, 0xdf, 0xf8]);
+            let b = self
+                .rng
+                .pick(&[0xfc, 0xfd, 0xfe, 0xff, 0x1f, 0x3f, 0xdf, 0xf8]);
             self.byte(b);
             if b == 0xf8 {
                 let v = self.rng.below(32) as u8;
@@ -711,7 +713,8 @@ pub fn document(seed: u64, index: u64) -> (Vec<u8>, Vec<(u64, [u8; 32])>) {
     for _ in 0..1 + g.rng.below(3) {
         let check = match (g.rng.below(10), g.preimages.is_empty()) {
             (0..=6, false) => {
-                let (magic, preimage) = g.preimages[g.rng.below(g.preimages.len() as u64) as usize].clone();
+                let (magic, preimage) =
+                    g.preimages[g.rng.below(g.preimages.len() as u64) as usize].clone();
                 (magic, keccak256(&preimage).0)
             }
             (7 | 8, false) => {
