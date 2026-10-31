@@ -148,16 +148,13 @@ impl ContentEncoding {
                 .map_err(inflate_error)
                 {
                     Err(Error::InflateError(zlib_error)) => {
-                        miniz_oxide::inflate::decompress_to_vec_with_limit(
-                            data,
-                            MAX_INFLATED_SIZE,
-                        )
-                        .map_err(|raw_error| match inflate_error(raw_error) {
-                            Error::InflatedSizeExceeded(limit) => {
-                                Error::InflatedSizeExceeded(limit)
-                            }
-                            _ => Error::InflateError(zlib_error),
-                        })?
+                        miniz_oxide::inflate::decompress_to_vec_with_limit(data, MAX_INFLATED_SIZE)
+                            .map_err(|raw_error| match inflate_error(raw_error) {
+                                Error::InflatedSizeExceeded(limit) => {
+                                    Error::InflatedSizeExceeded(limit)
+                                }
+                                _ => Error::InflateError(zlib_error),
+                            })?
                     }
                     inflated => inflated?,
                 }
