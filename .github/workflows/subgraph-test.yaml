@@ -138,11 +138,13 @@ jobs:
       - name: Build the ABIs the crates read
         run: nix develop github:rainlanguage/rainix#sol-shell -c forge build
       - name: Expand the corpus and decode it with cbor_decode
-        run: nix develop -c bash -c 'cargo run -q -p rain-metadata --example subgraph-meta-parity -- subgraph-meta/corpus/cases.txt docs > docs.tsv && cargo run -q -p rain-metadata --example subgraph-meta-parity -- subgraph-meta/corpus/cases.txt decode > cbor_decode.tsv && cargo run -q -p rain-metadata --example subgraph-meta-parity -- magics > known-magic.rs.txt'
+        run: nix develop -c bash -c 'cargo run -q -p rain-metadata --example subgraph-meta-parity -- subgraph-meta/corpus/cases.txt docs > docs.tsv && cargo run -q -p rain-metadata --example subgraph-meta-parity -- subgraph-meta/corpus/cases.txt decode > cbor_decode.tsv && cargo run -q -p rain-metadata --example subgraph-meta-parity -- magics > known-magic.rs.txt && cargo run -q -p rain-metadata --example subgraph-meta-parity -- fuzz 328 100000 docs > fuzz-docs.tsv && cargo run -q -p rain-metadata --example subgraph-meta-parity -- fuzz 328 100000 decode > fuzz-cbor_decode.tsv'
       - name: Decode the corpus with the AssemblyScript decoder
-        run: nix develop -c bash -c 'cd subgraph-meta && npm ci && npm run parity:build && npm run --silent parity -- ../docs.tsv > ../subgraph-meta.tsv && npm run --silent parity -- magics > ../known-magic.as.txt'
+        run: nix develop -c bash -c 'cd subgraph-meta && npm ci && npm run parity:build && npm run --silent parity -- ../docs.tsv > ../subgraph-meta.tsv && npm run --silent parity -- magics > ../known-magic.as.txt && npm run --silent parity -- ../fuzz-docs.tsv > ../fuzz-subgraph-meta.tsv'
       - name: Both decoders agree on every case
         run: |
           test "$(wc -l < docs.tsv)" -gt 0
           diff cbor_decode.tsv subgraph-meta.tsv
           diff known-magic.rs.txt known-magic.as.txt
+          test "$(wc -l < fuzz-docs.tsv)" -eq 100000
+          diff fuzz-cbor_decode.tsv fuzz-subgraph-meta.tsv

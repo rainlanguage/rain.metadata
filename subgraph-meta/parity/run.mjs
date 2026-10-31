@@ -48,7 +48,14 @@ for (const line of readFileSync(docsPath, "utf8").split("\n")) {
   }
   const docPtr = exports.__pin(exports.__newString(doc));
   const checksPtr = exports.__pin(exports.__newString(checks));
-  out.push(`${label}\t${exports.__getString(exports.run(docPtr, checksPtr))}`);
+  let result;
+  try {
+    result = exports.__getString(exports.run(docPtr, checksPtr));
+  } catch (error) {
+    process.stderr.write(`trap on ${label}\t${doc}\t${checks}\n`);
+    throw error;
+  }
+  out.push(`${label}\t${result}`);
   exports.__unpin(checksPtr);
   exports.__unpin(docPtr);
 }
