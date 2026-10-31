@@ -26,6 +26,9 @@ const out = [];
 for (const line of readFileSync(docsPath, "utf8").split("\n")) {
   if (line === "") continue;
   const [label, doc] = line.split("\t");
+  if (doc === undefined) {
+    throw new Error(`docs line without a tab: ${line}`);
+  }
   const ptr = exports.__pin(exports.__newString(doc));
   out.push(`${label}\t${exports.__getString(exports.run(ptr))}`);
   exports.__unpin(ptr);
