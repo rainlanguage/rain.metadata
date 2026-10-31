@@ -202,8 +202,7 @@ fn zlib_bomb_stops_at_the_bound_without_inflating_the_rest() {
 }
 
 #[test]
-fn deflate_output_of_exactly_the_bound_inflates_and_one_more_byte_does_not() -> Result<(), Error>
-{
+fn deflate_output_of_exactly_the_bound_inflates_and_one_more_byte_does_not() -> Result<(), Error> {
     assert_eq!(MAX_INFLATED_SIZE, 16 * 1024 * 1024);
     let decoded = ContentEncoding::Deflate.decode(&zlib_zeros(MAX_INFLATED_SIZE))?;
     assert_eq!(decoded.len(), MAX_INFLATED_SIZE);
