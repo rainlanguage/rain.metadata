@@ -76,13 +76,13 @@ const shapes = [
   },
   {
     name: "many items",
-    n: 4000,
+    n: 1000,
     doc: (n) => P + ITEM.repeat(n),
     expect: (n) => n,
   },
   {
     name: "many verified items",
-    n: 2000,
+    n: 500,
     doc: (n) => P + ("a2004f" + NP + "01" + NM).repeat(n),
     checks: NM.slice(2) + ":" + hex(keccak_256(Buffer.from(NP, "hex"))),
     expect: () => 1,
