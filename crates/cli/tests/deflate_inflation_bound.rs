@@ -206,10 +206,11 @@ fn raw_deflate_bomb_stops_at_the_bound_without_inflating_the_rest() {
 
 #[test]
 fn data_neither_zlib_nor_raw_deflate_reports_the_zlib_error() {
-    // A bad zlib header, then a good zlib header over a reserved block type.
+    // A bad zlib header; a good zlib header over a reserved block type, which raw
+    // deflate reads as a stored block whose LEN and NLEN disagree.
     for garbage in [
         vec![0xffu8, 0xff, 0xff, 0xff],
-        vec![0x78u8, 0x01, 0x07, 0x07, 0x07],
+        vec![0x78u8, 0x01, 0x07, 0x07, 0x07, 0x00, 0x00, 0x00, 0x00],
     ] {
         let zlib_error = inflate::inflate_bytes_zlib(&garbage).unwrap_err();
         let raw_error = inflate::inflate_bytes(&garbage).unwrap_err();
