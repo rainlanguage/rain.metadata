@@ -12,8 +12,11 @@ import {
   NotRainMetaDocument,
   PreimageCheck,
   preimageString,
+  RainMetaItem,
   verifyPreimages,
 } from "../assembly/index";
+
+export * from "../assembly/index";
 
 export const BYTE_ARRAY_ID = idof<ByteArray>();
 
@@ -92,12 +95,16 @@ function contentLanguage(l: ContentLanguage): string {
   return "ContentLanguage(" + (<i32>l).toString() + ")";
 }
 
-function preimageText(preimage: Bytes): string {
-  const text = preimageString(preimage);
+function utf8Hex(text: string | null): string {
   if (text === null) {
     return "null";
   }
   return hex(Uint8Array.wrap(String.UTF8.encode(text!)));
+}
+
+function schemaText(item: RainMetaItem): string {
+  const schema = item.schema;
+  return (schema === null ? "null" : hex(schema!)) + "," + utf8Hex(item.schemaString());
 }
 
 function decoded(bytes: Bytes): string {
@@ -119,7 +126,9 @@ function decoded(bytes: Bytes): string {
         "," +
         contentLanguage(item.contentLanguage) +
         "," +
-        preimageText(item.payload);
+        utf8Hex(preimageString(item.payload)) +
+        "," +
+        schemaText(item);
     }
     return parts.join(";");
   }
@@ -179,7 +188,7 @@ export function verifiedPreimages(meta: Bytes, checks: string): i32 {
 export function magics(): string {
   const parts = new Array<string>(KNOWN_MAGICS.length);
   for (let i = 0; i < KNOWN_MAGICS.length; i++) {
-    parts[i] = hex64(KNOWN_MAGICS[i]);
+    parts[i] = "KNOWN_MAGICS " + hex64(KNOWN_MAGICS[i]);
   }
   return parts.join("\n");
 }

@@ -6,7 +6,15 @@ import { instantiate } from "./instantiate.mjs";
 const [wasmPath, docsPath] = process.argv.slice(2);
 const exports = instantiate(wasmPath);
 if (docsPath === "magics") {
-  process.stdout.write(exports.__getString(exports.magics()) + "\n");
+  const named = Object.entries(exports)
+    .filter(([, v]) => v instanceof WebAssembly.Global && typeof v.value === "bigint")
+    .map(([name, v]) =>
+      `${name} ${BigInt.asUintN(64, v.value).toString(16).padStart(16, "0")}`
+    )
+    .sort();
+  process.stdout.write(
+    [...named, exports.__getString(exports.magics())].join("\n") + "\n",
+  );
   process.exit(0);
 }
 const out = [];

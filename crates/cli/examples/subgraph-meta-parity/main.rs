@@ -71,19 +71,33 @@ fn preimage_string(preimage: &[u8]) -> String {
     }
 }
 
+fn screaming_snake(magic: KnownMagic) -> String {
+    let mut name = String::new();
+    for (i, c) in format!("{magic:?}").chars().enumerate() {
+        if i > 0 && c.is_ascii_uppercase() {
+            name.push('_');
+        }
+        name.push(c.to_ascii_uppercase());
+    }
+    name
+}
+
 fn decoded(decode: &Result<Vec<RainMetaDocumentV1Item>, Error>) -> String {
     match decode {
         Ok(items) => {
             let mut line = format!("OK {}", items.len());
             for i in items {
+                let schema = i.schema.as_deref().map(str::as_bytes);
                 line.push_str(&format!(
-                    ";{:016x},{},{:?},{:?},{:?},{}",
+                    ";{:016x},{},{:?},{:?},{:?},{},{},{}",
                     i.magic as u64,
                     hex(i.payload.as_ref()),
                     i.content_type,
                     i.content_encoding,
                     i.content_language,
-                    preimage_string(i.payload.as_ref())
+                    preimage_string(i.payload.as_ref()),
+                    schema.map_or("null".to_string(), hex),
+                    schema.map_or("null".to_string(), preimage_string)
                 ));
             }
             line
@@ -142,8 +156,15 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let cases = args.next().expect("cases.txt path, fuzz or magics");
     if cases == "magics" {
+        let mut named: Vec<String> = KnownMagic::iter()
+            .map(|m| format!("{} {:016x}", screaming_snake(m), m as u64))
+            .collect();
+        named.sort();
+        for line in named {
+            println!("{line}");
+        }
         for m in KnownMagic::iter().filter(|m| KnownMagic::try_from(*m as u64).is_ok()) {
-            println!("{:016x}", m as u64);
+            println!("KNOWN_MAGICS {:016x}", m as u64);
         }
         return;
     }
