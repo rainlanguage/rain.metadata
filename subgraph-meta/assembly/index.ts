@@ -3,6 +3,31 @@ import { Bytes, crypto } from "@graphprotocol/graph-ts";
 export const RAIN_META_DOCUMENT_V1: u64 = 0xff0a89c674ee7874;
 
 const OA_SCHEMA: u64 = 0xffa8e8a9b9cf4a31;
+export const KNOWN_MAGICS: u64[] = [
+  0xffe5282f43e495b4,
+  0xffdac2f2f37be894,
+  0xff1c198cec3b48a7,
+  0xffe5ffb4a3ff2cde,
+  0xffe9e3a02ca8e235,
+  0xff52fe42f1a05093,
+  0xffc21bbf86cc199b,
+  0xffdb988a8cd04d32,
+  0xff13109e41336ff2,
+  0xffb2637608c09e38,
+  0xffa15ef0fc437099,
+  0xffda7b2fb167c286,
+  0xff7a1507ba4419ca,
+  0xff5dcce9b571ba42,
+  0xffa8e8a9b9cf4a31,
+  0xff9fae3cc645f463,
+  0xffc47a6299e8a911,
+  0xff8cd2927c8c86cb,
+  0xffbc38eb14ad2209,
+  0xffcdcfae6227d5e9,
+  0xffcdb2cc1b1d53be,
+  0xff82e354bb91c055,
+  0xffae12bf8892cc25,
+];
 const CONTENT_TYPES: string[] = [
   "None",
   "application/json",
@@ -515,7 +540,7 @@ function utf8(bytes: Bytes): boolean {
   return true;
 }
 
-/** Every item of `meta`, accepting and rejecting exactly what `cbor_decode` does. */
+/** Every known-magic item of `meta`, accepting and rejecting exactly what `cbor_decode` does. */
 export function decode(meta: Bytes): DecodeResult {
   if (meta.length < 8) {
     return new NotRainMetaDocument();
@@ -534,7 +559,12 @@ export function decode(meta: Bytes): DecodeResult {
     if (item === null) {
       return new MalformedDocument();
     }
-    items.push(item!);
+    if (KNOWN_MAGICS.includes(item!.magic)) {
+      items.push(item!);
+    }
+  }
+  if (items.length == 0) {
+    return new MalformedDocument();
   }
   return new Decoded(items);
 }
