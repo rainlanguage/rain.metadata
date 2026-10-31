@@ -20,6 +20,7 @@ use alloy::sol_types::private::Address;
 use alloy::providers::Provider;
 use alloy::contract::Error as ContractError;
 use rain_erc::erc165::{Erc165Error, IERC165, XorSelectors, supports_erc165};
+use miniz_oxide::inflate::{DecompressError, TINFLStatus};
 
 pub mod magic;
 pub(crate) mod normalize;
@@ -139,14 +140,35 @@ impl ContentEncoding {
     pub fn decode(&self, data: &[u8]) -> Result<Vec<u8>, Error> {
         Ok(match self {
             ContentEncoding::None | ContentEncoding::Identity => data.to_vec(),
-            ContentEncoding::Deflate => match inflate::inflate_bytes_zlib(data) {
-                Ok(v) => v,
-                Err(error) => match inflate::inflate_bytes(data) {
-                    Ok(v) => v,
-                    Err(_) => Err(Error::InflateError(error))?,
-                },
-            },
+            ContentEncoding::Deflate => {
+                match miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(
+                    data,
+                    MAX_INFLATED_SIZE,
+                )
+                .map_err(inflate_error)
+                {
+                    Err(Error::InflateError(zlib_error)) => {
+                        miniz_oxide::inflate::decompress_to_vec_with_limit(data, MAX_INFLATED_SIZE)
+                            .map_err(|raw_error| match inflate_error(raw_error) {
+                                Error::InflatedSizeExceeded(limit) => {
+                                    Error::InflatedSizeExceeded(limit)
+                                }
+                                _ => Error::InflateError(zlib_error),
+                            })?
+                    }
+                    inflated => inflated?,
+                }
+            }
         })
+    }
+}
+
+pub const MAX_INFLATED_SIZE: usize = 16 * 1024 * 1024;
+
+fn inflate_error(error: DecompressError) -> Error {
+    match error.status {
+        TINFLStatus::HasMoreOutput => Error::InflatedSizeExceeded(MAX_INFLATED_SIZE),
+        _ => Error::InflateError(error.to_string()),
     }
 }
 

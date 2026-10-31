@@ -9,8 +9,14 @@ jobs:
     # dependency order and publishes them — bindings + metaboard (leaves), then
     # the cli that pins both. The workspace releases as a unit (lockstep), so a
     # change to any crate bumps + republishes all; no chained-job race.
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
     uses: rainlanguage/rainix/.github/workflows/rainix-autopublish.yaml@main
     with:
       crates: rain-metadata-bindings rain-metaboard-subgraph rain-metadata
       soldeer-package: rain-metadata
+      npm-package: "@rainlanguage/subgraph-meta"
+      npm-package-dir: subgraph-meta
     secrets: inherit
