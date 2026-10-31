@@ -1,4 +1,5 @@
-use rain_metadata::RainMetaDocumentV1Item;
+use rain_metadata::{KnownMagic, RainMetaDocumentV1Item};
+use strum::IntoEnumIterator;
 
 const P: &str = "ff0a89c674ee7874";
 const NP: &str = "737430782e726261632e75732e7631";
@@ -69,7 +70,13 @@ fn decoded(doc: &[u8]) -> String {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let cases = args.next().expect("cases.txt path");
+    let cases = args.next().expect("cases.txt path or magics");
+    if cases == "magics" {
+        for m in KnownMagic::iter().filter(|m| KnownMagic::try_from(*m as u64).is_ok()) {
+            println!("{:016x}", m as u64);
+        }
+        return;
+    }
     let mode = args.next().expect("mode: docs | decode");
     let text = std::fs::read_to_string(cases).expect("read cases");
     for (n, line) in text.lines().enumerate() {

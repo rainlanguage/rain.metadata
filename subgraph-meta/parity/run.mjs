@@ -18,6 +18,10 @@ for (
   };
 }
 const { exports } = loader.instantiateSync(module, imports);
+if (docsPath === "magics") {
+  process.stdout.write(exports.__getString(exports.magics()) + "\n");
+  process.exit(0);
+}
 const out = [];
 for (const line of readFileSync(docsPath, "utf8").split("\n")) {
   if (line === "") continue;

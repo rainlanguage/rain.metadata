@@ -1,5 +1,5 @@
 import { Bytes } from "@graphprotocol/graph-ts";
-import { decode, Decoded } from "../assembly/index";
+import { decode, Decoded, KNOWN_MAGICS } from "../assembly/index";
 
 const HEX = "0123456789abcdef";
 const CONTENT_TYPE = ["None", "Json", "Cbor", "OctetStream"];
@@ -53,4 +53,12 @@ export function run(doc: string): string {
       CONTENT_LANGUAGE[<i32>item.contentLanguage];
   }
   return parts.join(";");
+}
+
+export function magics(): string {
+  const parts = new Array<string>(KNOWN_MAGICS.length);
+  for (let i = 0; i < KNOWN_MAGICS.length; i++) {
+    parts[i] = hex64(KNOWN_MAGICS[i]);
+  }
+  return parts.join("\n");
 }
