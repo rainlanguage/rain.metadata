@@ -4,31 +4,54 @@ import { Bytes, crypto } from "@graphprotocol/graph-ts";
 
 export const RAIN_META_DOCUMENT_V1: u64 = 0xff0a89c674ee7874;
 
-const OA_SCHEMA: u64 = 0xffa8e8a9b9cf4a31;
+export const OP_META_V1: u64 = 0xffe5282f43e495b4;
+export const DOTRAIN_V1: u64 = 0xffdac2f2f37be894;
+export const RAINLANG_V1: u64 = 0xff1c198cec3b48a7;
+export const SOLIDITY_ABI_V2: u64 = 0xffe5ffb4a3ff2cde;
+export const AUTHORING_META_V1: u64 = 0xffe9e3a02ca8e235;
+export const AUTHORING_META_V2: u64 = 0xff52fe42f1a05093;
+export const INTERPRETER_CALLER_META_V1: u64 = 0xffc21bbf86cc199b;
+export const EXPRESSION_DEPLOYER_V2_BYTECODE_V1: u64 = 0xffdb988a8cd04d32;
+export const RAINLANG_SOURCE_V1: u64 = 0xff13109e41336ff2;
+export const ADDRESS_LIST: u64 = 0xffb2637608c09e38;
+export const DOTRAIN_SOURCE_V1: u64 = 0xffa15ef0fc437099;
+export const ORDER_BUILDER_STATE_V1: u64 = 0xffda7b2fb167c286;
+export const RAINDEX_SIGNED_CONTEXT_ORACLE_V1: u64 = 0xff7a1507ba4419ca;
+export const WEB_DATA_V1: u64 = 0xff5dcce9b571ba42;
+export const OA_SCHEMA: u64 = 0xffa8e8a9b9cf4a31;
+export const OA_HASH_LIST: u64 = 0xff9fae3cc645f463;
+export const OA_STRUCTURE: u64 = 0xffc47a6299e8a911;
+export const OA_TOKEN_IMAGE: u64 = 0xff8cd2927c8c86cb;
+export const OA_TOKEN_CREDENTIAL_LINKS: u64 = 0xffbc38eb14ad2209;
+export const CONFIG_REGISTRY_NAME_V1: u64 = 0xffcdcfae6227d5e9;
+export const CONFIG_REGISTRY_VALUE_TYPE_V1: u64 = 0xffcdb2cc1b1d53be;
+export const MIGRATION_REGISTRY_NAMESPACE_V1: u64 = 0xff82e354bb91c055;
+export const MIGRATION_REGISTRY_MIGRATION_V1: u64 = 0xffae12bf8892cc25;
+
 export const KNOWN_MAGICS: u64[] = [
-  0xffe5282f43e495b4,
-  0xffdac2f2f37be894,
-  0xff1c198cec3b48a7,
-  0xffe5ffb4a3ff2cde,
-  0xffe9e3a02ca8e235,
-  0xff52fe42f1a05093,
-  0xffc21bbf86cc199b,
-  0xffdb988a8cd04d32,
-  0xff13109e41336ff2,
-  0xffb2637608c09e38,
-  0xffa15ef0fc437099,
-  0xffda7b2fb167c286,
-  0xff7a1507ba4419ca,
-  0xff5dcce9b571ba42,
-  0xffa8e8a9b9cf4a31,
-  0xff9fae3cc645f463,
-  0xffc47a6299e8a911,
-  0xff8cd2927c8c86cb,
-  0xffbc38eb14ad2209,
-  0xffcdcfae6227d5e9,
-  0xffcdb2cc1b1d53be,
-  0xff82e354bb91c055,
-  0xffae12bf8892cc25,
+  OP_META_V1,
+  DOTRAIN_V1,
+  RAINLANG_V1,
+  SOLIDITY_ABI_V2,
+  AUTHORING_META_V1,
+  AUTHORING_META_V2,
+  INTERPRETER_CALLER_META_V1,
+  EXPRESSION_DEPLOYER_V2_BYTECODE_V1,
+  RAINLANG_SOURCE_V1,
+  ADDRESS_LIST,
+  DOTRAIN_SOURCE_V1,
+  ORDER_BUILDER_STATE_V1,
+  RAINDEX_SIGNED_CONTEXT_ORACLE_V1,
+  WEB_DATA_V1,
+  OA_SCHEMA,
+  OA_HASH_LIST,
+  OA_STRUCTURE,
+  OA_TOKEN_IMAGE,
+  OA_TOKEN_CREDENTIAL_LINKS,
+  CONFIG_REGISTRY_NAME_V1,
+  CONFIG_REGISTRY_VALUE_TYPE_V1,
+  MIGRATION_REGISTRY_NAMESPACE_V1,
+  MIGRATION_REGISTRY_MIGRATION_V1,
 ];
 const CONTENT_TYPES: string[] = [
   "None",
@@ -74,7 +97,17 @@ export class RainMetaItem {
     public contentType: ContentType,
     public contentEncoding: ContentEncoding,
     public contentLanguage: ContentLanguage,
+    public schema: Bytes | null,
   ) {}
+
+  /** `schema` under the same rule as `preimageString`; null when absent. */
+  schemaString(): string | null {
+    let schema = this.schema;
+    if (schema === null) {
+      return null;
+    }
+    return preimageString(schema!);
+  }
 }
 
 export abstract class DecodeResult {}
@@ -388,6 +421,7 @@ class CborReader {
     let contentType = ContentType.None;
     let contentEncoding = ContentEncoding.None;
     let contentLanguage = ContentLanguage.None;
+    let schema: Bytes | null = null;
     let seen = this.seen;
     seen.length = 0;
     let read: u64 = 0;
@@ -430,8 +464,8 @@ class CborReader {
           depth + 1,
         ) as ContentLanguage;
       } else if (key == OA_SCHEMA) {
-        let schema = this.string(depth + 1);
-        if (schema !== null && !utf8(schema)) {
+        schema = this.string(depth + 1);
+        if (schema !== null && !utf8(schema!)) {
           this.fail();
         }
       } else {
@@ -454,6 +488,7 @@ class CborReader {
       contentType,
       contentEncoding,
       contentLanguage,
+      schema,
     );
   }
 }
