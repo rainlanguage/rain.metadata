@@ -6,7 +6,31 @@ import { instantiate } from "./instantiate.mjs";
 const [wasmPath, docsPath] = process.argv.slice(2);
 const exports = instantiate(wasmPath);
 if (docsPath === "magics") {
-  process.stdout.write(exports.__getString(exports.magics()) + "\n");
+  const declared = new Map(
+    [
+      ...readFileSync(wasmPath.replace(/\.wasm$/, ".d.ts"), "utf8").matchAll(
+        /^export var (\w+): (\w+);$/gm,
+      ),
+    ].map(([, name, type]) => [name, type]),
+  );
+  const named = Object.entries(exports)
+    .filter(([, v]) =>
+      v instanceof WebAssembly.Global && typeof v.value === "bigint"
+    )
+    .map(([name, v]) => {
+      if (declared.get(name) !== "u64") {
+        throw new Error(
+          `${name} is exported as ${declared.get(name)}, not u64`,
+        );
+      }
+      return `${name} ${
+        BigInt.asUintN(64, v.value).toString(16).padStart(16, "0")
+      }`;
+    })
+    .sort();
+  process.stdout.write(
+    [...named, exports.__getString(exports.magics())].join("\n") + "\n",
+  );
   process.exit(0);
 }
 const out = [];
