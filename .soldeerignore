@@ -12,9 +12,12 @@
 CLAUDE.md
 /audit
 /cache
+/Cargo.lock
+/Cargo.toml
 /crates
 /dependencies
 /subgraph
+/subgraph-meta
 /flake.lock
 /flake.nix
 /foundry.toml
