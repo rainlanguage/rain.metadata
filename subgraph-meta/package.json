@@ -1,6 +1,6 @@
 {
   "name": "@rainlanguage/subgraph-meta",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "AssemblyScript rain meta decoder for subgraph mappings, held to rain_metadata cbor_decode.",
   "ascMain": "assembly/index.ts",
   "types": "assembly/index.ts",
